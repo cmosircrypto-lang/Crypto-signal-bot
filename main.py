@@ -28,17 +28,10 @@ MAX_HEARTBEATS = 4
 def get_iran_time():
     """تاریخ شمسی و میلادی + ساعت به وقت ایران"""
     now = datetime.now(ZoneInfo("Asia/Tehran"))
-
-    # تاریخ میلادی
     date_gregorian = now.strftime("%Y-%m-%d")
-
-    # تاریخ شمسی
     now_jalali = jdatetime.datetime.fromgregorian(datetime=now)
     date_jalali = now_jalali.strftime("%Y/%m/%d")
-
-    # ساعت
     time_str = now.strftime("%H:%M:%S")
-
     return date_gregorian, date_jalali, time_str
 
 def send_telegram(message):
@@ -87,11 +80,9 @@ def send_heartbeat():
 
     if new_id:
         ids.append(new_id)
-
         while len(ids) > MAX_HEARTBEATS:
             old_id = ids.pop(0)
             delete_telegram(old_id)
-
         save_heartbeat_ids(ids)
 
 # --- داده و تحلیل ---
@@ -109,25 +100,21 @@ def fetch_ohlcv(exchange, symbol, timeframe, limit=100):
 
 def calculate_indicators(df):
     """محاسبه EMA، RSI، MACD، ATR"""
-    # EMA
     df['ema20'] = df['close'].ewm(span=20, adjust=False).mean()
     df['ema50'] = df['close'].ewm(span=50, adjust=False).mean()
 
-    # RSI
     delta = df['close'].diff()
     gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
     loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
     rs = gain / loss
     df['rsi'] = 100 - (100 / (1 + rs))
 
-    # MACD
     exp1 = df['close'].ewm(span=12, adjust=False).mean()
     exp2 = df['close'].ewm(span=26, adjust=False).mean()
     macd = exp1 - exp2
     signal_line = macd.ewm(span=9, adjust=False).mean()
     df['macd_hist'] = macd - signal_line
 
-    # ATR
     high_low = df['high'] - df['low']
     high_close = (df['high'] - df['close'].shift()).abs()
     low_close = (df['low'] - df['close'].shift()).abs()
@@ -154,6 +141,11 @@ def analyze(symbol, exchange):
 
     entry_price = last_1h['close']
     atr = last_1h['atr']
+
+    # --- دیباگ: چاپ وضعیت شرط‌ها ---
+    print(f"  [DEBUG 4H] EMA20: {last_4h['ema20']:.4f} | EMA50: {last_4h['ema50']:.4f} | Trend: {'LONG' if trend_long else 'SHORT' if trend_short else 'NONE'}")
+    print(f"  [DEBUG 1H] RSI prev: {prev_1h['rsi']:.2f} | RSI now: {last_1h['rsi']:.2f} | MACD hist: {last_1h['macd_hist']:.6f}")
+    print(f"  [DEBUG CHK] trend_long={trend_long} | rsi_cond={prev_1h['rsi'] < 35 and last_1h['rsi'] > 35} | macd_cond={last_1h['macd_hist'] > 0}")
 
     signal = None
     sl = tp = None
@@ -188,11 +180,9 @@ if __name__ == "__main__":
     print("=" * 50)
     print("Starting bot cycle...")
 
-    # ۱. ارسال Heartbeat
     send_heartbeat()
     print("✅ Heartbeat sent.")
 
-    # ۲. تحلیل هر نماد
     exchange = create_exchange()
     date_gregorian, date_jalali, time_str = get_iran_time()
 
@@ -205,7 +195,6 @@ if __name__ == "__main__":
                 print(f"{symbol} | Price: {entry} | RSI: {rsi:.2f} | No signal")
                 continue
 
-            # محاسبه نسبت ریسک به ریوارد
             if signal == "LONG":
                 rr = (tp - entry) / (entry - sl)
                 emoji = "🟢"
