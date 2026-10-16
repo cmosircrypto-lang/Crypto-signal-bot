@@ -5,6 +5,7 @@ import pandas as pd
 import ccxt
 from datetime import datetime
 from zoneinfo import ZoneInfo
+import jdatetime
 
 # --- تنظیمات ---
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
@@ -25,9 +26,20 @@ MAX_HEARTBEATS = 4
 
 # --- ابزارهای عمومی ---
 def get_iran_time():
-    """تاریخ و ساعت به وقت ایران"""
+    """تاریخ شمسی و میلادی + ساعت به وقت ایران"""
     now = datetime.now(ZoneInfo("Asia/Tehran"))
-    return now.strftime("%Y-%m-%d"), now.strftime("%H:%M:%S")
+
+    # تاریخ میلادی
+    date_gregorian = now.strftime("%Y-%m-%d")
+
+    # تاریخ شمسی
+    now_jalali = jdatetime.datetime.fromgregorian(datetime=now)
+    date_jalali = now_jalali.strftime("%Y/%m/%d")
+
+    # ساعت
+    time_str = now.strftime("%H:%M:%S")
+
+    return date_gregorian, date_jalali, time_str
 
 def send_telegram(message):
     """ارسال پیام به تلگرام و برگرداندن message_id"""
@@ -62,10 +74,11 @@ def save_heartbeat_ids(ids):
 
 def send_heartbeat():
     """ارسال پیام Heartbeat و مدیریت حذف پیام‌های قدیمی"""
-    date_str, time_str = get_iran_time()
+    date_gregorian, date_jalali, time_str = get_iran_time()
     msg = f"""🖥️ سرور آنلاین
 ━━━━━━━━━━━━━━━━━
-📅 تاریخ: {date_str}
+📅 تاریخ شمسی: {date_jalali}
+📅 تاریخ میلادی: {date_gregorian}
 ⏰ ساعت: {time_str}
 ━━━━━━━━━━━━━━━━━"""
 
@@ -75,7 +88,6 @@ def send_heartbeat():
     if new_id:
         ids.append(new_id)
 
-        # حذف پیام‌های قدیمی‌تر از ۴ تا
         while len(ids) > MAX_HEARTBEATS:
             old_id = ids.pop(0)
             delete_telegram(old_id)
@@ -182,7 +194,7 @@ if __name__ == "__main__":
 
     # ۲. تحلیل هر نماد
     exchange = create_exchange()
-    date_str, time_str = get_iran_time()
+    date_gregorian, date_jalali, time_str = get_iran_time()
 
     for symbol in SYMBOLS:
         try:
@@ -211,7 +223,8 @@ if __name__ == "__main__":
 📈 RSI: {rsi:.2f}
 📉 ATR: {format_number(atr)}
 ━━━━━━━━━━━━━━━━━
-📅 تاریخ: {date_str}
+📅 تاریخ شمسی: {date_jalali}
+📅 تاریخ میلادی: {date_gregorian}
 ⏰ ساعت: {time_str}
 ━━━━━━━━━━━━━━━━━"""
 
