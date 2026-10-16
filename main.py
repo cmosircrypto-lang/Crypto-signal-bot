@@ -8,13 +8,12 @@ CHAT_ID = os.environ.get("CHAT_ID")
 TOOBIT_API_KEY = os.environ.get("TOOBIT_API_KEY")
 TOOBIT_SECRET = os.environ.get("TOOBIT_SECRET")
 
-# لیست ارزهایی که می‌خواهی بررسی شوند
 SYMBOLS = [
     "SOL-SWAP-USDT",
     "NEAR-SWAP-USDT",
     "ADA-SWAP-USDT",
     "XRP-SWAP-USDT",
-    "PUMP-SWAP-USDT",
+    "SUI-SWAP-USDT",
 ]
 
 def fetch_data(symbol):
@@ -51,14 +50,18 @@ def send_telegram(message):
 if __name__ == "__main__":
     print("Starting multi-symbol analysis...")
     for symbol in SYMBOLS:
-        print(f"--- Checking {symbol} ---")
-        df = fetch_data(symbol)
-        signal, rsi, price = analyze(df)
-        print(f"{symbol} | Price: {price} | RSI: {rsi:.2f} | Signal: {signal}")
+        try:
+            print(f"--- Checking {symbol} ---")
+            df = fetch_data(symbol)
+            signal, rsi, price = analyze(df)
+            print(f"{symbol} | Price: {price} | RSI: {rsi:.2f} | Signal: {signal}")
 
-        if signal:
-            msg = f"🚨 سیگنال {signal}\nنماد: {symbol}\nقیمت: {price}\nRSI: {rsi:.2f}"
-            send_telegram(msg)
-            print(f"Signal for {symbol} sent to Telegram!")
+            if signal:
+                msg = f"🚨 سیگنال {signal}\nنماد: {symbol}\nقیمت: {price}\nRSI: {rsi:.2f}"
+                send_telegram(msg)
+                print(f"Signal for {symbol} sent to Telegram!")
+        except Exception as e:
+            print(f"⚠️ خطا در {symbol}: {e}")
+            continue
 
     print("Analysis complete.")
