@@ -1,8 +1,12 @@
 import os
+import json
 import requests
 import pandas as pd
 import ccxt
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
+# --- تنظیمات ---
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 CHAT_ID = os.environ.get("CHAT_ID")
 TOOBIT_API_KEY = os.environ.get("TOOBIT_API_KEY")
@@ -16,52 +20,207 @@ SYMBOLS = [
     "SUI-SWAP-USDT",
 ]
 
-def fetch_data(symbol):
-    """دریافت کندل فیوچرز از Toobit"""
-    exchange = ccxt.toobit({
+HEARTBEAT_FILE = "server_messages.json"
+MAX_HEARTBEATS = 4
+
+# --- ابزارهای عمومی ---
+def get_iran_time():
+    """تاریخ و ساعت به وقت ایران"""
+    now = datetime.now(ZoneInfo("Asia/Tehran"))
+    return now.strftime("%Y-%m-%d"), now.strftime("%H:%M:%S")
+
+def send_telegram(message):
+    """ارسال پیام به تلگرام و برگرداندن message_id"""
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    try:
+        r = requests.post(url, json={"chat_id": CHAT_ID, "text": message}, timeout=10)
+        if r.status_code == 200:
+            return r.json().get("result", {}).get("message_id")
+    except Exception as e:
+        print(f"⚠️ خطا در ارسال تلگرام: {e}")
+    return None
+
+def delete_telegram(message_id):
+    """حذف پیام تلگرام"""
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/deleteMessage"
+    try:
+        requests.post(url, json={"chat_id": CHAT_ID, "message_id": message_id}, timeout=10)
+    except Exception as e:
+        print(f"⚠️ خطا در حذف پیام: {e}")
+
+# --- Heartbeat ---
+def load_heartbeat_ids():
+    try:
+        with open(HEARTBEAT_FILE, "r") as f:
+            return json.load(f).get("message_ids", [])
+    except (FileNotFoundError, json.JSONDecodeError):
+        return []
+
+def save_heartbeat_ids(ids):
+    with open(HEARTBEAT_FILE, "w") as f:
+        json.dump({"message_ids": ids}, f)
+
+def send_heartbeat():
+    """ارسال پیام Heartbeat و مدیریت حذف پیام‌های قدیمی"""
+    date_str, time_str = get_iran_time()
+    msg = f"""🖥️ سرور آنلاین
+━━━━━━━━━━━━━━━━━
+📅 تاریخ: {date_str}
+⏰ ساعت: {time_str}
+━━━━━━━━━━━━━━━━━"""
+
+    ids = load_heartbeat_ids()
+    new_id = send_telegram(msg)
+
+    if new_id:
+        ids.append(new_id)
+
+        # حذف پیام‌های قدیمی‌تر از ۴ تا
+        while len(ids) > MAX_HEARTBEATS:
+            old_id = ids.pop(0)
+            delete_telegram(old_id)
+
+        save_heartbeat_ids(ids)
+
+# --- داده و تحلیل ---
+def create_exchange():
+    return ccxt.toobit({
         'apiKey': TOOBIT_API_KEY,
         'secret': TOOBIT_SECRET,
+        'enableRateLimit': True,
     })
-    ohlcv = exchange.fetch_ohlcv(symbol, timeframe='1h', limit=100)
+
+def fetch_ohlcv(exchange, symbol, timeframe, limit=100):
+    ohlcv = exchange.fetch_ohlcv(symbol, timeframe=timeframe, limit=limit)
     df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
     return df
 
-def analyze(df):
-    """تحلیل با RSI (موقت)"""
+def calculate_indicators(df):
+    """محاسبه EMA، RSI، MACD، ATR"""
+    # EMA
+    df['ema20'] = df['close'].ewm(span=20, adjust=False).mean()
+    df['ema50'] = df['close'].ewm(span=50, adjust=False).mean()
+
+    # RSI
     delta = df['close'].diff()
     gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
     loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
     rs = gain / loss
     df['rsi'] = 100 - (100 / (1 + rs))
 
-    last_rsi = df['rsi'].iloc[-1]
-    last_price = df['close'].iloc[-1]
+    # MACD
+    exp1 = df['close'].ewm(span=12, adjust=False).mean()
+    exp2 = df['close'].ewm(span=26, adjust=False).mean()
+    macd = exp1 - exp2
+    signal_line = macd.ewm(span=9, adjust=False).mean()
+    df['macd_hist'] = macd - signal_line
 
-    if last_rsi < 30:
-        return "BUY", last_rsi, last_price
-    elif last_rsi > 70:
-        return "SELL", last_rsi, last_price
-    return None, last_rsi, last_price
+    # ATR
+    high_low = df['high'] - df['low']
+    high_close = (df['high'] - df['close'].shift()).abs()
+    low_close = (df['low'] - df['close'].shift()).abs()
+    tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
+    df['atr'] = tr.rolling(window=14).mean()
 
-def send_telegram(message):
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    requests.post(url, json={"chat_id": CHAT_ID, "text": message})
+    return df
 
+def analyze(symbol, exchange):
+    """تحلیل چند تایم‌فریمی و تولید سیگنال"""
+    # تایم ۴ ساعته برای تشخیص روند
+    df_4h = fetch_ohlcv(exchange, symbol, '4h', 100)
+    df_4h = calculate_indicators(df_4h)
+    last_4h = df_4h.iloc[-1]
+
+    trend_long = last_4h['ema20'] > last_4h['ema50']
+    trend_short = last_4h['ema20'] < last_4h['ema50']
+
+    # تایم ۱ ساعته برای ورود
+    df_1h = fetch_ohlcv(exchange, symbol, '1h', 100)
+    df_1h = calculate_indicators(df_1h)
+    last_1h = df_1h.iloc[-1]
+    prev_1h = df_1h.iloc[-2]
+
+    entry_price = last_1h['close']
+    atr = last_1h['atr']
+
+    signal = None
+    sl = tp = None
+
+    # شرط LONG
+    if trend_long:
+        if prev_1h['rsi'] < 35 and last_1h['rsi'] > 35 and last_1h['macd_hist'] > 0:
+            signal = "LONG"
+            sl = entry_price - (atr * 1.5)
+            tp = entry_price + (atr * 3.0)
+
+    # شرط SHORT
+    elif trend_short:
+        if prev_1h['rsi'] > 65 and last_1h['rsi'] < 65 and last_1h['macd_hist'] < 0:
+            signal = "SHORT"
+            sl = entry_price + (atr * 1.5)
+            tp = entry_price - (atr * 3.0)
+
+    return signal, entry_price, sl, tp, last_1h['rsi'], atr
+
+def format_number(value):
+    """فرمت عدد بر اساس بزرگی قیمت"""
+    if value >= 1000:
+        return f"{value:.2f}"
+    elif value >= 1:
+        return f"{value:.4f}"
+    else:
+        return f"{value:.6f}"
+
+# --- اجرای اصلی ---
 if __name__ == "__main__":
-    print("Starting multi-symbol analysis...")
+    print("=" * 50)
+    print("Starting bot cycle...")
+
+    # ۱. ارسال Heartbeat
+    send_heartbeat()
+    print("✅ Heartbeat sent.")
+
+    # ۲. تحلیل هر نماد
+    exchange = create_exchange()
+    date_str, time_str = get_iran_time()
+
     for symbol in SYMBOLS:
         try:
             print(f"--- Checking {symbol} ---")
-            df = fetch_data(symbol)
-            signal, rsi, price = analyze(df)
-            print(f"{symbol} | Price: {price} | RSI: {rsi:.2f} | Signal: {signal}")
+            signal, entry, sl, tp, rsi, atr = analyze(symbol, exchange)
 
-            if signal:
-                msg = f"🚨 سیگنال {signal}\nنماد: {symbol}\nقیمت: {price}\nRSI: {rsi:.2f}"
-                send_telegram(msg)
-                print(f"Signal for {symbol} sent to Telegram!")
+            if signal is None:
+                print(f"{symbol} | Price: {entry} | RSI: {rsi:.2f} | No signal")
+                continue
+
+            # محاسبه نسبت ریسک به ریوارد
+            if signal == "LONG":
+                rr = (tp - entry) / (entry - sl)
+                emoji = "🟢"
+            else:
+                rr = (entry - tp) / (sl - entry)
+                emoji = "🔴"
+
+            msg = f"""{emoji} سیگنال {signal}
+━━━━━━━━━━━━━━━━━
+📌 نماد: {symbol}
+💰 قیمت ورود: {format_number(entry)}
+🎯 حد سود (TP): {format_number(tp)}
+🛑 حد ضرر (SL): {format_number(sl)}
+📊 نسبت R:R: 1:{rr:.1f}
+📈 RSI: {rsi:.2f}
+📉 ATR: {format_number(atr)}
+━━━━━━━━━━━━━━━━━
+📅 تاریخ: {date_str}
+⏰ ساعت: {time_str}
+━━━━━━━━━━━━━━━━━"""
+
+            send_telegram(msg)
+            print(f"✅ {signal} signal for {symbol} sent!")
+
         except Exception as e:
             print(f"⚠️ خطا در {symbol}: {e}")
             continue
 
     print("Analysis complete.")
+    print("=" * 50)
