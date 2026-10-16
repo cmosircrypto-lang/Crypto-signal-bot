@@ -2,12 +2,15 @@ name: Crypto Signal Bot
 
 on:
   schedule:
-    - cron: '*/15 * * * *'  # هر ۱۵ دقیقه
-  workflow_dispatch:  # اجرای دستی
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
 
 jobs:
   analyze:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
     steps:
       - uses: actions/checkout@v4
 
@@ -26,3 +29,11 @@ jobs:
           TOOBIT_API_KEY: ${{ secrets.TOOBIT_API_KEY }}
           TOOBIT_SECRET: ${{ secrets.TOOBIT_SECRET }}
         run: python main.py
+
+      - name: Commit heartbeat IDs
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add server_messages.json
+          git diff --quiet && git diff --staged --quiet || git commit -m "Update heartbeat IDs [skip ci]"
+          git push
