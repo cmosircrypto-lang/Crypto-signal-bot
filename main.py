@@ -56,3 +56,6 @@ if __name__ == "__main__":
         print("Signal sent to Telegram!")
     else:
         print("No signal. Skipping.")
+
+    # --- تست ارسال به تلگرام ---
+    send_telegram("✅ تست موفق! ربات سیگنال متصل شد.")
