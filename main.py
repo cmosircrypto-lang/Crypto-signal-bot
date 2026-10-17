@@ -24,9 +24,9 @@ SYMBOLS = [
 ]
 
 HEARTBEAT_FILE = "server_messages.json"
-SIGNALS_FILE = "last_signals.json"  # فایل جدید برای جلوگیری از تکرار
+SIGNALS_FILE = "last_signals.json" 
 MAX_HEARTBEATS = 4
-COOLDOWN_HOURS = 2  # زمان خنک شدن (تا ۲ ساعت سیگنال تکراری نمیدهد)
+COOLDOWN_HOURS = 2 
 
 # --- ابزارهای عمومی ---
 def get_iran_time():
@@ -87,7 +87,6 @@ def send_heartbeat():
 
 # --- مدیریت سیگنال‌های تکراری ---
 def is_signal_allowed(symbol, signal_type):
-    """بررسی می‌کند آیا ۲ ساعت از سیگنال قبلی گذشته است یا نه"""
     try:
         with open(SIGNALS_FILE, "r") as f:
             data = json.load(f)
@@ -100,12 +99,10 @@ def is_signal_allowed(symbol, signal_type):
     if last_time_str:
         last_time = datetime.fromisoformat(last_time_str)
         if now - last_time < timedelta(hours=COOLDOWN_HOURS):
-            return False # هنوز زود است، سیگنال نده
-
+            return False 
     return True
 
 def save_signal_record(symbol, signal_type):
-    """ذخیره زمان و نوع سیگنال برای جلوگیری از تکرار"""
     try:
         with open(SIGNALS_FILE, "r") as f:
             data = json.load(f)
@@ -156,6 +153,23 @@ def calculate_indicators(df):
     df['atr'] = tr.rolling(window=14).mean()
 
     return df
+
+# --- تشخیص روند کلی بازار (بیت‌کوین) ---
+def get_market_trend(exchange):
+    try:
+        df_btc = fetch_ohlcv(exchange, "BTC-SWAP-USDT", '4h', 100)
+        df_btc = calculate_indicators(df_btc)
+        last_btc = df_btc.iloc[-1]
+        
+        if last_btc['ema20'] > last_btc['ema50']:
+            return "LONG"
+        elif last_btc['ema20'] < last_btc['ema50']:
+            return "SHORT"
+        else:
+            return "NONE"
+    except Exception as e:
+        print(f"⚠️ خطا در دریافت روند بیت‌کوین: {e}")
+        return "UNKNOWN"
 
 def analyze(symbol, exchange):
     df_4h = fetch_ohlcv(exchange, symbol, '4h', 100)
@@ -213,6 +227,10 @@ if __name__ == "__main__":
     exchange = create_exchange()
     date_gregorian, date_jalali, time_str = get_iran_time()
 
+    # دریافت روند کلی بازار از بیت‌کوین
+    market_trend = get_market_trend(exchange)
+    print(f"🌍 Global Market Trend (BTC): {market_trend}")
+
     for symbol in SYMBOLS:
         try:
             print(f"--- Checking {symbol} ---")
@@ -222,7 +240,11 @@ if __name__ == "__main__":
                 print(f"{symbol} | Price: {entry} | RSI: {rsi:.2f} | No signal")
                 continue
 
-            # بررسی قانون ۲ ساعت
+            # فیلتر بیت‌کوین: اگر روند بیت‌کوین با سیگنال هم‌جهت نبود، سیگنال رد شود
+            if market_trend != "UNKNOWN" and signal != market_trend:
+                print(f"🚫 {symbol} signal {signal} rejected. Market trend is {market_trend}.")
+                continue
+
             if not is_signal_allowed(symbol, signal):
                 print(f"⏳ {symbol} signal {signal} skipped (Cooldown)")
                 continue
@@ -250,7 +272,7 @@ if __name__ == "__main__":
 ━━━━━━━━━━━━━━━━━"""
 
             send_telegram(msg)
-            save_signal_record(symbol, signal) # ذخیره سیگنال
+            save_signal_record(symbol, signal) 
             print(f"✅ {signal} signal for {symbol} sent and recorded!")
 
         except Exception as e:
