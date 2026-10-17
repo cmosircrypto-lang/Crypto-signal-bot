@@ -3,7 +3,7 @@ import json
 import requests
 import pandas as pd
 import ccxt
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 import jdatetime
 
@@ -24,11 +24,12 @@ SYMBOLS = [
 ]
 
 HEARTBEAT_FILE = "server_messages.json"
+SIGNALS_FILE = "last_signals.json"  # فایل جدید برای جلوگیری از تکرار
 MAX_HEARTBEATS = 4
+COOLDOWN_HOURS = 2  # زمان خنک شدن (تا ۲ ساعت سیگنال تکراری نمیدهد)
 
 # --- ابزارهای عمومی ---
 def get_iran_time():
-    """تاریخ شمسی و میلادی + ساعت به وقت ایران"""
     now = datetime.now(ZoneInfo("Asia/Tehran"))
     date_gregorian = now.strftime("%Y-%m-%d")
     now_jalali = jdatetime.datetime.fromgregorian(datetime=now)
@@ -37,7 +38,6 @@ def get_iran_time():
     return date_gregorian, date_jalali, time_str
 
 def send_telegram(message):
-    """ارسال پیام به تلگرام و برگرداندن message_id"""
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     try:
         r = requests.post(url, json={"chat_id": CHAT_ID, "text": message}, timeout=10)
@@ -48,7 +48,6 @@ def send_telegram(message):
     return None
 
 def delete_telegram(message_id):
-    """حذف پیام تلگرام"""
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/deleteMessage"
     try:
         requests.post(url, json={"chat_id": CHAT_ID, "message_id": message_id}, timeout=10)
@@ -68,7 +67,6 @@ def save_heartbeat_ids(ids):
         json.dump({"message_ids": ids}, f)
 
 def send_heartbeat():
-    """ارسال پیام Heartbeat و مدیریت حذف پیام‌های قدیمی"""
     date_gregorian, date_jalali, time_str = get_iran_time()
     msg = f"""🖥️ سرور آنلاین
 ━━━━━━━━━━━━━━━━━
@@ -87,6 +85,41 @@ def send_heartbeat():
             delete_telegram(old_id)
         save_heartbeat_ids(ids)
 
+# --- مدیریت سیگنال‌های تکراری ---
+def is_signal_allowed(symbol, signal_type):
+    """بررسی می‌کند آیا ۲ ساعت از سیگنال قبلی گذشته است یا نه"""
+    try:
+        with open(SIGNALS_FILE, "r") as f:
+            data = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        data = {}
+
+    now = datetime.now()
+    last_time_str = data.get(symbol, {}).get("time")
+    
+    if last_time_str:
+        last_time = datetime.fromisoformat(last_time_str)
+        if now - last_time < timedelta(hours=COOLDOWN_HOURS):
+            return False # هنوز زود است، سیگنال نده
+
+    return True
+
+def save_signal_record(symbol, signal_type):
+    """ذخیره زمان و نوع سیگنال برای جلوگیری از تکرار"""
+    try:
+        with open(SIGNALS_FILE, "r") as f:
+            data = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        data = {}
+    
+    data[symbol] = {
+        "type": signal_type,
+        "time": datetime.now().isoformat()
+    }
+    
+    with open(SIGNALS_FILE, "w") as f:
+        json.dump(data, f)
+
 # --- داده و تحلیل ---
 def create_exchange():
     return ccxt.toobit({
@@ -101,7 +134,6 @@ def fetch_ohlcv(exchange, symbol, timeframe, limit=100):
     return df
 
 def calculate_indicators(df):
-    """محاسبه EMA، RSI، MACD، ATR"""
     df['ema20'] = df['close'].ewm(span=20, adjust=False).mean()
     df['ema50'] = df['close'].ewm(span=50, adjust=False).mean()
 
@@ -126,8 +158,6 @@ def calculate_indicators(df):
     return df
 
 def analyze(symbol, exchange):
-    """تحلیل چند تایم‌فریمی و تولید سیگنال"""
-    # تایم ۴ ساعته برای تشخیص روند
     df_4h = fetch_ohlcv(exchange, symbol, '4h', 100)
     df_4h = calculate_indicators(df_4h)
     last_4h = df_4h.iloc[-1]
@@ -135,7 +165,6 @@ def analyze(symbol, exchange):
     trend_long = last_4h['ema20'] > last_4h['ema50']
     trend_short = last_4h['ema20'] < last_4h['ema50']
 
-    # تایم ۱ ساعته برای ورود
     df_1h = fetch_ohlcv(exchange, symbol, '1h', 100)
     df_1h = calculate_indicators(df_1h)
     last_1h = df_1h.iloc[-1]
@@ -144,22 +173,19 @@ def analyze(symbol, exchange):
     entry_price = last_1h['close']
     atr = last_1h['atr']
 
-    # --- دیباگ: چاپ وضعیت شرط‌ها ---
     print(f"  [DEBUG 4H] EMA20: {last_4h['ema20']:.4f} | EMA50: {last_4h['ema50']:.4f} | Trend: {'LONG' if trend_long else 'SHORT' if trend_short else 'NONE'}")
     print(f"  [DEBUG 1H] RSI prev: {prev_1h['rsi']:.2f} | RSI now: {last_1h['rsi']:.2f} | MACD hist: {last_1h['macd_hist']:.6f}")
-    print(f"  [DEBUG CHK] trend_long={trend_long} | rsi_cond={prev_1h['rsi'] < 35 and last_1h['rsi'] > 35} | macd_cond={last_1h['macd_hist'] > 0}")
+    print(f"  [DEBUG CHK] trend_long={trend_long} | rsi_cond={prev_1h['rsi'] < 40 and last_1h['rsi'] > 40} | macd_cond={last_1h['macd_hist'] > 0}")
 
     signal = None
     sl = tp = None
 
-    # شرط LONG
     if trend_long:
         if prev_1h['rsi'] < 40 and last_1h['rsi'] > 40 and last_1h['macd_hist'] > 0:
             signal = "LONG"
             sl = entry_price - (atr * 1.5)
             tp = entry_price + (atr * 3.0)
 
-    # شرط SHORT
     elif trend_short:
         if prev_1h['rsi'] > 60 and last_1h['rsi'] < 60 and last_1h['macd_hist'] < 0:
             signal = "SHORT"
@@ -169,7 +195,6 @@ def analyze(symbol, exchange):
     return signal, entry_price, sl, tp, last_1h['rsi'], atr
 
 def format_number(value):
-    """فرمت عدد بر اساس بزرگی قیمت"""
     if value >= 1000:
         return f"{value:.2f}"
     elif value >= 1:
@@ -197,6 +222,11 @@ if __name__ == "__main__":
                 print(f"{symbol} | Price: {entry} | RSI: {rsi:.2f} | No signal")
                 continue
 
+            # بررسی قانون ۲ ساعت
+            if not is_signal_allowed(symbol, signal):
+                print(f"⏳ {symbol} signal {signal} skipped (Cooldown)")
+                continue
+
             if signal == "LONG":
                 rr = (tp - entry) / (entry - sl)
                 emoji = "🟢"
@@ -220,7 +250,8 @@ if __name__ == "__main__":
 ━━━━━━━━━━━━━━━━━"""
 
             send_telegram(msg)
-            print(f"✅ {signal} signal for {symbol} sent!")
+            save_signal_record(symbol, signal) # ذخیره سیگنال
+            print(f"✅ {signal} signal for {symbol} sent and recorded!")
 
         except Exception as e:
             print(f"⚠️ خطا در {symbol}: {e}")
