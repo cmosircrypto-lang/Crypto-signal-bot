@@ -154,14 +154,14 @@ def analyze(symbol, exchange):
 
     # شرط LONG
     if trend_long:
-        if prev_1h['rsi'] < 35 and last_1h['rsi'] > 35 and last_1h['macd_hist'] > 0:
+        if prev_1h['rsi'] < 40 and last_1h['rsi'] > 40 and last_1h['macd_hist'] > 0:
             signal = "LONG"
             sl = entry_price - (atr * 1.5)
             tp = entry_price + (atr * 3.0)
 
     # شرط SHORT
     elif trend_short:
-        if prev_1h['rsi'] > 65 and last_1h['rsi'] < 65 and last_1h['macd_hist'] < 0:
+        if prev_1h['rsi'] > 60 and last_1h['rsi'] < 60 and last_1h['macd_hist'] < 0:
             signal = "SHORT"
             sl = entry_price + (atr * 1.5)
             tp = entry_price - (atr * 3.0)
