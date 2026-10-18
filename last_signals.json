@@ -1,1 +1,1 @@
-{"TIA-SWAP-USDT": {"direction": "LONG", "entry": 0.6514, "tp": 0.6724214285714286, "sl": 0.6408892857142856, "status": "OPEN", "time": "2026-10-18T09:45:53.327880"}}
+{"TIA-SWAP-USDT": {"direction": "LONG", "entry": 0.6514, "tp": 0.6724214285714286, "sl": 0.6408892857142856, "status": "CLOSED", "time": "2026-10-18T09:45:53.327880", "result": "SL"}}
