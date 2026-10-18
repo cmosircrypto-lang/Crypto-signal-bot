@@ -23,10 +23,11 @@ SYMBOLS = [
     "INJ-SWAP-USDT"
 ]
 
-HEARTBEAT_FILE = "server_messages.json"
+# اسامی فایل‌ها (چون کد قبلی V1 بوده، اسم فایل‌ها را بدون v10 می‌گذاریم تا با ریپازیتوری اصلی هماهنگ باشد)
+HEARTBEAT_FILE = "server_messages.json" 
 SIGNALS_FILE = "last_signals.json" 
 MAX_HEARTBEATS = 4
-COOLDOWN_HOURS = 2 
+MAX_SIGNALS_PER_CYCLE = 3  # حداکثر تعداد سیگنال در هر چرخه
 
 # --- ابزارهای عمومی ---
 def get_iran_time():
@@ -85,37 +86,82 @@ def send_heartbeat():
             delete_telegram(old_id)
         save_heartbeat_ids(ids)
 
-# --- مدیریت سیگنال‌های تکراری ---
-def is_signal_allowed(symbol, signal_type):
+# --- مدیریت معاملات باز و بسته ---
+def load_signals():
     try:
         with open(SIGNALS_FILE, "r") as f:
-            data = json.load(f)
+            return json.load(f)
     except (FileNotFoundError, json.JSONDecodeError):
-        data = {}
+        return {}
 
-    now = datetime.now()
-    last_time_str = data.get(symbol, {}).get("time")
-    
-    if last_time_str:
-        last_time = datetime.fromisoformat(last_time_str)
-        if now - last_time < timedelta(hours=COOLDOWN_HOURS):
-            return False 
-    return True
-
-def save_signal_record(symbol, signal_type):
-    try:
-        with open(SIGNALS_FILE, "r") as f:
-            data = json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
-        data = {}
-    
-    data[symbol] = {
-        "type": signal_type,
-        "time": datetime.now().isoformat()
-    }
-    
+def save_signals(data):
     with open(SIGNALS_FILE, "w") as f:
         json.dump(data, f)
+
+def update_open_trades(exchange):
+    """بررسی می‌کند آیا معاملات باز به TP یا SL رسیده‌اند یا نه"""
+    signals = load_signals()
+    updated = False
+    date_gregorian, date_jalali, time_str = get_iran_time()
+    
+    for symbol, data in list(signals.items()):
+        if data.get("status") == "OPEN":
+            try:
+                ticker = exchange.fetch_ticker(symbol)
+                current_price = ticker['last']
+                
+                entry = data['entry']
+                tp = data['tp']
+                sl = data['sl']
+                direction = data['direction']
+                
+                result = None
+                
+                if direction == "LONG":
+                    if current_price >= tp:
+                        result = "TP"
+                    elif current_price <= sl:
+                        result = "SL"
+                elif direction == "SHORT":
+                    if current_price <= tp:
+                        result = "TP"
+                    elif current_price >= sl:
+                        result = "SL"
+                
+                if result:
+                    signals[symbol]['status'] = "CLOSED"
+                    signals[symbol]['result'] = result
+                    updated = True
+                    
+                    if result == "TP":
+                        emoji = "🎯"
+                        title = "حد سود (TP) لمس شد"
+                    else:
+                        emoji = "🛑"
+                        title = "حد ضرر (SL) لمس شد"
+
+                    print(f"{emoji} {symbol} {direction} hit {result} at {current_price}")
+                    
+                    close_msg = f"""{emoji} بسته شدن معامله
+━━━━━━━━━━━━━━━━━
+📌 نماد: {symbol}
+📊 جهت: {direction}
+🏁 نتیجه: {title}
+💰 قیمت بسته شدن: {format_number(current_price)}
+🚪 قیمت ورود: {format_number(entry)}
+━━━━━━━━━━━━━━━━━
+📅 تاریخ شمسی: {date_jalali}
+📅 تاریخ میلادی: {date_gregorian}
+⏰ ساعت: {time_str}
+━━━━━━━━━━━━━━━━━"""
+                    send_telegram(close_msg)
+
+            except Exception as e:
+                print(f"⚠️ خطا در بررسی {symbol}: {e}")
+                continue
+                
+    if updated:
+        save_signals(signals)
 
 # --- داده و تحلیل ---
 def create_exchange():
@@ -131,20 +177,14 @@ def fetch_ohlcv(exchange, symbol, timeframe, limit=100):
     return df
 
 def calculate_indicators(df):
-    df['ema20'] = df['close'].ewm(span=20, adjust=False).mean()
-    df['ema50'] = df['close'].ewm(span=50, adjust=False).mean()
+    df['ema9'] = df['close'].ewm(span=9, adjust=False).mean()
+    df['ema21'] = df['close'].ewm(span=21, adjust=False).mean()
 
     delta = df['close'].diff()
     gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
     loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
     rs = gain / loss
     df['rsi'] = 100 - (100 / (1 + rs))
-
-    exp1 = df['close'].ewm(span=12, adjust=False).mean()
-    exp2 = df['close'].ewm(span=26, adjust=False).mean()
-    macd = exp1 - exp2
-    signal_line = macd.ewm(span=9, adjust=False).mean()
-    df['macd_hist'] = macd - signal_line
 
     high_low = df['high'] - df['low']
     high_close = (df['high'] - df['close'].shift()).abs()
@@ -154,16 +194,16 @@ def calculate_indicators(df):
 
     return df
 
-# --- تشخیص روند کلی بازار (بیت‌کوین) ---
-def get_market_trend(exchange):
+def get_btc_1h_trend(exchange):
+    """روند بیت‌کوین در تایم 1 ساعته را برمی‌گرداند"""
     try:
-        df_btc = fetch_ohlcv(exchange, "BTC-SWAP-USDT", '4h', 100)
+        df_btc = fetch_ohlcv(exchange, "BTC-SWAP-USDT", '1h', 100)
         df_btc = calculate_indicators(df_btc)
         last_btc = df_btc.iloc[-1]
         
-        if last_btc['ema20'] > last_btc['ema50']:
+        if last_btc['ema9'] > last_btc['ema21']:
             return "LONG"
-        elif last_btc['ema20'] < last_btc['ema50']:
+        elif last_btc['ema9'] < last_btc['ema21']:
             return "SHORT"
         else:
             return "NONE"
@@ -176,37 +216,38 @@ def analyze(symbol, exchange):
     df_4h = calculate_indicators(df_4h)
     last_4h = df_4h.iloc[-1]
 
-    trend_long = last_4h['ema20'] > last_4h['ema50']
-    trend_short = last_4h['ema20'] < last_4h['ema50']
+    df_15m = fetch_ohlcv(exchange, symbol, '15m', 100)
+    df_15m = calculate_indicators(df_15m)
+    last_15m = df_15m.iloc[-1]
 
-    df_1h = fetch_ohlcv(exchange, symbol, '1h', 100)
-    df_1h = calculate_indicators(df_1h)
-    last_1h = df_1h.iloc[-1]
-    prev_1h = df_1h.iloc[-2]
+    entry_price = last_15m['close']
+    atr = last_15m['atr']
+    rsi_15m = last_15m['rsi']
 
-    entry_price = last_1h['close']
-    atr = last_1h['atr']
+    trend_long_4h = last_4h['ema9'] > last_4h['ema21']
+    trend_short_4h = last_4h['ema9'] < last_4h['ema21']
+    trend_long_15m = last_15m['ema9'] > last_15m['ema21']
+    trend_short_15m = last_15m['ema9'] < last_15m['ema21']
 
-    print(f"  [DEBUG 4H] EMA20: {last_4h['ema20']:.4f} | EMA50: {last_4h['ema50']:.4f} | Trend: {'LONG' if trend_long else 'SHORT' if trend_short else 'NONE'}")
-    print(f"  [DEBUG 1H] RSI prev: {prev_1h['rsi']:.2f} | RSI now: {last_1h['rsi']:.2f} | MACD hist: {last_1h['macd_hist']:.6f}")
-    print(f"  [DEBUG CHK] trend_long={trend_long} | rsi_cond={prev_1h['rsi'] < 40 and last_1h['rsi'] > 40} | macd_cond={last_1h['macd_hist'] > 0}")
-
+    print(f"  [DEBUG 4H] EMA9: {last_4h['ema9']:.4f} | EMA21: {last_4h['ema21']:.4f} | Trend: {'LONG' if trend_long_4h else 'SHORT' if trend_short_4h else 'NONE'}")
+    print(f"  [DEBUG 15m] EMA9: {last_15m['ema9']:.4f} | EMA21: {last_15m['ema21']:.4f} | RSI: {rsi_15m:.2f}")
+    
     signal = None
     sl = tp = None
 
-    if trend_long:
-        if prev_1h['rsi'] < 40 and last_1h['rsi'] > 40 and last_1h['macd_hist'] > 0:
+    if trend_long_4h:
+        if trend_long_15m and rsi_15m > 50:
             signal = "LONG"
             sl = entry_price - (atr * 1.5)
             tp = entry_price + (atr * 3.0)
 
-    elif trend_short:
-        if prev_1h['rsi'] > 60 and last_1h['rsi'] < 60 and last_1h['macd_hist'] < 0:
+    elif trend_short_4h:
+        if trend_short_15m and rsi_15m < 50:
             signal = "SHORT"
             sl = entry_price + (atr * 1.5)
             tp = entry_price - (atr * 3.0)
 
-    return signal, entry_price, sl, tp, last_1h['rsi'], atr
+    return signal, entry_price, sl, tp, rsi_15m, atr
 
 def format_number(value):
     if value >= 1000:
@@ -227,26 +268,39 @@ if __name__ == "__main__":
     exchange = create_exchange()
     date_gregorian, date_jalali, time_str = get_iran_time()
 
-    # دریافت روند کلی بازار از بیت‌کوین
-    market_trend = get_market_trend(exchange)
-    print(f"🌍 Global Market Trend (BTC): {market_trend}")
+    # ۱. بررسی معاملات باز
+    print("🔍 Checking open trades...")
+    update_open_trades(exchange)
+    signals_data = load_signals()
+
+    # ۲. دریافت روند بیت‌کوین 1 ساعته
+    btc_trend = get_btc_1h_trend(exchange)
+    print(f"🌍 BTC 1H Trend: {btc_trend}")
+
+    signals_sent_this_cycle = 0
 
     for symbol in SYMBOLS:
         try:
             print(f"--- Checking {symbol} ---")
+            
+            if symbol in signals_data and signals_data[symbol].get("status") == "OPEN":
+                print(f"⏳ {symbol} has an OPEN trade. Skipping.")
+                continue
+
             signal, entry, sl, tp, rsi, atr = analyze(symbol, exchange)
 
             if signal is None:
                 print(f"{symbol} | Price: {entry} | RSI: {rsi:.2f} | No signal")
                 continue
 
-            # فیلتر بیت‌کوین: اگر روند بیت‌کوین با سیگنال هم‌جهت نبود، سیگنال رد شود
-            if market_trend != "UNKNOWN" and signal != market_trend:
-                print(f"🚫 {symbol} signal {signal} rejected. Market trend is {market_trend}.")
+            # فیلتر بیت‌کوین 1 ساعته
+            if btc_trend != "UNKNOWN" and btc_trend != "NONE" and signal != btc_trend:
+                print(f"🚫 {symbol} signal {signal} rejected. BTC 1H trend is {btc_trend}.")
                 continue
 
-            if not is_signal_allowed(symbol, signal):
-                print(f"⏳ {symbol} signal {signal} skipped (Cooldown)")
+            # محدودیت تعداد سیگنال در هر چرخه
+            if signals_sent_this_cycle >= MAX_SIGNALS_PER_CYCLE:
+                print(f"🛑 Reached max signals per cycle ({MAX_SIGNALS_PER_CYCLE}). Skipping {symbol}.")
                 continue
 
             if signal == "LONG":
@@ -272,8 +326,18 @@ if __name__ == "__main__":
 ━━━━━━━━━━━━━━━━━"""
 
             send_telegram(msg)
-            save_signal_record(symbol, signal) 
-            print(f"✅ {signal} signal for {symbol} sent and recorded!")
+            
+            signals_data[symbol] = {
+                "direction": signal,
+                "entry": entry,
+                "tp": tp,
+                "sl": sl,
+                "status": "OPEN",
+                "time": datetime.now().isoformat()
+            }
+            save_signals(signals_data)
+            signals_sent_this_cycle += 1
+            print(f"✅ {signal} signal for {symbol} sent and recorded as OPEN! ({signals_sent_this_cycle}/{MAX_SIGNALS_PER_CYCLE})")
 
         except Exception as e:
             print(f"⚠️ خطا در {symbol}: {e}")
