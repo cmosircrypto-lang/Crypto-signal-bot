@@ -15,7 +15,8 @@ TOOBIT_SECRET = os.environ.get("TOOBIT_SECRET")
 
 SYMBOLS = [
     "BTC-SWAP-USDT", "ETH-SWAP-USDT", "SOL-SWAP-USDT", "XRP-SWAP-USDT",
-    "ADA-SWAP-USDT", "DOGE-SWAP-USDT", "BNB-SWAP-USDT", "AVAX-SWAP-USDT",
+    "ADA-SWAP])
+-USDT", "DOGE-SWAP-USDT", "BNB-SWAP-USDT", "AVAX-SWAP-USDT",
     "LINK-SWAP-USDT", "DOT-SWAP-USDT", "LTC-SWAP-USDT", "TON-SWAP-USDT",
     "UNI-SWAP-USDT", "AAVE-SWAP-USDT", "NEAR-SWAP-USDT", "SUI-SWAP-USDT",
     "APT-SWAP-USDT", "ARB-SWAP-USDT", "ATOM-SWAP-USDT", "FIL-SWAP-USDT",
@@ -23,11 +24,10 @@ SYMBOLS = [
     "INJ-SWAP-USDT"
 ]
 
-# اسامی فایل‌ها (چون کد قبلی V1 بوده، اسم فایل‌ها را بدون v10 می‌گذاریم تا با ریپازیتوری اصلی هماهنگ باشد)
 HEARTBEAT_FILE = "server_messages.json" 
 SIGNALS_FILE = "last_signals.json" 
 MAX_HEARTBEATS = 4
-MAX_SIGNALS_PER_CYCLE = 3  # حداکثر تعداد سیگنال در هر چرخه
+MAX_SIGNALS_PER_CYCLE = 3
 
 # --- ابزارهای عمومی ---
 def get_iran_time():
@@ -59,8 +59,7 @@ def delete_telegram(message_id):
 def load_heartbeat_ids():
     try:
         with open(HEARTBEAT_FILE, "r") as f:
-            return json.load(f).get("message_ids", [])
-    except (FileNotFoundError, json.JSONDecodeError):
+            return json.load(f).get("message_ids", [    except (FileNotFoundError, json.JSONDecodeError):
         return []
 
 def save_heartbeat_ids(ids):
@@ -86,7 +85,7 @@ def send_heartbeat():
             delete_telegram(old_id)
         save_heartbeat_ids(ids)
 
-# --- مدیریت معاملات باز و بسته ---
+# --- مدیریت معاملات ---
 def load_signals():
     try:
         with open(SIGNALS_FILE, "r") as f:
@@ -99,7 +98,6 @@ def save_signals(data):
         json.dump(data, f)
 
 def update_open_trades(exchange):
-    """بررسی می‌کند آیا معاملات باز به TP یا SL رسیده‌اند یا نه"""
     signals = load_signals()
     updated = False
     date_gregorian, date_jalali, time_str = get_iran_time()
@@ -118,15 +116,11 @@ def update_open_trades(exchange):
                 result = None
                 
                 if direction == "LONG":
-                    if current_price >= tp:
-                        result = "TP"
-                    elif current_price <= sl:
-                        result = "SL"
+                    if current_price >= tp: result = "TP"
+                    elif current_price <= sl: result = "SL"
                 elif direction == "SHORT":
-                    if current_price <= tp:
-                        result = "TP"
-                    elif current_price >= sl:
-                        result = "SL"
+                    if current_price <= tp: result = "TP"
+                    elif current_price >= sl: result = "SL"
                 
                 if result:
                     signals[symbol]['status'] = "CLOSED"
@@ -194,22 +188,37 @@ def calculate_indicators(df):
 
     return df
 
-def get_btc_1h_trend(exchange):
-    """روند بیت‌کوین در تایم 1 ساعته را برمی‌گرداند"""
+def get_btc_trend(exchange):
+    """روند بیت‌کوین را در تایم‌های 4 ساعته و 1 ساعته برمی‌گرداند"""
     try:
-        df_btc = fetch_ohlcv(exchange, "BTC-SWAP-USDT", '1h', 100)
-        df_btc = calculate_indicators(df_btc)
-        last_btc = df_btc.iloc[-1]
+        # تایم 4 ساعته
+        df_btc_4h = fetch_ohlcv(exchange, "BTC-SWAP-USDT", '4h', 100)
+        df_btc_4h = calculate_indicators(df_btc_4h)
+        last_btc_4h = df_btc_4h.iloc[-1]
         
-        if last_btc['ema9'] > last_btc['ema21']:
-            return "LONG"
-        elif last_btc['ema9'] < last_btc['ema21']:
-            return "SHORT"
+        if last_btc_4h['ema9'] > last_btc_4h['ema21']:
+            trend_4h = "LONG"
+        elif last_btc_4h['ema9'] < last_btc_4h['ema21']:
+            trend_4h = "SHORT"
         else:
-            return "NONE"
+            trend_4h = "NONE"
+
+        # تایم 1 ساعته
+        df_btc_1h = fetch_ohlcv(exchange, "BTC-SWAP-USDT", '1h', 100)
+        df_btc_1h = calculate_indicators(df_btc_1h)
+        last_btc_1h = df_btc_1h.iloc[-1]
+        
+        if last_btc_1h['ema9'] > last_btc_1h['ema21']:
+            trend_1h = "LONG"
+        elif last_btc_1h['ema9'] < last_btc_1h['ema21']:
+            trend_1h = "SHORT"
+        else:
+            trend_1h = "NONE"
+            
+        return trend_4h, trend_1h
     except Exception as e:
         print(f"⚠️ خطا در دریافت روند بیت‌کوین: {e}")
-        return "UNKNOWN"
+        return "UNKNOWN", "UNKNOWN"
 
 def analyze(symbol, exchange):
     df_4h = fetch_ohlcv(exchange, symbol, '4h', 100)
@@ -238,14 +247,14 @@ def analyze(symbol, exchange):
     if trend_long_4h:
         if trend_long_15m and rsi_15m > 50:
             signal = "LONG"
-            sl = entry_price - (atr * 1.5)
-            tp = entry_price + (atr * 3.0)
+            sl = entry_price - (atr * 2.0)  # SL = 2x ATR
+            tp = entry_price + (atr * 4.0)  # TP = 4x ATR
 
     elif trend_short_4h:
         if trend_short_15m and rsi_15m < 50:
             signal = "SHORT"
-            sl = entry_price + (atr * 1.5)
-            tp = entry_price - (atr * 3.0)
+            sl = entry_price + (atr * 2.0)  # SL = 2x ATR
+            tp = entry_price - (atr * 4.0)  # TP = 4x ATR
 
     return signal, entry_price, sl, tp, rsi_15m, atr
 
@@ -268,14 +277,13 @@ if __name__ == "__main__":
     exchange = create_exchange()
     date_gregorian, date_jalali, time_str = get_iran_time()
 
-    # ۱. بررسی معاملات باز
     print("🔍 Checking open trades...")
     update_open_trades(exchange)
     signals_data = load_signals()
 
-    # ۲. دریافت روند بیت‌کوین 1 ساعته
-    btc_trend = get_btc_1h_trend(exchange)
-    print(f"🌍 BTC 1H Trend: {btc_trend}")
+    # دریافت روند بیت‌کوین در دو تایم‌فریم
+    btc_trend_4h, btc_trend_1h = get_btc_trend(exchange)
+    print(f"🌍 BTC 4H Trend: {btc_trend_4h} | BTC 1H Trend: {btc_trend_1h}")
 
     signals_sent_this_cycle = 0
 
@@ -293,12 +301,15 @@ if __name__ == "__main__":
                 print(f"{symbol} | Price: {entry} | RSI: {rsi:.2f} | No signal")
                 continue
 
-            # فیلتر بیت‌کوین 1 ساعته
-            if btc_trend != "UNKNOWN" and btc_trend != "NONE" and signal != btc_trend:
-                print(f"🚫 {symbol} signal {signal} rejected. BTC 1H trend is {btc_trend}.")
+            # فیلتر بیت‌کوین: باید هم در 4 ساعته و هم در 1 ساعته هم‌جهت باشد
+            if btc_trend_4h != "UNKNOWN" and btc_trend_4h != "NONE" and signal != btc_trend_4h:
+                print(f"🚫 {symbol} signal {signal} rejected. BTC 4H trend is {btc_trend_4h}.")
                 continue
 
-            # محدودیت تعداد سیگنال در هر چرخه
+            if btc_trend_1h != "UNKNOWN" and btc_trend_1h != "NONE" and signal != btc_trend_1h:
+                print(f"🚫 {symbol} signal {signal} rejected. BTC 1H trend is {btc_trend_1h}.")
+                continue
+
             if signals_sent_this_cycle >= MAX_SIGNALS_PER_CYCLE:
                 print(f"🛑 Reached max signals per cycle ({MAX_SIGNALS_PER_CYCLE}). Skipping {symbol}.")
                 continue
