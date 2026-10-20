@@ -54,11 +54,11 @@ def delete_telegram(message_id):
     except Exception as e:
         print(f"⚠️ خطا در حذف پیام: {e}")
 
-# --- Heartbeat ---
 def load_heartbeat_ids():
     try:
         with open(HEARTBEAT_FILE, "r") as f:
-            return json.load(f).get("message_ids", [    except (FileNotFoundError, json.JSONDecodeError):
+            return json.load(f).get("message_ids", [])
+    except (FileNotFoundError, json.JSONDecodeError):
         return []
 
 def save_heartbeat_ids(ids):
