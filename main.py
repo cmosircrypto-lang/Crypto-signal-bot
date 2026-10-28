@@ -426,7 +426,14 @@ def analyze_breakout(symbol, ctx):
           f"Vol x{vol_ratio:.2f} ok={vol_ok} | 4H ok={trend_ok}")
 
     if not (rsi_ok and vol_ok and trend_ok):
-        print(f"    -> rejected (rsi/vol/4h filter)")
+        reasons = []
+        if not rsi_ok:
+            reasons.append(f"RSI {rsi:.1f} خارج {lo}-{hi}")
+        if not vol_ok:
+            reasons.append(f"حجم {vol_ratio:.2f} < {B2_VOLUME_MULT}")
+        if not trend_ok:
+            reasons.append(f"روند ۴ساعته {slow_trend} مخالف {direction}")
+        print(f"    -> rejected: " + " | ".join(reasons))
         return None
 
     if (atr * B2_SL_ATR) / close < MIN_SL_PCT:
