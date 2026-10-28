@@ -187,7 +187,8 @@ def simulate(bot, data, grid, aligns, btc4, btc1, start_j):
                 else:
                     result, px = "TP", d["tp"]
                 closed.append({"symbol": sym, "dir": d["dir"], "result": result,
-                               "R": trade_R(d, px), "exit_ms": T, "setup": d["setup"]})
+                               "R": trade_R(d, px), "exit_ms": T, "entry_ms": d["entry_ms"],
+                               "setup": d["setup"]})
                 del open_tr[sym]
                 cool[sym] = T + bot.cooldown_ms
 
@@ -242,7 +243,7 @@ def simulate(bot, data, grid, aligns, btc4, btc1, start_j):
             if sl <= 0 or tp <= 0:
                 continue
             open_tr[sym] = {"dir": c["direction"], "entry": entry, "sl": sl, "tp": tp,
-                            "setup": c["setup"]}
+                            "setup": c["setup"], "entry_ms": int(grid[j + 1])}
             last_key[sym] = (c["signal_key"], c["direction"])
             sent += 1
             taken += 1
@@ -260,7 +261,8 @@ def simulate(bot, data, grid, aligns, btc4, btc1, start_j):
         open_end.append({"symbol": sym, "dir": d["dir"], "mtm_R": round(r, 3)})
 
     months = (grid[-2] - grid[start_j]) / (30.44 * 24 * 3600 * 1000)
-    return {"closed": closed, "taken": taken, "open_end": open_end, "mtm_R": mtm, "months": months}
+    return {"closed": closed, "taken": taken, "open_end": open_end, "mtm_R": mtm, "months": months,
+            "t0": int(grid[start_j]), "t1": int(grid[-2])}
 
 
 # =====================================================================
@@ -308,7 +310,28 @@ def summarize(bot, res):
         per_sym[c["symbol"]] = per_sym.get(c["symbol"], 0.0) + c["R"]
     ranked = sorted(per_sym.items(), key=lambda x: x[1], reverse=True)
     months = max(res["months"], 1e-9)
+
+    # تقسیم بازه به دو نیمه‌ی زمانی بر اساس زمان ورود: برای بررسی پایداری نتیجه
+    mid = (res["t0"] + res["t1"]) / 2
+    def half_stats(items):
+        Rs = [x["R"] for x in items]
+        n = len(Rs)
+        if n == 0:
+            return {"n": 0}
+        return {
+            "n": n,
+            "win_rate": round(sum(1 for x in items if x["result"] == "TP") / n, 3),
+            "avg_R": round(sum(Rs) / n, 3),
+            "total_R": round(sum(Rs), 2),
+            "by_direction": breakdown(items, "dir"),
+        }
+    halves = {
+        "نیمه‌ی اول": half_stats([c for c in closed if c["entry_ms"] < mid]),
+        "نیمه‌ی دوم": half_stats([c for c in closed if c["entry_ms"] >= mid]),
+    }
+
     return {
+        "halves": halves,
         "bot": bot.name,
         "months": round(months, 2),
         "signals_taken": res["taken"],
@@ -332,6 +355,15 @@ def summarize(bot, res):
     }
 
 
+def _half_line(name, h):
+    if h["n"] == 0:
+        return f"\n   {name}: معامله‌ای نبود"
+    dirs = " | ".join(f"{d} {v['n']}: برد {v['win_rate']:.0%} R {v['avg_R']:+.2f}"
+                      for d, v in sorted(h["by_direction"].items()))
+    return (f"\n   {name}: {h['n']} معامله | برد {h['win_rate']:.0%} | میانگین R {h['avg_R']:+.2f} | R کل {h['total_R']:+.1f}"
+            f"\n      ({dirs})")
+
+
 def format_report(stats):
     lines = ["📊 نتیجه‌ی بک‌تست", f"بازه: {stats[0]['months']} ماه | کارمزد {FEE_PER_SIDE:.2%} و لغزش {SLIP:.2%} به ازای هر طرف",
              "━━━━━━━━━━━━━━━━━"]
@@ -353,6 +385,9 @@ def format_report(stats):
             + "".join(
                 f"\n   setup «{k}»: {v['n']} | برد {v['win_rate']:.0%} | R کل {v['total_R']:+.1f}"
                 for k, v in sorted(s["by_setup"].items(), key=lambda x: -x[1]["n"])[:4]
+            )
+            + "".join(
+                _half_line(name, h) for name, h in s["halves"].items()
             )
         )
     lines.append("━━━━━━━━━━━━━━━━━")
