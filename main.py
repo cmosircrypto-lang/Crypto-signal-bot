@@ -66,6 +66,7 @@ SYMBOLS = [
 
 BTC_SYMBOL = "BTC-SWAP-USDT"
 MAX_HEARTBEATS = 2
+MAX_SIGNALS_PER_RUN = 5          # حداکثر سیگنال جدید در هر اجرا برای هر ربات
 SUMMARY_FILE = "daily_summary.json"
 SUMMARY_HOUR = 8
 
@@ -425,6 +426,7 @@ def analyze_breakout(symbol, ctx):
           f"Vol x{vol_ratio:.2f} ok={vol_ok} | 4H ok={trend_ok}")
 
     if not (rsi_ok and vol_ok and trend_ok):
+        print(f"    -> rejected (rsi/vol/4h filter)")
         return None
 
     if (atr * B2_SL_ATR) / close < MIN_SL_PCT:
@@ -442,7 +444,7 @@ def analyze_breakout(symbol, ctx):
              + 0.20 * trend_score)
 
     if score < B2_MIN_SCORE:
-        print(f"  {symbol}: score too low ({score:.3f})")
+        print(f"    -> rejected (score {score:.3f} < {B2_MIN_SCORE})")
         return None
 
     return {
@@ -597,7 +599,7 @@ def analyze_price_action(symbol, ctx):
 # =====================================================================
 class Bot:
     def __init__(self, name, label, analyze, heartbeat_file, signals_file,
-                 cooldown_hours=0, max_open=8, max_signals=2,
+                 cooldown_hours=0, max_signals=MAX_SIGNALS_PER_RUN,
                  btc_filter_4h=True, btc_filter_1h=False):
         self.name = name
         self.label = label
@@ -605,7 +607,6 @@ class Bot:
         self.heartbeat_file = heartbeat_file
         self.signals_file = signals_file
         self.cooldown_ms = int(cooldown_hours * 3600 * 1000)
-        self.max_open = max_open
         self.max_signals = max_signals
         self.btc_filter_4h = btc_filter_4h
         self.btc_filter_1h = btc_filter_1h
@@ -617,12 +618,12 @@ class Bot:
 
 BOTS = [
     Bot("crypto-signal-bot", "", analyze_cross,
-        "server_messages.json", "last_signals.json", max_signals=2),
+        "server_messages.json", "last_signals.json"),
     Bot("crypto-signal-bot-v10", "Breakout", analyze_breakout,
-        "server_messages_v10.json", "last_signals_v10.json", max_signals=2),
+        "server_messages_v10.json", "last_signals_v10.json"),
     Bot("crypto-signal-bot-v20", "Price Action", analyze_price_action,
         "server_messages_v20.json", "last_signals_v20.json",
-        cooldown_hours=B3_COOLDOWN_HOURS, max_signals=2),
+        cooldown_hours=B3_COOLDOWN_HOURS),
 ]
 
 
@@ -769,7 +770,6 @@ def run_bot(bot, ctx, btc_4h, btc_1h):
 
     update_open_trades(bot, ctx.exchange)
     signals = load_json(bot.signals_file, {})
-    open_count = sum(1 for d in signals.values() if d.get("status") == "OPEN")
 
     candidates = []
     t_now = now_ms()
@@ -814,9 +814,6 @@ def run_bot(bot, ctx, btc_4h, btc_1h):
     sent = 0
     for c in candidates:
         if sent >= bot.max_signals:
-            break
-        if open_count + sent >= bot.max_open:
-            print(f"🛑 {bot.name}: max open trades ({bot.max_open}) reached.")
             break
         symbol = c["symbol"]
         try:
