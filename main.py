@@ -87,17 +87,17 @@ B1_VOLUME_MULT = 1.4
 B1_SL_ATR, B1_TP_ATR = 1.7, 3.4
 B1_MIN_SCORE = 0.62
 
-# --- ربات ۲ (کیفیت بالا) ---
+# --- ربات ۲ (کمی متعادل‌تر شده) ---
 B2_LOOKBACK = 20
-B2_VOLUME_MULT = 2.0
+B2_VOLUME_MULT = 1.7              # قبلاً 2.0
 B2_CLOSE_POS = 0.70
-B2_MAX_EXTENSION_ATR = 0.9
+B2_MAX_EXTENSION_ATR = 1.1        # قبلاً 0.9
 B2_RSI_LONG = (55, 75)
 B2_RSI_SHORT = (25, 45)
 B2_SL_ATR, B2_TP_ATR = 1.5, 3.2
 B2_MAX_RANGE_ATR = 6.0
-B2_MIN_BODY_ATR = 0.6
-B2_MIN_SCORE = 0.65
+B2_MIN_BODY_ATR = 0.45            # قبلاً 0.6
+B2_MIN_SCORE = 0.60               # قبلاً 0.65
 
 # --- ربات ۳ (کیفیت بالا) ---
 B3_MIN_BODY_ATR = 0.70
