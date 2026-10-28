@@ -388,10 +388,6 @@ def analyze_breakout(symbol, ctx):
         print(f"  {symbol}: range too wide ({range_size / atr:.1f} ATR)")
         return None
 
-    if body < B2_MIN_BODY_ATR * atr:
-        print(f"  {symbol}: breakout body too weak")
-        return None
-
     direction = level = None
 
     if (close > range_high and
@@ -407,6 +403,10 @@ def analyze_breakout(symbol, ctx):
         direction, level = "SHORT", range_low
 
     if direction is None:
+        return None
+
+    if body < B2_MIN_BODY_ATR * atr:
+        print(f"  {symbol}: {direction} breakout but body too weak ({body / atr:.2f} ATR)")
         return None
 
     volume = float(last["volume"])
