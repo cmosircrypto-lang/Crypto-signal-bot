@@ -1,1 +1,1 @@
-{}
+{"LTC-SWAP-USDT": {"direction": "LONG", "entry": 58.47, "tp": 60.249020084492116, "sl": 57.58048995775394, "status": "OPEN", "signal_key": 1793174400000, "setup": "EMA9/21 cross 4H (age 1)", "score": 0.6317, "opened_ms": 1793208677026, "time": "2026-10-28T17:31:17.026551+00:00"}}
