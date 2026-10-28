@@ -1,6 +1,8 @@
 name: Crypto Signal Bot
 
 on:
+  # schedule:
+  #   - cron: '*/15 * * * *'
   workflow_dispatch:
 
 concurrency:
@@ -10,7 +12,7 @@ concurrency:
 jobs:
   analyze:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     permissions:
       contents: write
 
@@ -24,7 +26,7 @@ jobs:
 
       - run: pip install -r requirements.txt
 
-      - name: Run analysis
+      - name: Run analysis (all 3 bots)
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           CHAT_ID: ${{ secrets.CHAT_ID }}
@@ -35,8 +37,8 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          for f in server_messages.json last_signals.json; do
-            [ -f "$f" ] && git add "$f"
+          for f in server_messages*.json last_signals*.json daily_summary.json; do
+            if [ -f "$f" ]; then git add "$f"; fi
           done
           if ! git diff --staged --quiet; then
             git commit -m "Update state"
