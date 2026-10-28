@@ -7,6 +7,14 @@ on:
         description: 'تعداد روزهای بک‌تست'
         required: false
         default: '90'
+      fee:
+        description: 'کارمزد هر طرف (مثلاً 0.0006 یعنی ۰.۰۶٪؛ برای اجرای ناخالص 0)'
+        required: false
+        default: '0.0006'
+      slip:
+        description: 'لغزش هر طرف (مثلاً 0.0005؛ برای اجرای ناخالص 0)'
+        required: false
+        default: '0.0005'
 
 concurrency:
   group: backtest
@@ -34,6 +42,8 @@ jobs:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           CHAT_ID: ${{ secrets.CHAT_ID }}
           BT_DAYS: ${{ inputs.days }}
+          BT_FEE: ${{ inputs.fee }}
+          BT_SLIP: ${{ inputs.slip }}
         run: python backtest.py
 
       - name: Upload results
