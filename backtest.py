@@ -52,7 +52,7 @@ def fetch_history(ex, symbol, tf, since_ms, until_ms):
             break
         rows.extend(batch)
         nxt = batch[-1][0] + step
-        if nxt <= since or len(batch) < PAGE:
+        if nxt <= since:
             break
         since = nxt
     df = pd.DataFrame(rows, columns=COLS).drop_duplicates("timestamp").sort_values("timestamp")
@@ -313,6 +313,8 @@ def run(ex, send=True, days=BT_DAYS, symbols=None):
 
     grid = data[BTC]["15m"]["ts"]
     start_j = int(np.searchsorted(grid, grid[0] + WARMUP_MS))
+    if start_j >= len(grid) - 2:
+        raise RuntimeError(f"داده‌ی BTC کافی نیست: {len(grid)} کندل ۱۵دقیقه‌ای برای warmup و بازه")
     aligns = {s: build_align(data[s], grid) for s in data}
     btc4 = trend_arr_tf(data[BTC], "4h", aligns[BTC]["4h"])
     btc1 = trend_arr_tf(data[BTC], "1h", aligns[BTC]["1h"])
