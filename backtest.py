@@ -22,7 +22,8 @@ BT_DAYS = int(os.environ.get("BT_DAYS", "90"))
 BT_SYMBOLS = int(os.environ.get("BT_SYMBOLS", "0"))      # 0 = همه‌ی نمادها
 FEE_PER_SIDE = float(os.environ.get("BT_FEE", "0.0006"))  # ۰.۰۶٪ به ازای هر طرف
 SLIP = float(os.environ.get("BT_SLIP", "0.0005"))         # ۰.۰۵٪ لغزش به ازای هر طرف
-WARMUP_MS = 30 * 24 * 3600 * 1000
+BT_WARMUP_DAYS = float(os.environ.get("BT_WARMUP_DAYS", "10"))  # ۱۵دقیقه‌ای حدود ۳۶ روز تاریخچه دارد
+WARMUP_MS = int(BT_WARMUP_DAYS * 24 * 3600 * 1000)
 MIN_CANDLES = 120
 PAGE = 1000
 M15 = M.TF_MS["15m"]
