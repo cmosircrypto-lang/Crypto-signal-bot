@@ -86,7 +86,7 @@ B1_CROSS_LOOKBACK = 2
 B1_RSI_LONG = (48, 68)
 B1_RSI_SHORT = (32, 52)
 B1_VOLUME_MULT = 1.4
-B1_SL_ATR, B1_TP_ATR = 1.7, 3.4
+B1_SL_ATR, B1_TP_ATR = 1.5, 3.0
 B1_MIN_SCORE = 0.62
 
 # --- ربات ۲ (کمی متعادل‌تر شده) ---
@@ -96,7 +96,7 @@ B2_CLOSE_POS = 0.70
 B2_MAX_EXTENSION_ATR = 1.1        # قبلاً 0.9
 B2_RSI_LONG = (55, 75)
 B2_RSI_SHORT = (25, 45)
-B2_SL_ATR, B2_TP_ATR = 1.5, 3.2
+B2_SL_ATR, B2_TP_ATR = 1.5, 3.0
 B2_MAX_RANGE_ATR = 6.0
 B2_MIN_BODY_ATR = 0.45            # قبلاً 0.6
 B2_MIN_SCORE = 0.60               # قبلاً 0.65
@@ -112,6 +112,7 @@ B3_SL_BUFFER_ATR = 0.10
 B3_MIN_RISK_ATR, B3_MAX_RISK_ATR = 0.6, 2.1
 B3_RR = 2.2
 B3_COOLDOWN_HOURS = 3
+B3_SL_ATR, B3_TP_ATR = 1.5, 3.0      # ATR ۱۵دقیقه‌ای
 B3_MIN_SCORE = 0.60
 
 # --- ربات ۴ (رژیم بازار با ADX) ---
@@ -122,13 +123,14 @@ B4_TREND_TOUCH_ATR = 0.20        # کندل ۱ساعته باید تا این ف
 B4_TREND_MAX_EXT_ATR = 1.0        # فاصله‌ی بستن از EMA21 بیشتر از این، یعنی گسترش زیاد؛ رد می‌شود
 B4_TREND_RSI_LONG = (40, 62)
 B4_TREND_RSI_SHORT = (38, 60)
-B4_TREND_SL_ATR, B4_TREND_TP_ATR = 1.2, 3.0
+B4_TREND_SL_ATR, B4_TREND_TP_ATR = 1.5, 3.0
 B4_RANGE_RSI_LONG_MAX = 35        # برای LONG رنج: RSI باید زیر این باشد
 B4_RANGE_RSI_SHORT_MIN = 65       # برای SHORT رنج: RSI باید بالای این باشد
 B4_RANGE_SL_BUFFER_ATR = 0.5
 B4_RANGE_MIN_RR = 1.5
 B4_MIN_SCORE = 0.50
 B4_COOLDOWN_HOURS = 3
+B4_RANGE_SL_ATR, B4_RANGE_TP_ATR = 1.5, 3.0
 
 # --- ربات ۵ (SMC/ICT ترکیبی؛ فعلاً فقط بک‌تست، زنده نیست) ---
 B5_LOOKBACK_1H = 20               # سطح نقدینگی: کف/سقف ۲۰ کندل ۱ساعته‌ی قبل از sweep
@@ -141,6 +143,7 @@ B5_MIN_RR = 2.0
 B5_MAX_RISK_ATR = 3.0
 B5_MIN_SCORE = 0.50
 B5_COOLDOWN_HOURS = 3
+B5_SL_ATR, B5_TP_ATR = 1.5, 3.0
 
 
 # =====================================================================
@@ -610,23 +613,9 @@ def analyze_price_action(symbol, ctx):
     if not (touch and rsi_ok and vol_ok):
         return None
 
-    if direction == "LONG":
-        sl_level = extreme - B3_SL_BUFFER_ATR * atr
-        risk = c - sl_level
-    else:
-        sl_level = extreme + B3_SL_BUFFER_ATR * atr
-        risk = sl_level - c
-
-    if not (B3_MIN_RISK_ATR * atr <= risk <= B3_MAX_RISK_ATR * atr) or risk / c < MIN_SL_PCT:
-        print(f"  {symbol}: structural SL out of range")
+    if B3_SL_ATR * atr / c < MIN_SL_PCT:
         return None
-
-    def levels(entry):
-        r = (entry - sl_level) if direction == "LONG" else (sl_level - entry)
-        if r <= 0:
-            return None
-        tp = entry + B3_RR * r if direction == "LONG" else entry - B3_RR * r
-        return sl_level, tp
+    levels = atr_levels(direction, atr, B3_SL_ATR, B3_TP_ATR)
 
     trend_score = min(gap_4h / atr_4h, 1.2) / 1.2
     body_score = min(body / atr, 1.8) / 1.8
@@ -738,18 +727,10 @@ def analyze_regime(symbol, ctx):
         print(f"  {symbol}: ADX {adx:.1f} RANGE | بدون بازگشت از باند (RSI {rsi:.1f})")
         return None
 
-    if (direction == "LONG" and not (sl < close < tp)) or (direction == "SHORT" and not (tp < close < sl)):
+    if B4_RANGE_SL_ATR * atr / close < MIN_SL_PCT:
         return None
-    risk = abs(close - sl)
-    rr = abs(tp - close) / risk
-    if rr < B4_RANGE_MIN_RR or risk / close < MIN_SL_PCT:
-        print(f"  {symbol}: RANGE {direction} rejected (RR {rr:.2f})")
-        return None
-
-    def levels(entry):
-        if direction == "LONG":
-            return (sl, tp) if sl < entry < tp else None
-        return (sl, tp) if tp < entry < sl else None
+    rr = B4_RANGE_TP_ATR / B4_RANGE_SL_ATR
+    levels = atr_levels(direction, atr, B4_RANGE_SL_ATR, B4_RANGE_TP_ATR)
 
     score = (0.50 * min(rr / 3.0, 1.0)
              + 0.30 * min(abs(rsi - 50) / 20.0, 1.0)
@@ -846,34 +827,11 @@ def analyze_smc(symbol, ctx):
     if fvg is None:
         return None
 
-    # ۴) سطوح: حد ضرر پشت فتیله‌ی sweep، حد سود روی سقف/کف بازه‌ی premium/discount
-    if direction == "LONG":
-        sl = sweep["extreme"] - B5_SL_BUFFER_ATR * atr1
-        tp = rng_hi
-    else:
-        sl = sweep["extreme"] + B5_SL_BUFFER_ATR * atr1
-        tp = rng_lo
-
-    def levels(entry):
-        if direction == "LONG":
-            if not (sl < entry < tp):
-                return None
-            risk, reward = entry - sl, tp - entry
-        else:
-            if not (tp < entry < sl):
-                return None
-            risk, reward = sl - entry, entry - tp
-        if risk <= 0 or risk > B5_MAX_RISK_ATR * atr1 or reward / risk < B5_MIN_RR:
-            return None
-        return sl, tp
-
-    if levels(price) is None:
-        print(f"  {symbol}: SMC {direction} rejected (RR/levels)")
+    # ۴) سطوح ثابت: حد ضرر و حد سود بر حسب ATR ساعتی
+    if B5_SL_ATR * atr1 / price < MIN_SL_PCT:
         return None
-    risk = abs(price - sl)
-    if risk / price < MIN_SL_PCT:
-        return None
-    rr = abs(tp - price) / risk
+    levels = atr_levels(direction, atr1, B5_SL_ATR, B5_TP_ATR)
+    rr = B5_TP_ATR / B5_SL_ATR
 
     depth = abs(sweep["level"] - sweep["extreme"]) / atr1
     vol = float(v[last])
