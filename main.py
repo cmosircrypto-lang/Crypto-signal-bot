@@ -1,3 +1,12 @@
+"""
+سه ربات سیگنال که با هم و روی داده‌ی مشترک اجرا می‌شوند:
+
+  1) crypto-signal-bot      : کراس EMA 9/21 در ۴ساعته + تایید ۱ساعته + RSI/حجم در ۱۵دقیقه
+  2) crypto-signal-bot-v10  : شکست رنج (Breakout) در ۱ساعته با انفجار حجم
+  3) crypto-signal-bot-v20  : پرایس‌اکشن (الگوی کندلی در پولبک به EMA21 در جهت روند ۴ساعته)
+
+هر ربات: تگ جدا در پیام‌ها، heartbeat جدا و فایل وضعیت جدا دارد.
+"""
 import os
 import json
 import time
@@ -10,7 +19,7 @@ from zoneinfo import ZoneInfo
 import jdatetime
 
 # =====================================================================
-# تنظیمات
+# تنظیمات عمومی
 # =====================================================================
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 CHAT_ID = os.environ.get("CHAT_ID")
@@ -55,24 +64,47 @@ SYMBOLS = [
     "ONE-SWAP-USDT", "QTUM-SWAP-USDT", "IOTA-SWAP-USDT", "NEO-SWAP-USDT"
 ]
 
-HEARTBEAT_FILE = "server_messages.json"
-SIGNALS_FILE = "last_signals.json"
-MAX_HEARTBEATS = 4
-MAX_SIGNALS_PER_CYCLE = 3
+BTC_SYMBOL = "BTC-SWAP-USDT"
+MAX_HEARTBEATS = 2              # تعداد پیام «سرور آنلاین» که برای هر ربات در چت می‌ماند
+SUMMARY_FILE = "daily_summary.json"
+SUMMARY_HOUR = 8                # خلاصه‌ی روزانه بعد از این ساعت (به وقت ایران) ارسال می‌شود
 
-# --- پارامترهای استراتژی ---
-CROSS_LOOKBACK = 3          # کراس EMA در ۴ساعته تا چند کندل بسته‌ی اخیر معتبر است
-RSI_LONG_RANGE = (50, 70)   # RSI 15m برای لانگ (بالای ۷۰ = تعقیب قیمت)
-RSI_SHORT_RANGE = (30, 50)  # RSI 15m برای شورت
-VOLUME_MULT = 1.0           # حجم کندل بسته باید از میانگین ۲۰ کندل قبل بیشتر باشد
-SL_ATR_MULT = 1.5
-TP_ATR_MULT = 3.0
-MIN_SL_PCT = 0.003          # حداقل فاصله‌ی SL (۰.۳٪) تا کارمزد تمام سود را نخورد
-MAX_ENTRY_DRIFT_ATR = 0.5   # اگر قیمت لحظه‌ای بیش از 0.5 ATR از close کندل دور شده، سیگنال کهنه است
-BTC_FILTER_4H = True        # سیگنال خلاف روند ۴ساعته‌ی BTC رد شود
-BTC_FILTER_1H = False       # فیلتر ۱ساعته‌ی BTC (سخت‌گیرانه؛ پیش‌فرض خاموش)
+MIN_SL_PCT = 0.003              # حداقل فاصله‌ی SL (۰.۳٪) تا کارمزد تمام سود را نخورد
+MAX_ENTRY_DRIFT_ATR = 0.5       # اگر قیمت لحظه‌ای بیش از 0.5 ATR از close کندل دور شده، سیگنال کهنه است
 
-TF_MS = {"15m": 15 * 60 * 1000, "1h": 60 * 60 * 1000, "4h": 4 * 60 * 60 * 1000}
+TF_MS = {
+    "5m": 5 * 60 * 1000,
+    "15m": 15 * 60 * 1000,
+    "1h": 60 * 60 * 1000,
+    "4h": 4 * 60 * 60 * 1000,
+}
+
+# --- پارامترهای ربات ۱ (کراس EMA) ---
+B1_CROSS_LOOKBACK = 3           # کراس ۴ساعته تا چند کندل بسته‌ی اخیر معتبر است
+B1_RSI_LONG = (50, 70)
+B1_RSI_SHORT = (30, 50)
+B1_VOLUME_MULT = 1.0
+B1_SL_ATR, B1_TP_ATR = 1.5, 3.0
+
+# --- پارامترهای ربات ۲ / V10 (شکست رنج در ۱ساعته) ---
+B2_LOOKBACK = 20                # شکست سقف/کف ۲۰ کندل ۱ساعته‌ی قبل
+B2_VOLUME_MULT = 1.5            # حجم کندل شکست حداقل ۱.۵ برابر میانگین
+B2_CLOSE_POS = 0.7              # close در ۳۰٪ بالایی (لانگ) یا ۳۰٪ پایینی (شورت) کندل
+B2_MAX_EXTENSION_ATR = 1.5      # اگر close بیش از 1.5 ATR از سطح شکست دور شده، تعقیب قیمت است
+B2_RSI_LONG = (55, 80)
+B2_RSI_SHORT = (20, 45)
+B2_SL_ATR, B2_TP_ATR = 1.5, 3.0  # ATR ۱ساعته
+
+# --- پارامترهای ربات ۳ / V20 (پرایس‌اکشن) ---
+B3_MIN_BODY_ATR = 0.5           # حداقل بدنه‌ی الگو نسبت به ATR
+B3_TOUCH_ATR = 0.25             # فاصله‌ی مجاز low/high تا EMA21 برای «پولبک»
+B3_VOLUME_MULT = 1.0
+B3_RSI_LONG = (40, 65)
+B3_RSI_SHORT = (35, 60)
+B3_SL_BUFFER_ATR = 0.1          # SL کمی بعد از low/high الگو
+B3_MIN_RISK_ATR, B3_MAX_RISK_ATR = 0.5, 2.5
+B3_RR = 2.0
+B3_COOLDOWN_HOURS = 2           # بعد از بسته شدن معامله‌ی یک نماد، تا این مدت سیگنال جدید نمی‌دهد
 
 
 # =====================================================================
@@ -115,149 +147,36 @@ def format_number(value):
         return f"{value:.6f}"
 
 
-# =====================================================================
-# Heartbeat
-# =====================================================================
-def load_heartbeat_ids():
+def load_json(path, default):
     try:
-        with open(HEARTBEAT_FILE, "r") as f:
-            return json.load(f).get("message_ids", [])
-    except (FileNotFoundError, json.JSONDecodeError):
-        return []
-
-
-def save_heartbeat_ids(ids):
-    with open(HEARTBEAT_FILE, "w") as f:
-        json.dump({"message_ids": ids}, f)
-
-
-def send_heartbeat():
-    date_gregorian, date_jalali, time_str = get_iran_time()
-    msg = f"""🖥️ سرور آنلاین
-━━━━━━━━━━━━━━━━━
-📅 تاریخ شمسی: {date_jalali}
-📅 تاریخ میلادی: {date_gregorian}
-⏰ ساعت: {time_str}
-━━━━━━━━━━━━━━━━━"""
-
-    ids = load_heartbeat_ids()
-    new_id = send_telegram(msg)
-    if new_id:
-        ids.append(new_id)
-        while len(ids) > MAX_HEARTBEATS:
-            old_id = ids.pop(0)
-            delete_telegram(old_id)
-        save_heartbeat_ids(ids)
-
-
-# =====================================================================
-# مدیریت معاملات
-# =====================================================================
-def load_signals():
-    try:
-        with open(SIGNALS_FILE, "r") as f:
+        with open(path, "r") as f:
             return json.load(f)
     except (FileNotFoundError, json.JSONDecodeError):
-        return {}
+        return default
 
 
-def save_signals(data):
-    with open(SIGNALS_FILE, "w") as f:
+def save_json(path, data):
+    with open(path, "w") as f:
         json.dump(data, f)
 
 
-def check_trade_result(exchange, symbol, data):
-    """
-    نتیجه‌ی معامله را با high/low کندل‌های ۵ دقیقه‌ای از زمان ورود بررسی می‌کند.
-    اگر در یک کندل هر دو (TP و SL) لمس شده باشند، محافظه‌کارانه SL حساب می‌شود.
-    خروجی: (result, price) یا (None, None)
-    """
-    direction = data["direction"]
-    tp = data["tp"]
-    sl = data["sl"]
-    opened_ms = data.get("opened_ms")
-
-    if opened_ms:
-        try:
-            candles = exchange.fetch_ohlcv(symbol, timeframe="5m", since=int(opened_ms), limit=1000)
-        except Exception as e:
-            print(f"⚠️ خطا در دریافت کندل‌های {symbol}: {e}")
-            candles = []
-        for c in candles:
-            if c[0] < opened_ms:
-                continue
-            high, low = c[2], c[3]
-            if direction == "LONG":
-                hit_sl, hit_tp = low <= sl, high >= tp
-            else:
-                hit_sl, hit_tp = high >= sl, low <= tp
-            if hit_sl:
-                return "SL", sl
-            if hit_tp:
-                return "TP", tp
-
-    # پوشش فاصله‌ی کوتاه بین ورود و اولین کندل / معاملات قدیمی بدون opened_ms
-    price = exchange.fetch_ticker(symbol)["last"]
-    if direction == "LONG":
-        if price <= sl:
-            return "SL", price
-        if price >= tp:
-            return "TP", price
-    else:
-        if price >= sl:
-            return "SL", price
-        if price <= tp:
-            return "TP", price
-    return None, None
-
-
-def update_open_trades(exchange):
-    signals = load_signals()
-    updated = False
-    date_gregorian, date_jalali, time_str = get_iran_time()
-
-    for symbol, data in list(signals.items()):
-        if data.get("status") != "OPEN":
-            continue
-        try:
-            result, close_price = check_trade_result(exchange, symbol, data)
-            if not result:
-                continue
-
-            entry = data["entry"]
-            direction = data["direction"]
-            signals[symbol]["status"] = "CLOSED"
-            signals[symbol]["result"] = result
-            updated = True
-            emoji = "🎯" if result == "TP" else "🛑"
-            title = "حد سود (TP) لمس شد" if result == "TP" else "حد ضرر (SL) لمس شد"
-            print(f"{emoji} {symbol} {direction} hit {result} at {close_price}")
-
-            close_msg = f"""{emoji} بسته شدن معامله
-━━━━━━━━━━━━━━━━━
-📌 نماد: {symbol}
-📊 جهت: {direction}
-🏁 نتیجه: {title}
-💰 قیمت بسته شدن: {format_number(close_price)}
-🚪 قیمت ورود: {format_number(entry)}
-━━━━━━━━━━━━━━━━━
-📅 تاریخ شمسی: {date_jalali}
-📅 تاریخ میلادی: {date_gregorian}
-⏰ ساعت: {time_str}
-━━━━━━━━━━━━━━━━━"""
-            send_telegram(close_msg)
-        except Exception as e:
-            print(f"⚠️ خطا در بررسی {symbol}: {e}")
-            continue
-    if updated:
-        save_signals(signals)
+def now_ms():
+    return int(time.time() * 1000)
 
 
 # =====================================================================
-# داده و اندیکاتورها
+# داده و اندیکاتورها (مشترک بین هر سه ربات)
 # =====================================================================
+class Ctx:
+    """exchange + کش داده؛ هر نماد/تایم‌فریم در هر چرخه فقط یک بار گرفته می‌شود."""
+
+    def __init__(self, exchange):
+        self.exchange = exchange
+        self.cache = {}
+        self.tickers = {}
+
+
 def create_exchange():
-    # برای داده‌ی عمومی نیازی به کلید نیست؛ اگر کلید تنظیم نشده باشد، بدون آن ساخته می‌شود
     params = {"enableRateLimit": True}
     if TOOBIT_API_KEY and TOOBIT_SECRET:
         params.update({"apiKey": TOOBIT_API_KEY, "secret": TOOBIT_SECRET})
@@ -265,11 +184,10 @@ def create_exchange():
 
 
 def fetch_ohlcv(exchange, symbol, timeframe, limit=150):
-    """کندل‌ها را می‌گیرد و کندل در حال تشکیل (ناقص) را حذف می‌کند؛ پس iloc[-1] همیشه آخرین کندل بسته است."""
+    """کندل در حال تشکیل (ناقص) حذف می‌شود؛ پس iloc[-1] همیشه آخرین کندل بسته است."""
     raw = exchange.fetch_ohlcv(symbol, timeframe=timeframe, limit=limit)
     df = pd.DataFrame(raw, columns=["timestamp", "open", "high", "low", "close", "volume"])
-    now_ms = int(time.time() * 1000)
-    if len(df) and df["timestamp"].iloc[-1] + TF_MS[timeframe] > now_ms:
+    if len(df) and df["timestamp"].iloc[-1] + TF_MS[timeframe] > now_ms():
         df = df.iloc[:-1]
     return df.reset_index(drop=True)
 
@@ -277,6 +195,7 @@ def fetch_ohlcv(exchange, symbol, timeframe, limit=150):
 def calculate_indicators(df):
     df["ema9"] = df["close"].ewm(span=9, adjust=False).mean()
     df["ema21"] = df["close"].ewm(span=21, adjust=False).mean()
+    df["ema50"] = df["close"].ewm(span=50, adjust=False).mean()
 
     # RSI به روش Wilder (مطابق TradingView)
     delta = df["close"].diff()
@@ -299,15 +218,20 @@ def calculate_indicators(df):
     return df
 
 
-def get_data(exchange, symbol, timeframe, cache):
-    """دریافت داده + اندیکاتور با کش (هر نماد/تایم‌فریم فقط یک بار در هر چرخه)."""
+def get_data(ctx, symbol, timeframe):
     key = (symbol, timeframe)
-    if key not in cache:
-        df = fetch_ohlcv(exchange, symbol, timeframe, 150)
+    if key not in ctx.cache:
+        df = fetch_ohlcv(ctx.exchange, symbol, timeframe, 150)
         if len(df) < 40:
             raise ValueError(f"داده‌ی کافی برای {symbol} {timeframe} نیست ({len(df)} کندل)")
-        cache[key] = calculate_indicators(df)
-    return cache[key]
+        ctx.cache[key] = calculate_indicators(df)
+    return ctx.cache[key]
+
+
+def get_price(ctx, symbol):
+    if symbol not in ctx.tickers:
+        ctx.tickers[symbol] = float(ctx.exchange.fetch_ticker(symbol)["last"])
+    return ctx.tickers[symbol]
 
 
 def trend_of(df):
@@ -319,25 +243,36 @@ def trend_of(df):
     return "NONE"
 
 
-def get_btc_trend(exchange, cache):
-    """روند BTC را (با کندل بسته) در ۴ساعته و ۱ساعته برمی‌گرداند."""
+def get_btc_trend(ctx):
+    """روند BTC (با کندل بسته) در ۴ساعته و ۱ساعته."""
     try:
-        t4 = trend_of(get_data(exchange, "BTC-SWAP-USDT", "4h", cache))
-        t1 = trend_of(get_data(exchange, "BTC-SWAP-USDT", "1h", cache))
+        t4 = trend_of(get_data(ctx, BTC_SYMBOL, "4h"))
+        t1 = trend_of(get_data(ctx, BTC_SYMBOL, "1h"))
         return t4, t1
     except Exception as e:
         print(f"⚠️ خطا در دریافت روند بیت‌کوین: {e}")
         return "UNKNOWN", "UNKNOWN"
 
 
-def find_recent_cross(df, direction, lookback=CROSS_LOOKBACK):
-    """
-    آخرین کراس EMA9/EMA21 را در `lookback` کندل بسته‌ی اخیر پیدا می‌کند.
-    خروجی: (age, cross_timestamp) که age=0 یعنی آخرین کندل بسته؛ یا (None, None).
-    کراس فقط وقتی معتبر است که وضعیت فعلی هنوز هم‌جهت باشد.
-    """
-    now = trend_of(df)
-    if now != direction:
+def atr_levels(direction, atr, sl_mult, tp_mult):
+    """SL/TP بر پایه‌ی ATR از قیمت ورود."""
+    def levels(entry):
+        if direction == "LONG":
+            return entry - atr * sl_mult, entry + atr * tp_mult
+        return entry + atr * sl_mult, entry - atr * tp_mult
+    return levels
+
+
+def ratio(cur, avg):
+    return cur / avg if avg and avg > 0 else 0.0
+
+
+# =====================================================================
+# استراتژی ۱: crypto-signal-bot  (کراس EMA)
+# =====================================================================
+def find_recent_cross(df, direction, lookback=B1_CROSS_LOOKBACK):
+    """آخرین کراس EMA9/21 در lookback کندل بسته‌ی اخیر؛ خروجی (age, timestamp) یا (None, None)."""
+    if trend_of(df) != direction:
         return None, None
     n = len(df)
     for age in range(lookback):
@@ -350,18 +285,9 @@ def find_recent_cross(df, direction, lookback=CROSS_LOOKBACK):
     return None, None
 
 
-# =====================================================================
-# تحلیل (بدون ارسال؛ فقط کاندیدا تولید می‌کند)
-# =====================================================================
-def analyze(symbol, exchange, cache):
-    """
-    اگر نماد شرایط ورود داشته باشد یک dict کاندیدا (با امتیاز) برمی‌گرداند، وگرنه None.
-    مراحل به ترتیب ارزان‌ترین فیلتر است تا درخواست‌های اضافه نشود.
-    """
-    # ۱) ۴ساعته: کراس تازه (حداکثر CROSS_LOOKBACK کندل قبل)
-    df_4h = get_data(exchange, symbol, "4h", cache)
-    direction = None
-    cross_age = cross_ts = None
+def analyze_cross(symbol, ctx):
+    df_4h = get_data(ctx, symbol, "4h")
+    direction = cross_age = cross_ts = None
     for d in ("LONG", "SHORT"):
         age, ts = find_recent_cross(df_4h, d)
         if age is not None:
@@ -371,74 +297,372 @@ def analyze(symbol, exchange, cache):
         print(f"  {symbol}: no 4H cross")
         return None
 
-    # ۲) ۱ساعته: تایید روند
-    df_1h = get_data(exchange, symbol, "1h", cache)
+    df_1h = get_data(ctx, symbol, "1h")
     last_1h = df_1h.iloc[-1]
     if trend_of(df_1h) != direction:
         print(f"  {symbol}: {direction} 4H cross but 1H trend disagrees")
         return None
 
-    # ۳) ۱۵ دقیقه: مومنتوم و حجم (همه روی کندل بسته)
-    df_15m = get_data(exchange, symbol, "15m", cache)
-    last_15m = df_15m.iloc[-1]
-    rsi = float(last_15m["rsi"])
-    atr = float(last_15m["atr"])
-    close_15m = float(last_15m["close"])
-
+    df_15m = get_data(ctx, symbol, "15m")
+    last = df_15m.iloc[-1]
+    rsi, atr, close = float(last["rsi"]), float(last["atr"]), float(last["close"])
     if np.isnan(rsi) or np.isnan(atr) or atr <= 0:
         print(f"  {symbol}: indicators not ready")
         return None
 
-    rsi_lo, rsi_hi = RSI_LONG_RANGE if direction == "LONG" else RSI_SHORT_RANGE
-    rsi_ok = rsi_lo <= rsi <= rsi_hi
-
-    current_volume = float(last_15m["volume"])
+    lo, hi = B1_RSI_LONG if direction == "LONG" else B1_RSI_SHORT
+    rsi_ok = lo <= rsi <= hi
+    volume = float(last["volume"])
     avg_volume = float(df_15m["volume"].iloc[-21:-1].mean())
-    vol_ratio = current_volume / avg_volume if avg_volume > 0 else 0.0
-    vol_ok = vol_ratio >= VOLUME_MULT
+    vol_ratio = ratio(volume, avg_volume)
+    vol_ok = vol_ratio >= B1_VOLUME_MULT
 
     print(f"  {symbol}: {direction} 4H cross(age={cross_age}) | 1H ok | "
           f"RSI {rsi:.1f} ok={rsi_ok} | Vol x{vol_ratio:.2f} ok={vol_ok}")
-
     if not (rsi_ok and vol_ok):
         return None
-
-    # حداقل فاصله‌ی SL نسبت به قیمت
-    if (atr * SL_ATR_MULT) / close_15m < MIN_SL_PCT:
-        print(f"  {symbol}: SL too tight ({(atr * SL_ATR_MULT) / close_15m:.2%}) -> skipped")
+    if (atr * B1_SL_ATR) / close < MIN_SL_PCT:
+        print(f"  {symbol}: SL too tight ({(atr * B1_SL_ATR) / close:.2%}) -> skipped")
         return None
 
-    # ۴) امتیاز برای رتبه‌بندی (۰ تا ۱)
-    vol_score = min(vol_ratio, 3.0) / 3.0
-    fresh_score = (CROSS_LOOKBACK - cross_age) / CROSS_LOOKBACK
     atr_1h = float(last_1h["atr"]) if not np.isnan(last_1h["atr"]) else 0.0
     gap_1h = abs(float(last_1h["ema9"]) - float(last_1h["ema21"]))
     trend_score = min(gap_1h / atr_1h, 1.0) if atr_1h > 0 else 0.0
-    rsi_score = min(abs(rsi - 50) / 20.0, 1.0)
-    score = 0.35 * vol_score + 0.25 * fresh_score + 0.20 * trend_score + 0.20 * rsi_score
+    score = (0.35 * min(vol_ratio, 3.0) / 3.0
+             + 0.25 * (B1_CROSS_LOOKBACK - cross_age) / B1_CROSS_LOOKBACK
+             + 0.20 * trend_score
+             + 0.20 * min(abs(rsi - 50) / 20.0, 1.0))
 
     return {
-        "symbol": symbol,
-        "direction": direction,
-        "close": close_15m,
-        "atr": atr,
-        "rsi": rsi,
-        "volume": current_volume,
-        "avg_volume": avg_volume,
-        "cross_ts": cross_ts,
-        "score": score,
+        "symbol": symbol, "direction": direction, "close": close, "atr": atr, "rsi": rsi,
+        "volume": volume, "avg_volume": avg_volume, "signal_key": cross_ts, "score": score,
+        "setup": f"EMA9/21 cross 4H (age {cross_age})",
+        "levels": atr_levels(direction, atr, B1_SL_ATR, B1_TP_ATR),
     }
 
 
 # =====================================================================
-# اجرای اصلی
+# استراتژی ۲: crypto-signal-bot-v10  (شکست رنج در ۱ساعته)
 # =====================================================================
-def build_signal_message(c, entry, sl, tp, rr):
+def analyze_breakout(symbol, ctx):
+    df = get_data(ctx, symbol, "1h")
+    lb = B2_LOOKBACK
+    if len(df) < lb + 5:
+        return None
+    last, prev = df.iloc[-1], df.iloc[-2]
+    level_hi = float(df["high"].iloc[-1 - lb:-1].max())
+    level_lo = float(df["low"].iloc[-1 - lb:-1].min())
+    prev_hi = float(df["high"].iloc[-2 - lb:-2].max())
+    prev_lo = float(df["low"].iloc[-2 - lb:-2].min())
+
+    close, high, low = float(last["close"]), float(last["high"]), float(last["low"])
+    atr, rsi = float(last["atr"]), float(last["rsi"])
+    rng = high - low
+    if np.isnan(atr) or np.isnan(rsi) or atr <= 0 or rng <= 0:
+        return None
+
+    direction = level = None
+    # شکست تازه: کندل قبلی هنوز زیر سطح (نسبت به رنج خودش) بسته شده بود
+    if (close > level_hi and float(prev["close"]) <= prev_hi
+            and (close - low) / rng >= B2_CLOSE_POS and close - level_hi <= B2_MAX_EXTENSION_ATR * atr):
+        direction, level = "LONG", level_hi
+    elif (close < level_lo and float(prev["close"]) >= prev_lo
+            and (high - close) / rng >= B2_CLOSE_POS and level_lo - close <= B2_MAX_EXTENSION_ATR * atr):
+        direction, level = "SHORT", level_lo
+    if direction is None:
+        print(f"  {symbol}: no fresh 1H breakout")
+        return None
+
+    volume = float(last["volume"])
+    avg_volume = float(df["volume"].iloc[-21:-1].mean())
+    vol_ratio = ratio(volume, avg_volume)
+    lo, hi = B2_RSI_LONG if direction == "LONG" else B2_RSI_SHORT
+    rsi_ok = lo <= rsi <= hi
+    vol_ok = vol_ratio >= B2_VOLUME_MULT
+
+    df_4h = get_data(ctx, symbol, "4h")
+    l4 = df_4h.iloc[-1]
+    slow_trend = "LONG" if l4["ema21"] > l4["ema50"] else "SHORT" if l4["ema21"] < l4["ema50"] else "NONE"
+    trend_ok = slow_trend == direction
+
+    print(f"  {symbol}: {direction} breakout 1H | RSI {rsi:.1f} ok={rsi_ok} | "
+          f"Vol x{vol_ratio:.2f} ok={vol_ok} | 4H EMA21/50 ok={trend_ok}")
+    if not (rsi_ok and vol_ok and trend_ok):
+        return None
+    if (atr * B2_SL_ATR) / close < MIN_SL_PCT:
+        print(f"  {symbol}: SL too tight -> skipped")
+        return None
+
+    atr_4h = float(l4["atr"]) if not np.isnan(l4["atr"]) else 0.0
+    gap_4h = abs(float(l4["ema21"]) - float(l4["ema50"]))
+    trend_score = min(gap_4h / atr_4h, 1.0) if atr_4h > 0 else 0.0
+    strength = min(abs(close - level) / atr, 1.0)
+    score = 0.4 * min(vol_ratio, 3.0) / 3.0 + 0.3 * strength + 0.3 * trend_score
+
+    return {
+        "symbol": symbol, "direction": direction, "close": close, "atr": atr, "rsi": rsi,
+        "volume": volume, "avg_volume": avg_volume, "signal_key": int(last["timestamp"]),
+        "score": score,
+        "setup": f"Breakout {lb}x1H ({'high' if direction == 'LONG' else 'low'} {format_number(level)})",
+        "levels": atr_levels(direction, atr, B2_SL_ATR, B2_TP_ATR),
+    }
+
+
+# =====================================================================
+# استراتژی ۳: crypto-signal-bot-v20  (پرایس‌اکشن در پولبک)
+# =====================================================================
+def analyze_price_action(symbol, ctx):
+    df_4h = get_data(ctx, symbol, "4h")
+    direction = trend_of(df_4h)
+    if direction not in ("LONG", "SHORT"):
+        return None
+
+    df = get_data(ctx, symbol, "15m")
+    last, prev = df.iloc[-1], df.iloc[-2]
+    atr, rsi, ema21 = float(last["atr"]), float(last["rsi"]), float(last["ema21"])
+    if np.isnan(atr) or np.isnan(rsi) or atr <= 0:
+        return None
+
+    o, h, l, c = (float(last[k]) for k in ("open", "high", "low", "close"))
+    po, pc, ph, pl = (float(prev[k]) for k in ("open", "close", "high", "low"))
+    body, rng = abs(c - o), h - l
+    upper, lower = h - max(c, o), min(c, o) - l
+
+    volume = float(last["volume"])
+    avg_volume = float(df["volume"].iloc[-21:-1].mean())
+    vol_ratio = ratio(volume, avg_volume)
+    vol_ok = vol_ratio >= B3_VOLUME_MULT
+
+    pattern = None
+    if direction == "LONG":
+        if pc < po and c > o and c > po and o < pc and body >= B3_MIN_BODY_ATR * atr:
+            pattern = "Bullish Engulfing"
+            extreme = min(l, pl)
+        elif (rng >= 0.8 * atr and lower >= 2 * body and upper <= max(0.5 * body, 0.15 * rng)
+              and c >= l + 0.6 * rng):
+            pattern = "Hammer"
+            extreme = l
+        elif c > o and body >= 0.7 * atr and body > 1.5 * (upper + lower):
+            pattern = "Strong Bullish"
+            extreme = l
+        touch = pattern is not None and extreme <= ema21 + B3_TOUCH_ATR * atr and c > ema21
+        rsi_lo, rsi_hi = B3_RSI_LONG
+    else:
+        if pc > po and c < o and c < po and o > pc and body >= B3_MIN_BODY_ATR * atr:
+            pattern = "Bearish Engulfing"
+            extreme = max(h, ph)
+        elif (rng >= 0.8 * atr and upper >= 2 * body and lower <= max(0.5 * body, 0.15 * rng)
+              and c <= h - 0.6 * rng):
+            pattern = "Shooting Star"
+            extreme = h
+        elif c < o and body >= 0.7 * atr and body > 1.5 * (upper + lower):
+            pattern = "Strong Bearish"
+            extreme = h
+        touch = pattern is not None and extreme >= ema21 - B3_TOUCH_ATR * atr and c < ema21
+        rsi_lo, rsi_hi = B3_RSI_SHORT
+
+    rsi_ok = rsi_lo <= rsi <= rsi_hi
+    if pattern is None:
+        print(f"  {symbol}: {direction} trend 4H | no pattern")
+        return None
+    print(f"  {symbol}: {direction} 4H | {pattern} | pullback ok={touch} | "
+          f"RSI {rsi:.1f} ok={rsi_ok} | Vol x{vol_ratio:.2f} ok={vol_ok}")
+    if not (touch and rsi_ok and vol_ok):
+        return None
+
+    # SL ساختاری: پشت low/high الگو
+    if direction == "LONG":
+        sl_level = extreme - B3_SL_BUFFER_ATR * atr
+        risk = c - sl_level
+    else:
+        sl_level = extreme + B3_SL_BUFFER_ATR * atr
+        risk = sl_level - c
+    if not (B3_MIN_RISK_ATR * atr <= risk <= B3_MAX_RISK_ATR * atr) or risk / c < MIN_SL_PCT:
+        print(f"  {symbol}: structural SL out of range (risk={risk / atr:.2f} ATR) -> skipped")
+        return None
+
+    def levels(entry):
+        r = (entry - sl_level) if direction == "LONG" else (sl_level - entry)
+        if r <= 0:
+            return None
+        tp = entry + B3_RR * r if direction == "LONG" else entry - B3_RR * r
+        return sl_level, tp
+
+    l4 = df_4h.iloc[-1]
+    atr_4h = float(l4["atr"]) if not np.isnan(l4["atr"]) else 0.0
+    gap_4h = abs(float(l4["ema9"]) - float(l4["ema21"]))
+    trend_score = min(gap_4h / atr_4h, 1.0) if atr_4h > 0 else 0.0
+    score = (0.4 * min(vol_ratio, 3.0) / 3.0
+             + 0.3 * min(body / atr, 1.5) / 1.5
+             + 0.3 * trend_score)
+
+    return {
+        "symbol": symbol, "direction": direction, "close": c, "atr": atr, "rsi": rsi,
+        "volume": volume, "avg_volume": avg_volume, "signal_key": int(last["timestamp"]),
+        "score": score, "setup": f"{pattern} @ EMA21 pullback", "levels": levels,
+    }
+
+
+# =====================================================================
+# تعریف ربات‌ها
+# =====================================================================
+class Bot:
+    def __init__(self, name, label, analyze, heartbeat_file, signals_file,
+                 cooldown_hours=0, max_open=10, max_signals=3,
+                 btc_filter_4h=True, btc_filter_1h=False):
+        self.name = name                    # تگ همین نام است و در همه‌ی پیام‌ها می‌آید
+        self.label = label                  # توضیح کوتاه استراتژی (فقط در عنوان پیام)
+        self.analyze = analyze
+        self.heartbeat_file = heartbeat_file
+        self.signals_file = signals_file
+        self.cooldown_ms = int(cooldown_hours * 3600 * 1000)
+        self.max_open = max_open
+        self.max_signals = max_signals
+        self.btc_filter_4h = btc_filter_4h
+        self.btc_filter_1h = btc_filter_1h
+
+    @property
+    def title_tag(self):
+        return f"[{self.name}]" + (f" ({self.label})" if self.label else "")
+
+
+BOTS = [
+    Bot("crypto-signal-bot", "", analyze_cross,
+        "server_messages.json", "last_signals.json"),
+    Bot("crypto-signal-bot-v10", "Breakout", analyze_breakout,
+        "server_messages_v10.json", "last_signals_v10.json"),
+    Bot("crypto-signal-bot-v20", "Price Action", analyze_price_action,
+        "server_messages_v20.json", "last_signals_v20.json",
+        cooldown_hours=B3_COOLDOWN_HOURS),
+]
+
+
+# =====================================================================
+# Heartbeat (برای هر ربات جدا و با تگ خودش)
+# =====================================================================
+def send_heartbeat(bot, warning=None):
+    date_gregorian, date_jalali, time_str = get_iran_time()
+    extra = f"\n⚠️ {warning}" if warning else ""
+    msg = f"""🖥️ {bot.title_tag} سرور آنلاین{extra}
+━━━━━━━━━━━━━━━━━
+📅 تاریخ شمسی: {date_jalali}
+📅 تاریخ میلادی: {date_gregorian}
+⏰ ساعت: {time_str}
+━━━━━━━━━━━━━━━━━"""
+
+    ids = load_json(bot.heartbeat_file, {}).get("message_ids", [])
+    new_id = send_telegram(msg)
+    if new_id:
+        ids.append(new_id)
+        while len(ids) > MAX_HEARTBEATS:
+            delete_telegram(ids.pop(0))
+        save_json(bot.heartbeat_file, {"message_ids": ids})
+
+
+# =====================================================================
+# مدیریت معاملات
+# =====================================================================
+def check_trade_result(exchange, symbol, data):
+    """
+    نتیجه را با high/low کندل‌های ۵ دقیقه‌ای از زمان ورود بررسی می‌کند؛
+    اگر در یک کندل هر دو (TP و SL) لمس شده باشند، محافظه‌کارانه SL حساب می‌شود.
+    خروجی: (result, price) یا (None, None)
+    """
+    direction, tp, sl = data["direction"], data["tp"], data["sl"]
+    opened_ms = data.get("opened_ms")
+
+    if opened_ms:
+        try:
+            candles = exchange.fetch_ohlcv(symbol, timeframe="5m", since=int(opened_ms), limit=1000)
+        except Exception as e:
+            print(f"⚠️ خطا در دریافت کندل‌های {symbol}: {e}")
+            candles = []
+        for cd in candles:
+            if cd[0] < opened_ms:
+                continue
+            high, low = cd[2], cd[3]
+            if direction == "LONG":
+                hit_sl, hit_tp = low <= sl, high >= tp
+            else:
+                hit_sl, hit_tp = high >= sl, low <= tp
+            if hit_sl:
+                return "SL", sl
+            if hit_tp:
+                return "TP", tp
+
+    price = float(exchange.fetch_ticker(symbol)["last"])
+    if direction == "LONG":
+        if price <= sl:
+            return "SL", price
+        if price >= tp:
+            return "TP", price
+    else:
+        if price >= sl:
+            return "SL", price
+        if price <= tp:
+            return "TP", price
+    return None, None
+
+
+def trade_r(rec):
+    """نتیجه‌ی معامله‌ی بسته‌شده بر حسب R (TP = ریوارد/ریسک، SL = -1)."""
+    if rec.get("status") != "CLOSED":
+        return None
+    risk = abs(rec["entry"] - rec["sl"])
+    if risk <= 0:
+        return None
+    return abs(rec["tp"] - rec["entry"]) / risk if rec.get("result") == "TP" else -1.0
+
+
+def update_open_trades(bot, exchange):
+    signals = load_json(bot.signals_file, {})
+    updated = False
+    date_gregorian, date_jalali, time_str = get_iran_time()
+
+    for symbol, data in list(signals.items()):
+        if data.get("status") != "OPEN":
+            continue
+        try:
+            result, close_price = check_trade_result(exchange, symbol, data)
+            if not result:
+                continue
+
+            entry, direction = data["entry"], data["direction"]
+            signals[symbol]["status"] = "CLOSED"
+            signals[symbol]["result"] = result
+            signals[symbol]["closed_ms"] = now_ms()
+            updated = True
+            emoji = "🎯" if result == "TP" else "🛑"
+            title = "حد سود (TP) لمس شد" if result == "TP" else "حد ضرر (SL) لمس شد"
+            print(f"{emoji} {symbol} {direction} hit {result} at {close_price}")
+
+            close_msg = f"""{emoji} {bot.title_tag} بسته شدن معامله
+━━━━━━━━━━━━━━━━━
+📌 نماد: {symbol}
+📊 جهت: {direction}
+🏁 نتیجه: {title}
+💰 قیمت بسته شدن: {format_number(close_price)}
+🚪 قیمت ورود: {format_number(entry)}
+━━━━━━━━━━━━━━━━━
+📅 تاریخ شمسی: {date_jalali}
+📅 تاریخ میلادی: {date_gregorian}
+⏰ ساعت: {time_str}
+━━━━━━━━━━━━━━━━━"""
+            send_telegram(close_msg)
+        except Exception as e:
+            print(f"⚠️ خطا در بررسی {symbol}: {e}")
+            continue
+    if updated:
+        save_json(bot.signals_file, signals)
+
+
+def build_signal_message(bot, c, entry, sl, tp, rr):
     date_gregorian, date_jalali, time_str = get_iran_time()
     emoji = "🟢" if c["direction"] == "LONG" else "🔴"
-    return f"""{emoji} سیگنال {c['direction']}
+    return f"""{emoji} {bot.title_tag} سیگنال {c['direction']}
 ━━━━━━━━━━━━━━━━━
 📌 نماد: {c['symbol']}
+🔎 ستاپ: {c['setup']}
 💰 قیمت ورود: {format_number(entry)}
 🎯 حد سود (TP): {format_number(tp)}
 🛑 حد ضرر (SL): {format_number(sl)}
@@ -453,49 +677,48 @@ def build_signal_message(c, entry, sl, tp, rr):
 ━━━━━━━━━━━━━━━━━"""
 
 
-if __name__ == "__main__":
+# =====================================================================
+# چرخه‌ی یک ربات
+# =====================================================================
+def run_bot(bot, ctx, btc_4h, btc_1h):
     print("=" * 50)
-    print("Starting bot cycle (closed candles + 4H cross window + BTC filter + volume + ranking)...")
+    print(f"▶ {bot.name} {('(' + bot.label + ')') if bot.label else ''}")
 
-    send_heartbeat()
-    print("✅ Heartbeat sent.")
+    update_open_trades(bot, ctx.exchange)
+    signals = load_json(bot.signals_file, {})
+    open_count = sum(1 for d in signals.values() if d.get("status") == "OPEN")
 
-    exchange = create_exchange()
-
-    update_open_trades(exchange)
-    signals_data = load_signals()
-
-    cache = {}
-    btc_trend_4h, btc_trend_1h = get_btc_trend(exchange, cache)
-    print(f"🌍 BTC 4H Trend: {btc_trend_4h} | BTC 1H Trend: {btc_trend_1h}")
-
-    # ---------- مرحله ۱: تحلیل همه‌ی نمادها و جمع‌آوری کاندیداها ----------
+    # ---------- مرحله ۱: تحلیل همه‌ی نمادها ----------
     candidates = []
+    t_now = now_ms()
     for symbol in SYMBOLS:
         try:
-            print(f"--- Checking {symbol} ---")
-
-            prev = signals_data.get(symbol)
+            prev = signals.get(symbol)
             if prev and prev.get("status") == "OPEN":
                 print(f"⏳ {symbol} has an OPEN trade. Skipping.")
                 continue
+            if (prev and bot.cooldown_ms and prev.get("closed_ms")
+                    and t_now - prev["closed_ms"] < bot.cooldown_ms):
+                print(f"❄️ {symbol} in cooldown. Skipping.")
+                continue
 
-            c = analyze(symbol, exchange, cache)
+            c = bot.analyze(symbol, ctx)
             if c is None:
                 continue
 
-            # جلوگیری از سیگنال تکراری روی همان کراس (بعد از بسته شدن معامله)
-            if prev and prev.get("cross_ts") == c["cross_ts"] and prev.get("direction") == c["direction"]:
-                print(f"♻️ {symbol} {c['direction']}: this 4H cross was already signaled. Skipping.")
+            # جلوگیری از سیگنال تکراری روی همان کراس/کندل
+            prev_key = (prev.get("signal_key", prev.get("cross_ts")) if prev else None)
+            if prev and prev_key == c["signal_key"] and prev.get("direction") == c["direction"]:
+                print(f"♻️ {symbol} {c['direction']}: this setup was already signaled. Skipping.")
                 continue
 
             # فیلتر BTC (برای خود BTC اعمال نمی‌شود)
-            if symbol != "BTC-SWAP-USDT":
-                if BTC_FILTER_4H and btc_trend_4h in ("LONG", "SHORT") and c["direction"] != btc_trend_4h:
-                    print(f"🚫 {symbol} {c['direction']} rejected. BTC 4H trend is {btc_trend_4h}.")
+            if symbol != BTC_SYMBOL:
+                if bot.btc_filter_4h and btc_4h in ("LONG", "SHORT") and c["direction"] != btc_4h:
+                    print(f"🚫 {symbol} {c['direction']} rejected. BTC 4H trend is {btc_4h}.")
                     continue
-                if BTC_FILTER_1H and btc_trend_1h in ("LONG", "SHORT") and c["direction"] != btc_trend_1h:
-                    print(f"🚫 {symbol} {c['direction']} rejected. BTC 1H trend is {btc_trend_1h}.")
+                if bot.btc_filter_1h and btc_1h in ("LONG", "SHORT") and c["direction"] != btc_1h:
+                    print(f"🚫 {symbol} {c['direction']} rejected. BTC 1H trend is {btc_1h}.")
                     continue
 
             candidates.append(c)
@@ -509,52 +732,109 @@ if __name__ == "__main__":
     print(f"📋 {len(candidates)} candidate(s): " +
           ", ".join(f"{c['symbol']}({c['score']:.2f})" for c in candidates))
 
-    signals_sent_this_cycle = 0
+    sent = 0
     for c in candidates:
-        if signals_sent_this_cycle >= MAX_SIGNALS_PER_CYCLE:
+        if sent >= bot.max_signals:
+            break
+        if open_count + sent >= bot.max_open:
+            print(f"🛑 {bot.name}: max open trades ({bot.max_open}) reached.")
             break
         symbol = c["symbol"]
         try:
-            # قیمت لحظه‌ای؛ اگر خیلی از close کندل دور شده، سیگنال کهنه است
-            entry = float(exchange.fetch_ticker(symbol)["last"])
+            entry = get_price(ctx, symbol)
             if abs(entry - c["close"]) > c["atr"] * MAX_ENTRY_DRIFT_ATR:
                 print(f"⌛ {symbol}: price drifted too far from signal candle. Skipping.")
                 continue
 
-            atr = c["atr"]
-            if c["direction"] == "LONG":
-                sl = entry - atr * SL_ATR_MULT
-                tp = entry + atr * TP_ATR_MULT
-                rr = (tp - entry) / (entry - sl)
-            else:
-                sl = entry + atr * SL_ATR_MULT
-                tp = entry - atr * TP_ATR_MULT
-                rr = (entry - tp) / (sl - entry)
-
+            lv = c["levels"](entry)
+            if lv is None:
+                print(f"⚠️ {symbol}: price already beyond stop level. Skipping.")
+                continue
+            sl, tp = lv
             if sl <= 0 or tp <= 0:
                 print(f"⚠️ {symbol}: invalid SL/TP. Skipping.")
                 continue
+            rr = abs(tp - entry) / abs(entry - sl)
 
-            send_telegram(build_signal_message(c, entry, sl, tp, rr))
+            send_telegram(build_signal_message(bot, c, entry, sl, tp, rr))
 
-            signals_data[symbol] = {
-                "direction": c["direction"],
-                "entry": entry,
-                "tp": tp,
-                "sl": sl,
-                "status": "OPEN",
-                "cross_ts": c["cross_ts"],
-                "score": round(c["score"], 4),
-                "opened_ms": int(time.time() * 1000),
+            signals[symbol] = {
+                "direction": c["direction"], "entry": entry, "tp": tp, "sl": sl,
+                "status": "OPEN", "signal_key": c["signal_key"], "setup": c["setup"],
+                "score": round(c["score"], 4), "opened_ms": now_ms(),
                 "time": datetime.now(timezone.utc).isoformat(),
             }
-            save_signals(signals_data)
-            signals_sent_this_cycle += 1
-            print(f"✅ {c['direction']} signal for {symbol} sent! "
-                  f"({signals_sent_this_cycle}/{MAX_SIGNALS_PER_CYCLE})")
+            save_json(bot.signals_file, signals)
+            sent += 1
+            print(f"✅ {c['direction']} signal for {symbol} sent! ({sent}/{bot.max_signals})")
         except Exception as e:
             print(f"⚠️ خطا در ارسال {symbol}: {e}")
             continue
 
-    print("Analysis complete.")
+    print(f"{bot.name}: analysis complete ({sent} signal(s) sent).")
+
+
+# =====================================================================
+# خلاصه‌ی روزانه‌ی مقایسه‌ی ربات‌ها (روزی یک بار)
+# =====================================================================
+def maybe_send_daily_summary():
+    now = datetime.now(ZoneInfo("Asia/Tehran"))
+    today = now.strftime("%Y-%m-%d")
+    state = load_json(SUMMARY_FILE, {})
+    if now.hour < SUMMARY_HOUR or state.get("date") == today:
+        return
+
+    date_gregorian, date_jalali, time_str = get_iran_time()
+    lines = []
+    for bot in BOTS:
+        recs = list(load_json(bot.signals_file, {}).values())
+        closed = [r for r in recs if r.get("status") == "CLOSED"]
+        opened = [r for r in recs if r.get("status") == "OPEN"]
+        rs = [x for x in (trade_r(r) for r in closed) if x is not None]
+        if rs:
+            wins = sum(1 for r in closed if r.get("result") == "TP")
+            lines.append(f"🤖 {bot.name}\n"
+                         f"   بسته‌شده: {len(rs)} | برد: {wins} ({wins / len(rs):.0%}) | "
+                         f"R کل: {sum(rs):+.1f} | میانگین R: {sum(rs) / len(rs):+.2f}\n"
+                         f"   باز: {len(opened)}")
+        else:
+            lines.append(f"🤖 {bot.name}\n   هنوز معامله‌ی بسته‌شده‌ای نیست | باز: {len(opened)}")
+
+    msg = ("📊 خلاصه‌ی روزانه‌ی ربات‌ها\n━━━━━━━━━━━━━━━━━\n" + "\n".join(lines) +
+           f"\n━━━━━━━━━━━━━━━━━\n📅 تاریخ شمسی: {date_jalali}\n📅 تاریخ میلادی: {date_gregorian}\n"
+           f"⏰ ساعت: {time_str}\n━━━━━━━━━━━━━━━━━")
+    if send_telegram(msg):
+        save_json(SUMMARY_FILE, {"date": today})
+
+
+# =====================================================================
+# اجرای اصلی
+# =====================================================================
+if __name__ == "__main__":
+    print("=" * 50)
+    print("Starting multi-bot cycle: " + ", ".join(b.name for b in BOTS))
+
+    exchange = create_exchange()
+    ctx = Ctx(exchange)
+
+    btc_4h, btc_1h = get_btc_trend(ctx)
+    print(f"🌍 BTC 4H Trend: {btc_4h} | BTC 1H Trend: {btc_1h}")
+    warning = "دریافت داده‌ی BTC ناموفق بود" if btc_4h == "UNKNOWN" else None
+
+    for bot in BOTS:
+        send_heartbeat(bot, warning)
+    print("✅ Heartbeats sent.")
+
+    for bot in BOTS:
+        try:
+            run_bot(bot, ctx, btc_4h, btc_1h)
+        except Exception as e:
+            print(f"⚠️ خطای کلی در {bot.name}: {e}")
+
+    try:
+        maybe_send_daily_summary()
+    except Exception as e:
+        print(f"⚠️ خطا در خلاصه‌ی روزانه: {e}")
+
+    print("All bots complete.")
     print("=" * 50)
