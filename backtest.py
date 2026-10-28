@@ -364,9 +364,11 @@ def _half_line(name, h):
             f"\n      ({dirs})")
 
 
-def format_report(stats):
-    lines = ["📊 نتیجه‌ی بک‌تست", f"بازه: {stats[0]['months']} ماه | کارمزد {FEE_PER_SIDE:.2%} و لغزش {SLIP:.2%} به ازای هر طرف",
-             "━━━━━━━━━━━━━━━━━"]
+def format_report(stats, market=None):
+    lines = ["📊 نتیجه‌ی بک‌تست", f"بازه: {stats[0]['months']} ماه | کارمزد {FEE_PER_SIDE:.2%} و لغزش {SLIP:.2%} به ازای هر طرف"]
+    if market:
+        lines.append(f"🌍 بازار در بازه: BTC {market['btc_pct']:+.1f}% | میانه‌ی {market['symbols']} نماد {market['median_pct']:+.1f}%")
+    lines.append("━━━━━━━━━━━━━━━━━")
     for s in stats:
         if s["closed"] == 0:
             lines.append(f"🤖 {s['bot']}\n   هیچ معامله‌ی بسته‌ای نبود | سیگنال: {s['signals_taken']}")
@@ -397,6 +399,20 @@ def format_report(stats):
 # =====================================================================
 # اجرا
 # =====================================================================
+def market_move(data, grid, start_j):
+    """تغییر قیمت BTC و میانه‌ی تغییر همه‌ی نمادها در بازه‌ی ارزیابی؛ برای فهم جهت کلی بازار."""
+    rets = {}
+    t_start = grid[start_j]
+    for sym, f in data.items():
+        ts, c = f["15m"]["ts"], f["15m"]["c"]
+        i0 = int(np.searchsorted(ts, t_start))
+        if i0 < len(ts) and ts[i0] == t_start and c[i0] > 0:
+            rets[sym] = float(c[-1] / c[i0] - 1)
+    med = float(np.median(list(rets.values()))) if rets else 0.0
+    return {"btc_pct": round(rets.get(BTC, 0.0) * 100, 2),
+            "median_pct": round(med * 100, 2), "symbols": len(rets)}
+
+
 def run(ex, send=True, days=BT_DAYS, symbols=None):
     until = (int(time.time() * 1000) // M15) * M15
     since = until - (days * 24 * 3600 * 1000 + WARMUP_MS)
@@ -419,6 +435,9 @@ def run(ex, send=True, days=BT_DAYS, symbols=None):
     btc4 = trend_arr_tf(data[BTC], "4h", aligns[BTC]["4h"])
     btc1 = trend_arr_tf(data[BTC], "1h", aligns[BTC]["1h"])
 
+    market = market_move(data, grid, start_j)
+    print(f"  بازار در بازه: BTC {market['btc_pct']:+.2f}% | میانه‌ی نمادها {market['median_pct']:+.2f}%")
+
     stats = []
     for bot in M.BOTS:
         print(f"▶ backtest {bot.name} ...")
@@ -428,10 +447,11 @@ def run(ex, send=True, days=BT_DAYS, symbols=None):
         print(f"  {bot.name}: taken={st['signals_taken']} closed={st['closed']} "
               f"win={st['win_rate']} avgR={st['avg_R_net']} totalR={st['total_R_net']}")
 
-    report = format_report(stats)
+    report = format_report(stats, market)
     print(report)
     with open(RESULTS_FILE, "w", encoding="utf-8") as fh:
-        json.dump({"days": days, "fee": FEE_PER_SIDE, "slip": SLIP, "stats": stats}, fh, ensure_ascii=False)
+        json.dump({"days": days, "fee": FEE_PER_SIDE, "slip": SLIP, "market": market, "stats": stats},
+                  fh, ensure_ascii=False)
     if send:
         M.send_telegram(report)
     return stats
