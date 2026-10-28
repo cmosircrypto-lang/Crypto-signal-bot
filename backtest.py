@@ -188,7 +188,9 @@ def simulate(bot, data, grid, aligns, btc4, btc1, start_j):
                     result, px = "TP", d["tp"]
                 closed.append({"symbol": sym, "dir": d["dir"], "result": result,
                                "R": trade_R(d, px), "exit_ms": T, "entry_ms": d["entry_ms"],
-                               "setup": d["setup"]})
+                               "setup": d["setup"],
+                               "risk_pct": abs(d["entry"] - d["sl"]) / d["entry"],
+                               "rr": abs(d["tp"] - d["entry"]) / abs(d["entry"] - d["sl"])})
                 del open_tr[sym]
                 cool[sym] = T + bot.cooldown_ms
 
@@ -272,6 +274,76 @@ def setup_kind(s):
     """نام کلی الگو را بدون اعداد و جزئیات (سن کراس، سطح قیمت) برمی‌گرداند."""
     words = [w for w in str(s).split("(")[0].split() if not any(ch.isdigit() for ch in w)]
     return " ".join(words) or "-"
+
+
+def random_baseline(res, data, grid, aligns, start_j, reps=None, seed=42):
+    """
+    پایه‌ی تصادفی: برای هر معامله‌ی واقعی، جهت و هندسه‌ی ریسک/ریوارد (درصد SL و نسبت R:R) حفظ می‌شود،
+    اما نماد و زمان ورود تصادفی انتخاب می‌شود. خروج با همان قواعد (SL-first، کارمزد و لغزش) اعمال می‌شود.
+    اگر ربات واقعاً ورودها را خوب انتخاب کند، میانگین R آن باید از توزیع این پایه بالاتر باشد.
+    """
+    reps = reps or int(os.environ.get("BT_BASE_REPS", "200"))
+    tmpl = [t for t in res["closed"] if "risk_pct" in t]
+    if not tmpl:
+        return None
+    rng = np.random.default_rng(seed)
+    syms = list(data.keys())
+    lo_j, hi_j = start_j, len(grid) - 3
+    rep_means, rep_wins = [], []
+    for _ in range(reps):
+        Rs, wins = [], 0
+        for t in tmpl:
+            pick = None
+            for _try in range(50):
+                sym = syms[int(rng.integers(len(syms)))]
+                j = int(rng.integers(lo_j, hi_j + 1))
+                f = data[sym]["15m"]
+                k = int(aligns[sym]["15m"][j + 1])
+                if k >= 0 and f["ts"][k] == grid[j + 1]:
+                    pick = (sym, k)
+                    break
+            if pick is None:
+                continue
+            sym, k = pick
+            f = data[sym]["15m"]
+            long_ = t["dir"] == "LONG"
+            sign = 1 if long_ else -1
+            entry = f["o"][k] * (1 + SLIP) if long_ else f["o"][k] * (1 - SLIP)
+            rp, rr = t["risk_pct"], t["rr"]
+            if long_:
+                sl, tp = entry * (1 - rp), entry * (1 + rp * rr)
+                sl_h = f["l"][k:] <= sl
+                tp_h = f["h"][k:] >= tp
+            else:
+                sl, tp = entry * (1 + rp), entry * (1 - rp * rr)
+                sl_h = f["h"][k:] >= sl
+                tp_h = f["l"][k:] <= tp
+            hit = sl_h | tp_h
+            if hit.any():
+                i = int(np.argmax(hit))
+                if sl_h[i]:
+                    px = sl * (1 - SLIP) if long_ else sl * (1 + SLIP)
+                else:
+                    px = tp
+                    wins += 1
+            else:
+                px = f["c"][-1]            # mark-to-market در پایان داده
+            gross = sign * (px - entry) / entry
+            Rs.append((gross - 2 * FEE_PER_SIDE) / rp)
+        if Rs:
+            rep_means.append(float(np.mean(Rs)))
+            rep_wins.append(wins / len(Rs))
+    actual = float(np.mean([t["R"] for t in tmpl]))
+    arr = np.array(rep_means)
+    return {
+        "reps": len(rep_means),
+        "mean": round(float(arr.mean()), 3),
+        "p5": round(float(np.percentile(arr, 5)), 3),
+        "p95": round(float(np.percentile(arr, 95)), 3),
+        "win_mean": round(float(np.mean(rep_wins)), 3),
+        "actual": round(actual, 3),
+        "percentile": round(float((arr < actual).mean() * 100), 1),
+    }
 
 
 def breakdown(trades, field, norm=lambda x: str(x)):
@@ -364,6 +436,15 @@ def _half_line(name, h):
             f"\n      ({dirs})")
 
 
+def _base_line(s):
+    b = s.get("baseline")
+    if not b or s["closed"] == 0:
+        return ""
+    return (f"\n   پایه‌ی تصادفی (همان جهت و ریسک/ریوارد، ورود تصادفی): میانگین R {b['mean']:+.3f} "
+            f"[{b['p5']:+.3f} تا {b['p95']:+.3f}] | برد تصادفی {b['win_mean']:.0%}"
+            f"\n   ربات {s['avg_R_net']:+.3f} در صدک {b['percentile']:.0f}ام پایه")
+
+
 def format_report(stats, market=None):
     lines = ["📊 نتیجه‌ی بک‌تست", f"بازه: {stats[0]['months']} ماه | کارمزد {FEE_PER_SIDE:.2%} و لغزش {SLIP:.2%} به ازای هر طرف"]
     if market:
@@ -391,6 +472,7 @@ def format_report(stats, market=None):
             + "".join(
                 _half_line(name, h) for name, h in s["halves"].items()
             )
+            + _base_line(s)
         )
     lines.append("━━━━━━━━━━━━━━━━━")
     return "\n".join(lines)
@@ -443,6 +525,7 @@ def run(ex, send=True, days=BT_DAYS, symbols=None):
         print(f"▶ backtest {bot.name} ...")
         res = simulate(bot, data, grid, aligns, btc4, btc1, start_j)
         st = summarize(bot, res)
+        st["baseline"] = random_baseline(res, data, grid, aligns, start_j)
         stats.append(st)
         print(f"  {bot.name}: taken={st['signals_taken']} closed={st['closed']} "
               f"win={st['win_rate']} avgR={st['avg_R_net']} totalR={st['total_R_net']}")
