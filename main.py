@@ -4,6 +4,7 @@
   1) crypto-signal-bot      : کراس EMA 9/21 در ۴ساعته + تایید قوی ۱ساعته
   2) crypto-signal-bot-v10  : شکست رنج تمیز در ۱ساعته با حجم قوی
   3) crypto-signal-bot-v20  : پرایس‌اکشن با کیفیت بالا در پولبک به EMA21
+  4) crypto-signal-bot-v40  : رژیم بازار (ADX): پولبک روند یا بازگشت از باند در رنج
 
 هر ربات: تگ جدا، heartbeat جدا و فایل وضعیت جدا دارد.
 """
@@ -113,6 +114,22 @@ B3_RR = 2.2
 B3_COOLDOWN_HOURS = 3
 B3_MIN_SCORE = 0.60
 
+# --- ربات ۴ (رژیم بازار با ADX) ---
+B4_ADX_TREND = 25                 # ADX ۱ساعته بالاتر از این: حالت روند
+B4_ADX_RANGE = 20                 # ADX ۱ساعته پایین‌تر از این: حالت رنج (بین دو مقدار: بدون معامله)
+B4_TREND_GAP_4H_ATR = 0.30        # فاصله‌ی EMA9/21 در ۴ساعته باید حداقل این مقدار ATR باشد
+B4_TREND_TOUCH_ATR = 0.20        # کندل ۱ساعته باید تا این فاصله از EMA21 پولبک زده باشد
+B4_TREND_MAX_EXT_ATR = 1.0        # فاصله‌ی بستن از EMA21 بیشتر از این، یعنی گسترش زیاد؛ رد می‌شود
+B4_TREND_RSI_LONG = (40, 62)
+B4_TREND_RSI_SHORT = (38, 60)
+B4_TREND_SL_ATR, B4_TREND_TP_ATR = 1.2, 3.0
+B4_RANGE_RSI_LONG_MAX = 35        # برای LONG رنج: RSI باید زیر این باشد
+B4_RANGE_RSI_SHORT_MIN = 65       # برای SHORT رنج: RSI باید بالای این باشد
+B4_RANGE_SL_BUFFER_ATR = 0.5
+B4_RANGE_MIN_RR = 1.5
+B4_MIN_SCORE = 0.50
+B4_COOLDOWN_HOURS = 3
+
 
 # =====================================================================
 # ابزارهای عمومی
@@ -217,6 +234,25 @@ def calculate_indicators(df):
     low_close = (df["low"] - df["close"].shift()).abs()
     tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
     df["atr"] = tr.ewm(alpha=1 / 14, adjust=False, min_periods=14).mean()
+
+    # ADX (Wilder): قدرت روند، بدون جهت
+    up = df["high"].diff()
+    down = -df["low"].diff()
+    plus_dm = up.where((up > down) & (up > 0), 0.0)
+    minus_dm = down.where((down > up) & (down > 0), 0.0)
+    atr_safe = df["atr"].replace(0, np.nan)
+    plus_di = 100 * plus_dm.ewm(alpha=1 / 14, adjust=False, min_periods=14).mean() / atr_safe
+    minus_di = 100 * minus_dm.ewm(alpha=1 / 14, adjust=False, min_periods=14).mean() / atr_safe
+    di_sum = (plus_di + minus_di).replace(0, np.nan)
+    dx = 100 * (plus_di - minus_di).abs() / di_sum
+    df["adx"] = dx.ewm(alpha=1 / 14, adjust=False, min_periods=14).mean()
+
+    # باند بولینگر (۲۰، ۲σ)
+    bb_mid = df["close"].rolling(20).mean()
+    bb_sd = df["close"].rolling(20).std()
+    df["bb_mid"] = bb_mid
+    df["bb_up"] = bb_mid + 2 * bb_sd
+    df["bb_lo"] = bb_mid - 2 * bb_sd
     return df
 
 
@@ -602,6 +638,126 @@ def analyze_price_action(symbol, ctx):
 
 
 # =====================================================================
+# استراتژی ۴: رژیم بازار با ADX
+#   ADX بالا  -> حالت روند: پولبک به EMA21 در جهت روند ۴ساعته
+#   ADX پایین -> حالت رنج: بازگشت از لبه‌ی باند بولینگر به سمت میانگین
+#   ADX بین دو مقدار -> بدون معامله
+# =====================================================================
+def analyze_regime(symbol, ctx):
+    df = get_data(ctx, symbol, "1h")
+    last = df.iloc[-1]
+
+    close, open_, high, low = (float(last[k]) for k in ("close", "open", "high", "low"))
+    atr = float(last["atr"])
+    rsi = float(last["rsi"])
+    adx = float(last["adx"])
+    if any(np.isnan(v) for v in (atr, rsi, adx)) or atr <= 0:
+        return None
+
+    volume = float(last["volume"])
+    avg_volume = float(df["volume"].iloc[-21:-1].mean())
+    vol_ratio = ratio(volume, avg_volume)
+
+    if adx >= B4_ADX_TREND:
+        mode = "trend"
+    elif adx <= B4_ADX_RANGE:
+        mode = "range"
+    else:
+        print(f"  {symbol}: ADX {adx:.1f} بین دو رژیم، بدون معامله")
+        return None
+
+    if mode == "trend":
+        df_4h = get_data(ctx, symbol, "4h")
+        l4 = df_4h.iloc[-1]
+        direction = trend_of(df_4h)
+        atr_4h = float(l4["atr"])
+        if direction not in ("LONG", "SHORT") or np.isnan(atr_4h) or atr_4h <= 0:
+            return None
+        gap_4h = abs(float(l4["ema9"]) - float(l4["ema21"]))
+        if gap_4h < B4_TREND_GAP_4H_ATR * atr_4h:
+            return None
+
+        ema21 = float(last["ema21"])
+        if direction == "LONG":
+            touched = (low <= ema21 + B4_TREND_TOUCH_ATR * atr and close > ema21 and close > open_
+                       and close - ema21 <= B4_TREND_MAX_EXT_ATR * atr)
+            rsi_ok = B4_TREND_RSI_LONG[0] <= rsi <= B4_TREND_RSI_LONG[1]
+        else:
+            touched = (high >= ema21 - B4_TREND_TOUCH_ATR * atr and close < ema21 and close < open_
+                       and ema21 - close <= B4_TREND_MAX_EXT_ATR * atr)
+            rsi_ok = B4_TREND_RSI_SHORT[0] <= rsi <= B4_TREND_RSI_SHORT[1]
+
+        print(f"  {symbol}: ADX {adx:.1f} ROUND {direction} | پولبک ok={touched} | RSI {rsi:.1f} ok={rsi_ok}")
+        if not (touched and rsi_ok):
+            return None
+        if (atr * B4_TREND_SL_ATR) / close < MIN_SL_PCT:
+            return None
+
+        score = (0.50 * min(adx / 40.0, 1.0)
+                 + 0.30 * min(gap_4h / atr_4h, 1.0)
+                 + 0.20 * min(vol_ratio / 2.0, 1.0))
+        if score < B4_MIN_SCORE:
+            print(f"  {symbol}: score too low ({score:.3f})")
+            return None
+
+        return {
+            "symbol": symbol, "direction": direction, "close": close,
+            "atr": atr, "rsi": rsi,
+            "volume": volume, "avg_volume": avg_volume,
+            "signal_key": int(last["timestamp"]), "score": score,
+            "setup": f"ADX {adx:.0f} روند: پولبک به EMA21 در ۱H",
+            "levels": atr_levels(direction, atr, B4_TREND_SL_ATR, B4_TREND_TP_ATR),
+        }
+
+    # ---------- حالت رنج ----------
+    bb_lo, bb_mid, bb_up = (float(last[k]) for k in ("bb_lo", "bb_mid", "bb_up"))
+    if any(np.isnan(v) for v in (bb_lo, bb_mid, bb_up)):
+        return None
+
+    if low <= bb_lo and close > bb_lo and rsi <= B4_RANGE_RSI_LONG_MAX:
+        direction = "LONG"
+        sl = low - B4_RANGE_SL_BUFFER_ATR * atr
+        tp = bb_mid
+    elif high >= bb_up and close < bb_up and rsi >= B4_RANGE_RSI_SHORT_MIN:
+        direction = "SHORT"
+        sl = high + B4_RANGE_SL_BUFFER_ATR * atr
+        tp = bb_mid
+    else:
+        print(f"  {symbol}: ADX {adx:.1f} RANGE | بدون بازگشت از باند (RSI {rsi:.1f})")
+        return None
+
+    if (direction == "LONG" and not (sl < close < tp)) or (direction == "SHORT" and not (tp < close < sl)):
+        return None
+    risk = abs(close - sl)
+    rr = abs(tp - close) / risk
+    if rr < B4_RANGE_MIN_RR or risk / close < MIN_SL_PCT:
+        print(f"  {symbol}: RANGE {direction} rejected (RR {rr:.2f})")
+        return None
+
+    def levels(entry):
+        if direction == "LONG":
+            return (sl, tp) if sl < entry < tp else None
+        return (sl, tp) if tp < entry < sl else None
+
+    score = (0.50 * min(rr / 3.0, 1.0)
+             + 0.30 * min(abs(rsi - 50) / 20.0, 1.0)
+             + 0.20 * min(vol_ratio / 2.0, 1.0))
+    if score < B4_MIN_SCORE:
+        print(f"  {symbol}: score too low ({score:.3f})")
+        return None
+
+    print(f"  {symbol}: ADX {adx:.1f} RANGE {direction} | RSI {rsi:.1f} | RR {rr:.2f}")
+    return {
+        "symbol": symbol, "direction": direction, "close": close,
+        "atr": atr, "rsi": rsi,
+        "volume": volume, "avg_volume": avg_volume,
+        "signal_key": int(last["timestamp"]), "score": score,
+        "setup": f"ADX {adx:.0f} رنج: بازگشت از باند بولینگر ۱H به میانگین",
+        "levels": levels,
+    }
+
+
+# =====================================================================
 # تعریف ربات‌ها
 # =====================================================================
 class Bot:
@@ -631,6 +787,9 @@ BOTS = [
     Bot("crypto-signal-bot-v20", "Price Action", analyze_price_action,
         "server_messages_v20.json", "last_signals_v20.json",
         cooldown_hours=B3_COOLDOWN_HOURS),
+    Bot("crypto-signal-bot-v40", "Regime", analyze_regime,
+        "server_messages_v40.json", "last_signals_v40.json",
+        cooldown_hours=B4_COOLDOWN_HOURS, btc_filter_4h=False),
 ]
 
 
