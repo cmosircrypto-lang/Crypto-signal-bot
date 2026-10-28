@@ -1,0 +1,45 @@
+name: Backtest (3 bots)
+
+on:
+  workflow_dispatch:
+    inputs:
+      days:
+        description: 'تعداد روزهای بک‌تست'
+        required: false
+        default: '90'
+
+concurrency:
+  group: backtest
+  cancel-in-progress: false
+
+jobs:
+  backtest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+          cache: 'pip'
+
+      - run: pip install -r requirements.txt
+
+      - name: Run backtest
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          CHAT_ID: ${{ secrets.CHAT_ID }}
+          BT_DAYS: ${{ inputs.days }}
+        run: python backtest.py
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backtest-results
+          path: backtest_results.json
+          if-no-files-found: ignore
