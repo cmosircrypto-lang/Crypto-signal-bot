@@ -1,11 +1,11 @@
 """
-سه ربات سیگنال که با هم و روی داده‌ی مشترک اجرا می‌شوند:
+سه ربات سیگنال با تمرکز روی کیفیت بالا (Win Rate)
 
-  1) crypto-signal-bot      : کراس EMA 9/21 در ۴ساعته + تایید ۱ساعته + RSI/حجم
-  2) crypto-signal-bot-v10  : شکست رنج (Breakout) در ۱ساعته با انفجار حجم
-  3) crypto-signal-bot-v20  : پرایس‌اکشن (الگوی کندلی در پولبک به EMA21 در جهت روند ۴ساعته)
+  1) crypto-signal-bot      : کراس EMA 9/21 در ۴ساعته + تایید قوی ۱ساعته
+  2) crypto-signal-bot-v10  : شکست رنج تمیز در ۱ساعته با حجم قوی
+  3) crypto-signal-bot-v20  : پرایس‌اکشن با کیفیت بالا در پولبک به EMA21
 
-هر ربات: تگ جدا در پیام‌ها، heartbeat جدا و فایل وضعیت جدا دارد.
+هر ربات: تگ جدا، heartbeat جدا و فایل وضعیت جدا دارد.
 """
 import os
 import json
@@ -27,14 +27,14 @@ TOOBIT_API_KEY = os.environ.get("TOOBIT_API_KEY")
 TOOBIT_SECRET = os.environ.get("TOOBIT_SECRET")
 
 SYMBOLS = [
-    # --- Core Majors (Top Liquidity) ---
+    # --- Core Majors ---
     "BTC-SWAP-USDT", "ETH-SWAP-USDT", "SOL-SWAP-USDT", "XRP-SWAP-USDT",
     "BNB-SWAP-USDT", "DOGE-SWAP-USDT", "ADA-SWAP-USDT", "TRX-SWAP-USDT",
     "AVAX-SWAP-USDT", "LINK-SWAP-USDT", "DOT-SWAP-USDT", "LTC-SWAP-USDT",
     "BCH-SWAP-USDT", "TON-SWAP-USDT", "SUI-SWAP-USDT", "NEAR-SWAP-USDT",
     "APT-SWAP-USDT", "ARB-SWAP-USDT", "OP-SWAP-USDT", "ATOM-SWAP-USDT",
 
-    # --- High Volume / Popular Altcoins ---
+    # --- High Volume / Popular ---
     "UNI-SWAP-USDT", "AAVE-SWAP-USDT", "FIL-SWAP-USDT", "INJ-SWAP-USDT",
     "TIA-SWAP-USDT", "JUP-SWAP-USDT", "ENA-SWAP-USDT", "WIF-SWAP-USDT",
     "1000PEPE-SWAP-USDT", "1000SHIB-SWAP-USDT", "WLD-SWAP-USDT", "SEI-SWAP-USDT",
@@ -47,7 +47,7 @@ SYMBOLS = [
     "DYDX-SWAP-USDT", "GMX-SWAP-USDT", "PENDLE-SWAP-USDT", "ONDO-SWAP-USDT",
     "JTO-SWAP-USDT", "PYTH-SWAP-USDT", "STRK-SWAP-USDT", "MANTA-SWAP-USDT",
 
-    # --- Meme & Community Coins ---
+    # --- Meme & Community ---
     "1000BONK-SWAP-USDT", "1000FLOKI-SWAP-USDT", "MEME-SWAP-USDT", "ORDI-SWAP-USDT",
     "1000SATS-SWAP-USDT", "1000RATS-SWAP-USDT", "POPCAT-SWAP-USDT",
     "BRETT-SWAP-USDT", "TURBO-SWAP-USDT", "1000000MOG-SWAP-USDT", "DOGS-SWAP-USDT",
@@ -69,8 +69,8 @@ MAX_HEARTBEATS = 2
 SUMMARY_FILE = "daily_summary.json"
 SUMMARY_HOUR = 8
 
-MIN_SL_PCT = 0.003
-MAX_ENTRY_DRIFT_ATR = 0.5
+MIN_SL_PCT = 0.0035
+MAX_ENTRY_DRIFT_ATR = 0.45
 
 TF_MS = {
     "5m": 5 * 60 * 1000,
@@ -79,34 +79,38 @@ TF_MS = {
     "4h": 4 * 60 * 60 * 1000,
 }
 
-# --- پارامترهای ربات ۱ (کراس EMA) ---
-B1_CROSS_LOOKBACK = 5
-B1_RSI_LONG = (45, 72)
-B1_RSI_SHORT = (28, 55)
-B1_VOLUME_MULT = 1.1
-B1_SL_ATR, B1_TP_ATR = 1.8, 3.2
+# --- ربات ۱ (کیفیت بالا) ---
+B1_CROSS_LOOKBACK = 2
+B1_RSI_LONG = (48, 68)
+B1_RSI_SHORT = (32, 52)
+B1_VOLUME_MULT = 1.4
+B1_SL_ATR, B1_TP_ATR = 1.7, 3.4
+B1_MIN_SCORE = 0.62
 
-# --- پارامترهای ربات ۲ / V10 (شکست رنج در ۱ساعته) ---
+# --- ربات ۲ (کیفیت بالا) ---
 B2_LOOKBACK = 20
-B2_VOLUME_MULT = 1.6
-B2_CLOSE_POS = 0.65
-B2_MAX_EXTENSION_ATR = 1.3
-B2_RSI_LONG = (52, 78)
-B2_RSI_SHORT = (22, 48)
-B2_SL_ATR, B2_TP_ATR = 1.6, 3.0
-B2_MAX_RANGE_ATR = 4.5
+B2_VOLUME_MULT = 2.0
+B2_CLOSE_POS = 0.70
+B2_MAX_EXTENSION_ATR = 0.9
+B2_RSI_LONG = (55, 75)
+B2_RSI_SHORT = (25, 45)
+B2_SL_ATR, B2_TP_ATR = 1.5, 3.2
+B2_MAX_RANGE_ATR = 6.0
+B2_MIN_BODY_ATR = 0.6
+B2_MIN_SCORE = 0.65
 
-# --- پارامترهای ربات ۳ / V20 (پرایس‌اکشن) ---
-B3_MIN_BODY_ATR = 0.55
-B3_TOUCH_ATR = 0.30
-B3_MIN_DISTANCE_ATR = 0.08
-B3_VOLUME_MULT = 1.15
-B3_RSI_LONG = (38, 68)
-B3_RSI_SHORT = (32, 62)
-B3_SL_BUFFER_ATR = 0.12
-B3_MIN_RISK_ATR, B3_MAX_RISK_ATR = 0.55, 2.3
-B3_RR = 2.0
-B3_COOLDOWN_HOURS = 2
+# --- ربات ۳ (کیفیت بالا) ---
+B3_MIN_BODY_ATR = 0.70
+B3_TOUCH_ATR = 0.22
+B3_MIN_DISTANCE_ATR = 0.12
+B3_VOLUME_MULT = 1.4
+B3_RSI_LONG = (42, 65)
+B3_RSI_SHORT = (35, 58)
+B3_SL_BUFFER_ATR = 0.10
+B3_MIN_RISK_ATR, B3_MAX_RISK_ATR = 0.6, 2.1
+B3_RR = 2.2
+B3_COOLDOWN_HOURS = 3
+B3_MIN_SCORE = 0.60
 
 
 # =====================================================================
@@ -167,7 +171,7 @@ def now_ms():
 
 
 # =====================================================================
-# داده و اندیکاتورها (مشترک بین هر سه ربات)
+# داده و اندیکاتورها
 # =====================================================================
 class Ctx:
     def __init__(self, exchange):
@@ -263,7 +267,7 @@ def ratio(cur, avg):
 
 
 # =====================================================================
-# استراتژی ۱: crypto-signal-bot  (کراس EMA) - اصلاح‌شده
+# استراتژی ۱: کراس EMA (کیفیت بالا)
 # =====================================================================
 def find_recent_cross(df, direction, lookback=B1_CROSS_LOOKBACK):
     if trend_of(df) != direction:
@@ -290,12 +294,10 @@ def analyze_cross(symbol, ctx):
             direction, cross_age, cross_ts = d, age, ts
             break
     if direction is None:
-        print(f"  {symbol}: no 4H cross")
         return None
 
     df_1h = get_data(ctx, symbol, "1h")
     if trend_of(df_1h) != direction:
-        print(f"  {symbol}: {direction} 4H cross but 1H trend disagrees")
         return None
 
     last_1h = df_1h.iloc[-1]
@@ -303,7 +305,12 @@ def analyze_cross(symbol, ctx):
     if np.isnan(atr_1h) or atr_1h <= 0:
         return None
 
-    # حجم روی ۱ساعته
+    # قدرت روند ۱ساعته باید قابل توجه باشد
+    gap_1h = abs(float(last_1h["ema9"]) - float(last_1h["ema21"]))
+    if gap_1h < 0.35 * atr_1h:
+        print(f"  {symbol}: 1H trend too weak")
+        return None
+
     vol_1h = float(last_1h["volume"])
     avg_vol_1h = float(df_1h["volume"].iloc[-21:-1].mean())
     vol_ratio_1h = ratio(vol_1h, avg_vol_1h)
@@ -326,15 +333,17 @@ def analyze_cross(symbol, ctx):
 
     close = float(last["close"])
     if (atr_1h * B1_SL_ATR) / close < MIN_SL_PCT:
-        print(f"  {symbol}: SL too tight -> skipped")
         return None
 
-    gap_1h = abs(float(last_1h["ema9"]) - float(last_1h["ema21"]))
-    trend_score = min(gap_1h / atr_1h, 1.5) / 1.5
-    score = (0.30 * min(vol_ratio_1h, 3.0) / 3.0
-             + 0.30 * (B1_CROSS_LOOKBACK - cross_age) / B1_CROSS_LOOKBACK
+    trend_score = min(gap_1h / atr_1h, 1.6) / 1.6
+    score = (0.32 * min(vol_ratio_1h, 3.5) / 3.5
+             + 0.28 * (B1_CROSS_LOOKBACK - cross_age) / B1_CROSS_LOOKBACK
              + 0.25 * trend_score
-             + 0.15 * min(abs(rsi - 50) / 25.0, 1.0))
+             + 0.15 * min(abs(rsi - 50) / 22.0, 1.0))
+
+    if score < B1_MIN_SCORE:
+        print(f"  {symbol}: score too low ({score:.3f})")
+        return None
 
     return {
         "symbol": symbol, "direction": direction, "close": close,
@@ -347,7 +356,7 @@ def analyze_cross(symbol, ctx):
 
 
 # =====================================================================
-# استراتژی ۲: crypto-signal-bot-v10  (شکست رنج) - اصلاح‌شده
+# استراتژی ۲: Breakout (کیفیت بالا)
 # =====================================================================
 def analyze_breakout(symbol, ctx):
     df = get_data(ctx, symbol, "1h")
@@ -365,15 +374,21 @@ def analyze_breakout(symbol, ctx):
     close = float(last["close"])
     high = float(last["high"])
     low = float(last["low"])
+    open_ = float(last["open"])
     atr = float(last["atr"])
     rsi = float(last["rsi"])
     rng = high - low
+    body = abs(close - open_)
 
     if np.isnan(atr) or atr <= 0 or rng <= 0 or range_size <= 0:
         return None
 
     if range_size > B2_MAX_RANGE_ATR * atr:
         print(f"  {symbol}: range too wide ({range_size / atr:.1f} ATR)")
+        return None
+
+    if body < B2_MIN_BODY_ATR * atr:
+        print(f"  {symbol}: breakout body too weak")
         return None
 
     direction = level = None
@@ -391,7 +406,6 @@ def analyze_breakout(symbol, ctx):
         direction, level = "SHORT", range_low
 
     if direction is None:
-        print(f"  {symbol}: no fresh 1H breakout")
         return None
 
     volume = float(last["volume"])
@@ -414,15 +428,22 @@ def analyze_breakout(symbol, ctx):
         return None
 
     if (atr * B2_SL_ATR) / close < MIN_SL_PCT:
-        print(f"  {symbol}: SL too tight -> skipped")
         return None
 
-    strength = min(abs(close - level) / atr, 1.2)
+    strength = min(abs(close - level) / atr, 1.0)
+    body_score = min(body / atr, 1.5) / 1.5
     atr_4h = float(l4["atr"]) if not np.isnan(l4["atr"]) else 0.0
     gap_4h = abs(float(l4["ema21"]) - float(l4["ema50"]))
     trend_score = min(gap_4h / atr_4h, 1.0) if atr_4h > 0 else 0.0
 
-    score = 0.40 * min(vol_ratio, 3.0) / 3.0 + 0.30 * strength + 0.30 * trend_score
+    score = (0.35 * min(vol_ratio, 4.0) / 4.0
+             + 0.25 * strength
+             + 0.20 * body_score
+             + 0.20 * trend_score)
+
+    if score < B2_MIN_SCORE:
+        print(f"  {symbol}: score too low ({score:.3f})")
+        return None
 
     return {
         "symbol": symbol, "direction": direction, "close": close,
@@ -435,12 +456,19 @@ def analyze_breakout(symbol, ctx):
 
 
 # =====================================================================
-# استراتژی ۳: crypto-signal-bot-v20  (پرایس‌اکشن) - اصلاح‌شده
+# استراتژی ۳: Price Action (کیفیت بالا)
 # =====================================================================
 def analyze_price_action(symbol, ctx):
     df_4h = get_data(ctx, symbol, "4h")
     direction = trend_of(df_4h)
     if direction not in ("LONG", "SHORT"):
+        return None
+
+    # قدرت روند ۴ساعته
+    l4 = df_4h.iloc[-1]
+    atr_4h = float(l4["atr"])
+    gap_4h = abs(float(l4["ema9"]) - float(l4["ema21"]))
+    if np.isnan(atr_4h) or atr_4h <= 0 or gap_4h < 0.4 * atr_4h:
         return None
 
     df = get_data(ctx, symbol, "15m")
@@ -470,17 +498,20 @@ def analyze_price_action(symbol, ctx):
     extreme = None
 
     if direction == "LONG":
+        # Bullish Engulfing قوی
         if (pc < po and c > o and c >= po and o <= pc and
-                body >= B3_MIN_BODY_ATR * atr and body > abs(pc - po) * 1.1):
+                body >= B3_MIN_BODY_ATR * atr and body > abs(pc - po) * 1.15):
             pattern = "Bullish Engulfing"
             extreme = min(l, pl)
 
-        elif (rng >= 0.9 * atr and lower >= 2.2 * body and
-              upper <= 0.35 * body and c >= (l + 0.65 * rng)):
+        # Hammer تمیز و قوی
+        elif (rng >= 1.0 * atr and lower >= 2.4 * body and
+              upper <= 0.30 * body and c >= (l + 0.68 * rng) and body >= 0.25 * atr):
             pattern = "Hammer"
             extreme = l
 
-        elif (c > o and body >= 0.75 * atr and body > 1.8 * (upper + lower)):
+        # Strong Bullish
+        elif (c > o and body >= 0.85 * atr and body > 2.0 * (upper + lower)):
             pattern = "Strong Bullish"
             extreme = l
 
@@ -492,16 +523,16 @@ def analyze_price_action(symbol, ctx):
 
     else:
         if (pc > po and c < o and c <= po and o >= pc and
-                body >= B3_MIN_BODY_ATR * atr and body > abs(pc - po) * 1.1):
+                body >= B3_MIN_BODY_ATR * atr and body > abs(pc - po) * 1.15):
             pattern = "Bearish Engulfing"
             extreme = max(h, ph)
 
-        elif (rng >= 0.9 * atr and upper >= 2.2 * body and
-              lower <= 0.35 * body and c <= (h - 0.65 * rng)):
+        elif (rng >= 1.0 * atr and upper >= 2.4 * body and
+              lower <= 0.30 * body and c <= (h - 0.68 * rng) and body >= 0.25 * atr):
             pattern = "Shooting Star"
             extreme = h
 
-        elif (c < o and body >= 0.75 * atr and body > 1.8 * (upper + lower)):
+        elif (c < o and body >= 0.85 * atr and body > 2.0 * (upper + lower)):
             pattern = "Strong Bearish"
             extreme = h
 
@@ -514,7 +545,6 @@ def analyze_price_action(symbol, ctx):
     rsi_ok = rsi_lo <= rsi <= rsi_hi
 
     if pattern is None:
-        print(f"  {symbol}: {direction} trend 4H | no pattern")
         return None
 
     print(f"  {symbol}: {direction} 4H | {pattern} | pullback ok={touch} | "
@@ -531,7 +561,7 @@ def analyze_price_action(symbol, ctx):
         risk = sl_level - c
 
     if not (B3_MIN_RISK_ATR * atr <= risk <= B3_MAX_RISK_ATR * atr) or risk / c < MIN_SL_PCT:
-        print(f"  {symbol}: structural SL out of range -> skipped")
+        print(f"  {symbol}: structural SL out of range")
         return None
 
     def levels(entry):
@@ -541,14 +571,16 @@ def analyze_price_action(symbol, ctx):
         tp = entry + B3_RR * r if direction == "LONG" else entry - B3_RR * r
         return sl_level, tp
 
-    l4 = df_4h.iloc[-1]
-    atr_4h = float(l4["atr"]) if not np.isnan(l4["atr"]) else 0.0
-    gap_4h = abs(float(l4["ema9"]) - float(l4["ema21"]))
-    trend_score = min(gap_4h / atr_4h, 1.0) if atr_4h > 0 else 0.0
+    trend_score = min(gap_4h / atr_4h, 1.2) / 1.2
+    body_score = min(body / atr, 1.8) / 1.8
 
-    score = (0.35 * min(vol_ratio, 3.0) / 3.0
-             + 0.35 * min(body / atr, 1.6) / 1.6
-             + 0.30 * trend_score)
+    score = (0.30 * min(vol_ratio, 3.5) / 3.5
+             + 0.35 * body_score
+             + 0.35 * trend_score)
+
+    if score < B3_MIN_SCORE:
+        print(f"  {symbol}: score too low ({score:.3f})")
+        return None
 
     return {
         "symbol": symbol, "direction": direction, "close": c,
@@ -565,7 +597,7 @@ def analyze_price_action(symbol, ctx):
 # =====================================================================
 class Bot:
     def __init__(self, name, label, analyze, heartbeat_file, signals_file,
-                 cooldown_hours=0, max_open=10, max_signals=3,
+                 cooldown_hours=0, max_open=8, max_signals=2,
                  btc_filter_4h=True, btc_filter_1h=False):
         self.name = name
         self.label = label
@@ -585,12 +617,12 @@ class Bot:
 
 BOTS = [
     Bot("crypto-signal-bot", "", analyze_cross,
-        "server_messages.json", "last_signals.json"),
+        "server_messages.json", "last_signals.json", max_signals=2),
     Bot("crypto-signal-bot-v10", "Breakout", analyze_breakout,
-        "server_messages_v10.json", "last_signals_v10.json"),
+        "server_messages_v10.json", "last_signals_v10.json", max_signals=2),
     Bot("crypto-signal-bot-v20", "Price Action", analyze_price_action,
         "server_messages_v20.json", "last_signals_v20.json",
-        cooldown_hours=B3_COOLDOWN_HOURS),
+        cooldown_hours=B3_COOLDOWN_HOURS, max_signals=2),
 ]
 
 
@@ -859,7 +891,7 @@ def maybe_send_daily_summary():
 # =====================================================================
 if __name__ == "__main__":
     print("=" * 50)
-    print("Starting multi-bot cycle: " + ", ".join(b.name for b in BOTS))
+    print("Starting multi-bot cycle (Quality Mode): " + ", ".join(b.name for b in BOTS))
 
     exchange = create_exchange()
     ctx = Ctx(exchange)
