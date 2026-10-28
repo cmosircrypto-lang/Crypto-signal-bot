@@ -130,6 +130,18 @@ B4_RANGE_MIN_RR = 1.5
 B4_MIN_SCORE = 0.50
 B4_COOLDOWN_HOURS = 3
 
+# --- ربات ۵ (SMC/ICT ترکیبی؛ فعلاً فقط بک‌تست، زنده نیست) ---
+B5_LOOKBACK_1H = 20               # سطح نقدینگی: کف/سقف ۲۰ کندل ۱ساعته‌ی قبل از sweep
+B5_SWEEP_RECENT = 3               # sweep باید در ۳ کندل ۱ساعته‌ی اخیر رخ داده باشد
+B5_RANGE_BARS = 48                # بازه‌ی premium/discount: ۴۸ کندل ۱ساعته‌ی اخیر
+B5_FVG_RECENT = 12                # FVG در ۱۲ کندل ۱۵دقیقه‌ی اخیر
+B5_TREND_GAP_4H_ATR = 0.30
+B5_SL_BUFFER_ATR = 0.10
+B5_MIN_RR = 2.0
+B5_MAX_RISK_ATR = 3.0
+B5_MIN_SCORE = 0.50
+B5_COOLDOWN_HOURS = 3
+
 
 # =====================================================================
 # ابزارهای عمومی
@@ -705,7 +717,7 @@ def analyze_regime(symbol, ctx):
             "atr": atr, "rsi": rsi,
             "volume": volume, "avg_volume": avg_volume,
             "signal_key": int(last["timestamp"]), "score": score,
-            "setup": f"ADX {adx:.0f} روند: پولبک به EMA21 در ۱H",
+            "setup": "رژیم روند: پولبک به میانگین ۱H",
             "levels": atr_levels(direction, atr, B4_TREND_SL_ATR, B4_TREND_TP_ATR),
         }
 
@@ -752,7 +764,138 @@ def analyze_regime(symbol, ctx):
         "atr": atr, "rsi": rsi,
         "volume": volume, "avg_volume": avg_volume,
         "signal_key": int(last["timestamp"]), "score": score,
-        "setup": f"ADX {adx:.0f} رنج: بازگشت از باند بولینگر ۱H به میانگین",
+        "setup": "رژیم رنج: بازگشت از باند به میانگین ۱H",
+        "levels": levels,
+    }
+
+
+# =====================================================================
+# استراتژی ۵: SMC/ICT ترکیبی
+#   ۴ساعته: روند | ۱ساعته: برداشت نقدینگی (sweep) | premium/discount
+#   ۱۵دقیقه: FVG بعد از sweep + پولبک و تأیید واکنش در کندل بسته‌ی اخیر
+# =====================================================================
+def analyze_smc(symbol, ctx):
+    df4 = get_data(ctx, symbol, "4h")
+    l4 = df4.iloc[-1]
+    direction = trend_of(df4)
+    atr4 = float(l4["atr"])
+    if direction not in ("LONG", "SHORT") or np.isnan(atr4) or atr4 <= 0:
+        return None
+    if abs(float(l4["ema9"]) - float(l4["ema21"])) < B5_TREND_GAP_4H_ATR * atr4:
+        return None
+
+    df1 = get_data(ctx, symbol, "1h")
+    n1 = len(df1)
+    if n1 < B5_RANGE_BARS + B5_LOOKBACK_1H + 5:
+        return None
+    atr1 = float(df1["atr"].iloc[-1])
+    if np.isnan(atr1) or atr1 <= 0:
+        return None
+    hi1, lo1, c1 = df1["high"].values, df1["low"].values, df1["close"].values
+    ts1 = df1["timestamp"].values
+
+    # ۱) برداشت نقدینگی: LONG روی کف، SHORT روی سقف؛ کندل از سطح رد شده و داخل آن بسته شده
+    sweep = None
+    for m in range(n1 - 1, n1 - 1 - B5_SWEEP_RECENT, -1):
+        win = slice(m - B5_LOOKBACK_1H, m)
+        if direction == "LONG":
+            level = float(lo1[win].min())
+            if lo1[m] < level < c1[m]:
+                sweep = {"ts": int(ts1[m]), "extreme": float(lo1[m]), "level": level}
+                break
+        else:
+            level = float(hi1[win].max())
+            if c1[m] < level < hi1[m]:
+                sweep = {"ts": int(ts1[m]), "extreme": float(hi1[m]), "level": level}
+                break
+    if sweep is None:
+        return None
+
+    # ۲) premium / discount: LONG فقط در discount و SHORT فقط در premium
+    rng = slice(n1 - B5_RANGE_BARS, n1)
+    rng_hi, rng_lo = float(hi1[rng].max()), float(lo1[rng].min())
+    eq = (rng_hi + rng_lo) / 2
+
+    # ۳) FVG ۱۵دقیقه‌ای بعد از sweep، با پولبک و تأیید در کندل بسته‌ی اخیر
+    df15 = get_data(ctx, symbol, "15m")
+    h, l, o, c, v = (df15[k].values for k in ("high", "low", "open", "close", "volume"))
+    ts15 = df15["timestamp"].values
+    last = len(df15) - 1
+    price = float(c[last])
+    if (direction == "LONG" and price > eq) or (direction == "SHORT" and price < eq):
+        return None
+
+    fvg = None
+    for i in range(last - 1, max(2, last - B5_FVG_RECENT) - 1, -1):
+        if ts15[i - 1] < sweep["ts"]:
+            break
+        if direction == "LONG" and h[i - 2] < l[i]:
+            bottom, top = float(h[i - 2]), float(l[i])
+            if (c[i + 1:last] < bottom).any():
+                continue
+            if l[last] <= top and c[last] > o[last] and c[last] >= (bottom + top) / 2:
+                fvg = {"ts": int(ts15[i])}
+                break
+        if direction == "SHORT" and l[i - 2] > h[i]:
+            bottom, top = float(h[i]), float(l[i - 2])
+            if (c[i + 1:last] > top).any():
+                continue
+            if h[last] >= bottom and c[last] < o[last] and c[last] <= (bottom + top) / 2:
+                fvg = {"ts": int(ts15[i])}
+                break
+    if fvg is None:
+        return None
+
+    # ۴) سطوح: حد ضرر پشت فتیله‌ی sweep، حد سود روی سقف/کف بازه‌ی premium/discount
+    if direction == "LONG":
+        sl = sweep["extreme"] - B5_SL_BUFFER_ATR * atr1
+        tp = rng_hi
+    else:
+        sl = sweep["extreme"] + B5_SL_BUFFER_ATR * atr1
+        tp = rng_lo
+
+    def levels(entry):
+        if direction == "LONG":
+            if not (sl < entry < tp):
+                return None
+            risk, reward = entry - sl, tp - entry
+        else:
+            if not (tp < entry < sl):
+                return None
+            risk, reward = sl - entry, entry - tp
+        if risk <= 0 or risk > B5_MAX_RISK_ATR * atr1 or reward / risk < B5_MIN_RR:
+            return None
+        return sl, tp
+
+    if levels(price) is None:
+        print(f"  {symbol}: SMC {direction} rejected (RR/levels)")
+        return None
+    risk = abs(price - sl)
+    if risk / price < MIN_SL_PCT:
+        return None
+    rr = abs(tp - price) / risk
+
+    depth = abs(sweep["level"] - sweep["extreme"]) / atr1
+    vol = float(v[last])
+    avg_vol = float(df15["volume"].iloc[-21:-1].mean())
+    vol_ratio = ratio(vol, avg_vol)
+    score = (0.35 * min(depth / 0.5, 1.0)
+             + 0.35 * min(vol_ratio / 2.0, 1.0)
+             + 0.30 * min(rr / 3.0, 1.0))
+    if score < B5_MIN_SCORE:
+        print(f"  {symbol}: SMC score too low ({score:.3f})")
+        return None
+
+    rsi = float(df15["rsi"].iloc[-1])
+    if np.isnan(rsi):
+        rsi = 50.0
+    print(f"  {symbol}: SMC {direction} | sweep ok | FVG ok | RR {rr:.2f} | score {score:.3f}")
+    return {
+        "symbol": symbol, "direction": direction, "close": price,
+        "atr": atr1, "rsi": rsi,
+        "volume": vol, "avg_volume": avg_vol,
+        "signal_key": fvg["ts"], "score": score,
+        "setup": "SMC: برداشت نقدینگی و FVG با پولبک",
         "levels": levels,
     }
 
@@ -763,7 +906,7 @@ def analyze_regime(symbol, ctx):
 class Bot:
     def __init__(self, name, label, analyze, heartbeat_file, signals_file,
                  cooldown_hours=0, max_signals=MAX_SIGNALS_PER_RUN,
-                 btc_filter_4h=True, btc_filter_1h=False):
+                 btc_filter_4h=True, btc_filter_1h=False, live=True):
         self.name = name
         self.label = label
         self.analyze = analyze
@@ -773,6 +916,7 @@ class Bot:
         self.max_signals = max_signals
         self.btc_filter_4h = btc_filter_4h
         self.btc_filter_1h = btc_filter_1h
+        self.live = live
 
     @property
     def title_tag(self):
@@ -790,7 +934,12 @@ BOTS = [
     Bot("crypto-signal-bot-v40", "Regime", analyze_regime,
         "server_messages_v40.json", "last_signals_v40.json",
         cooldown_hours=B4_COOLDOWN_HOURS, btc_filter_4h=False),
+    Bot("crypto-signal-bot-v50", "SMC", analyze_smc,
+        "server_messages_v50.json", "last_signals_v50.json",
+        cooldown_hours=B5_COOLDOWN_HOURS, live=False),
 ]
+# فقط رباتهای زنده در حلقه‌ی اجرا، heartbeat و خلاصه‌ی روزانه می‌آیند؛ بک‌تست همه‌ی BOTS را می‌بیند
+LIVE_BOTS = [b for b in BOTS if b.live]
 
 
 # =====================================================================
@@ -1028,7 +1177,7 @@ def maybe_send_daily_summary():
 
     date_gregorian, date_jalali, time_str = get_iran_time()
     lines = []
-    for bot in BOTS:
+    for bot in LIVE_BOTS:
         recs = list(load_json(bot.signals_file, {}).values())
         closed = [r for r in recs if r.get("status") == "CLOSED"]
         opened = [r for r in recs if r.get("status") == "OPEN"]
@@ -1054,7 +1203,7 @@ def maybe_send_daily_summary():
 # =====================================================================
 if __name__ == "__main__":
     print("=" * 50)
-    print("Starting multi-bot cycle (Quality Mode): " + ", ".join(b.name for b in BOTS))
+    print("Starting multi-bot cycle (Quality Mode): " + ", ".join(b.name for b in LIVE_BOTS))
 
     exchange = create_exchange()
     ctx = Ctx(exchange)
@@ -1063,11 +1212,11 @@ if __name__ == "__main__":
     print(f"🌍 BTC 4H Trend: {btc_4h} | BTC 1H Trend: {btc_1h}")
     warning = "دریافت داده‌ی BTC ناموفق بود" if btc_4h == "UNKNOWN" else None
 
-    for bot in BOTS:
+    for bot in LIVE_BOTS:
         send_heartbeat(bot, warning)
     print("✅ Heartbeats sent.")
 
-    for bot in BOTS:
+    for bot in LIVE_BOTS:
         try:
             run_bot(bot, ctx, btc_4h, btc_1h)
         except Exception as e:
