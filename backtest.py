@@ -44,8 +44,16 @@ class BTCtx:
 # دریافت داده
 # =====================================================================
 def fetch_history(ex, symbol, tf, since_ms, until_ms):
+    """
+    تاریخچه‌ی کندل‌ها را صفحه‌صفحه می‌گیرد.
+    ابتدا با since به جلو می‌رود. اگر صرافی since را نادیده بگیرد (فقط آخرین کندل‌ها را بدهد)،
+    با endTime به عقب صفحه‌بندی می‌کند.
+    """
     step = M.TF_MS[tf]
-    rows, since = [], since_ms
+    rows = []
+
+    # --- روش ۱: جلو با since
+    since = since_ms
     while since < until_ms:
         batch = ex.fetch_ohlcv(symbol, timeframe=tf, since=since, limit=PAGE)
         if not batch:
@@ -55,8 +63,27 @@ def fetch_history(ex, symbol, tf, since_ms, until_ms):
         if nxt <= since:
             break
         since = nxt
-    df = pd.DataFrame(rows, columns=COLS).drop_duplicates("timestamp").sort_values("timestamp")
-    df = df[df["timestamp"] + step <= until_ms]          # فقط کندل‌های بسته
+    df = pd.DataFrame(rows, columns=COLS).drop_duplicates("timestamp")
+    mode = "since"
+
+    # --- روش ۲ (اگر روش ۱ به ابتدای بازه نرسید): عقب با endTime
+    if len(df) and df["timestamp"].min() > since_ms + 2 * step:
+        rows, end = [], until_ms
+        for _ in range(10000):
+            batch = ex.fetch_ohlcv(symbol, timeframe=tf, limit=PAGE, params={"endTime": int(end)})
+            if not batch:
+                break
+            rows.extend(batch)
+            earliest = min(b[0] for b in batch)
+            if earliest <= since_ms or earliest - 1 >= end:
+                break
+            end = earliest - 1
+        df = pd.DataFrame(rows, columns=COLS).drop_duplicates("timestamp")
+        mode = "endTime"
+
+    df = df.sort_values("timestamp")
+    df = df[(df["timestamp"] >= since_ms) & (df["timestamp"] + step <= until_ms)]   # فقط کندل‌های بسته
+    print(f"  fetch {symbol} {tf}: {len(df)} کندل (روش: {mode})")
     return df.reset_index(drop=True)
 
 
