@@ -266,6 +266,30 @@ def simulate(bot, data, grid, aligns, btc4, btc1, start_j):
 # =====================================================================
 # خلاصه‌ی آماری
 # =====================================================================
+def setup_kind(s):
+    """نام کلی الگو را بدون اعداد و جزئیات (سن کراس، سطح قیمت) برمی‌گرداند."""
+    words = [w for w in str(s).split("(")[0].split() if not any(ch.isdigit() for ch in w)]
+    return " ".join(words) or "-"
+
+
+def breakdown(trades, field, norm=lambda x: str(x)):
+    """آمار به تفکیک یک فیلد برای تشخیص این‌که زیان از کدام بخش می‌آید."""
+    groups = {}
+    for t in trades:
+        groups.setdefault(norm(t.get(field, "-")), []).append(t)
+    out = {}
+    for k, items in groups.items():
+        Rs = [x["R"] for x in items]
+        n = len(Rs)
+        out[k] = {
+            "n": n,
+            "win_rate": round(sum(1 for x in items if x["result"] == "TP") / n, 3),
+            "avg_R": round(sum(Rs) / n, 3),
+            "total_R": round(sum(Rs), 2),
+        }
+    return out
+
+
 def summarize(bot, res):
     closed = sorted(res["closed"], key=lambda x: x["exit_ms"])
     Rs = [c["R"] for c in closed]
@@ -297,6 +321,10 @@ def summarize(bot, res):
         "profit_factor": round(gw / gl, 2) if gl > 0 else None,
         "max_drawdown_R": round(mdd, 2),
         "open_mtm_R": round(res["mtm_R"], 2),
+        "exits": {"TP": sum(1 for c in closed if c["result"] == "TP"),
+                  "SL": sum(1 for c in closed if c["result"] == "SL")},
+        "by_direction": breakdown(closed, "dir"),
+        "by_setup": breakdown(closed, "setup", setup_kind),
         "best_symbols": [(s, round(v, 2)) for s, v in ranked[:3]],
         "worst_symbols": [(s, round(v, 2)) for s, v in ranked[-3:]],
         "trades": closed,
@@ -316,7 +344,16 @@ def format_report(stats):
             f"🤖 {s['bot']}\n"
             f"   سیگنال: {s['signals_taken']} ({s['signals_per_month']} در ماه) | بسته: {s['closed']} | باز در پایان: {s['still_open_end']}\n"
             f"   برد: {s['win_rate']:.0%} | میانگین R: {s['avg_R_net']:+.2f} | R کل: {s['total_R_net']:+.1f}\n"
-            f"   Profit Factor: {pf} | افت سرمایه‌ی ماکسیمم: {s['max_drawdown_R']:.1f}R"
+            f"   Profit Factor: {pf} | افت سرمایه‌ی ماکسیمم: {s['max_drawdown_R']:.1f}R\n"
+            f"   خروج: TP {s['exits']['TP']} / SL {s['exits']['SL']}"
+            + "".join(
+                f"\n   {d}: {v['n']} معامله | برد {v['win_rate']:.0%} | میانگین R {v['avg_R']:+.2f}"
+                for d, v in sorted(s["by_direction"].items())
+            )
+            + "".join(
+                f"\n   setup «{k}»: {v['n']} | برد {v['win_rate']:.0%} | R کل {v['total_R']:+.1f}"
+                for k, v in sorted(s["by_setup"].items(), key=lambda x: -x[1]["n"])[:4]
+            )
         )
     lines.append("━━━━━━━━━━━━━━━━━")
     return "\n".join(lines)
