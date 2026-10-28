@@ -1013,29 +1013,11 @@ def trade_r(rec):
     return abs(rec["tp"] - rec["entry"]) / risk if rec.get("result") == "TP" else -1.0
 
 
-def update_open_trades(bot, exchange):
-    signals = load_json(bot.signals_file, {})
-    updated = False
+def build_close_message(bot, symbol, direction, result, close_price, entry):
     date_gregorian, date_jalali, time_str = get_iran_time()
-
-    for symbol, data in list(signals.items()):
-        if data.get("status") != "OPEN":
-            continue
-        try:
-            result, close_price = check_trade_result(exchange, symbol, data)
-            if not result:
-                continue
-
-            entry, direction = data["entry"], data["direction"]
-            signals[symbol]["status"] = "CLOSED"
-            signals[symbol]["result"] = result
-            signals[symbol]["closed_ms"] = now_ms()
-            updated = True
-            emoji = "🎯" if result == "TP" else "🛑"
-            title = "حد سود (TP) لمس شد" if result == "TP" else "حد ضرر (SL) لمس شد"
-            print(f"{emoji} {symbol} {direction} hit {result} at {close_price}")
-
-            close_msg = f"""{emoji} {bot.title_tag} بسته شدن معامله
+    emoji = "🎯" if result == "TP" else "🛑"
+    title = "حد سود (TP) لمس شد" if result == "TP" else "حد ضرر (SL) لمس شد"
+    return f"""{emoji} {bot.title_tag} بسته شدن معامله
 ━━━━━━━━━━━━━━━━━
 📌 نماد: {symbol}
 📊 جهت: {direction}
@@ -1047,10 +1029,44 @@ def update_open_trades(bot, exchange):
 📅 تاریخ میلادی: {date_gregorian}
 ⏰ ساعت: {time_str}
 ━━━━━━━━━━━━━━━━━"""
-            send_telegram(close_msg)
-        except Exception as e:
-            print(f"⚠️ خطا در بررسی {symbol}: {e}")
-            continue
+
+
+CLOSE_MSG_MAX_ATTEMPTS = 5
+
+
+def update_open_trades(bot, exchange):
+    signals = load_json(bot.signals_file, {})
+    updated = False
+
+    for symbol, data in list(signals.items()):
+        # ۱) بستن معامله فقط بر اساس قیمت صرافی
+        if data.get("status") == "OPEN":
+            try:
+                result, close_price = check_trade_result(exchange, symbol, data)
+            except Exception as e:
+                print(f"⚠️ خطا در بررسی {symbol}: {e}")
+                continue
+            if result:
+                data["status"] = "CLOSED"
+                data["result"] = result
+                data["closed_ms"] = now_ms()
+                data["close_price"] = float(close_price)
+                data["close_telegram_sent"] = False      # پیام بسته شدن هنوز ارسال نشده
+                data["close_msg_attempts"] = 0
+                updated = True
+                print(f"{'🎯' if result == 'TP' else '🛑'} {symbol} {data['direction']} hit {result} at {close_price}")
+
+        # ۲) پیام بسته شدن جدا از نتیجه‌ی معامله؛ تا موفقیت یا سقف تلاش تکرار می‌شود
+        if (data.get("status") == "CLOSED" and data.get("close_telegram_sent") is False
+                and data.get("close_msg_attempts", 0) < CLOSE_MSG_MAX_ATTEMPTS):
+            msg_id = send_telegram(build_close_message(
+                bot, symbol, data["direction"], data["result"], data["close_price"], data["entry"]))
+            data["close_msg_attempts"] = data.get("close_msg_attempts", 0) + 1
+            data["close_telegram_sent"] = bool(msg_id)
+            updated = True
+            if not msg_id:
+                print(f"⚠️ {symbol}: پیام بسته شدن ارسال نشد (تلاش {data['close_msg_attempts']})")
+
     if updated:
         save_json(bot.signals_file, signals)
 
@@ -1147,17 +1163,27 @@ def run_bot(bot, ctx, btc_4h, btc_1h):
                 continue
             rr = abs(tp - entry) / abs(entry - sl)
 
-            send_telegram(build_signal_message(bot, c, entry, sl, tp, rr))
+            msg_id = send_telegram(build_signal_message(bot, c, entry, sl, tp, rr))
 
-            signals[symbol] = {
+            # وضعیت معامله فقط وقتی OPEN می‌شود که پیام واقعاً ارسال شده باشد
+            record = {
                 "direction": c["direction"], "entry": entry, "tp": tp, "sl": sl,
-                "status": "OPEN", "signal_key": c["signal_key"], "setup": c["setup"],
-                "score": round(c["score"], 4), "opened_ms": now_ms(),
+                "signal_key": c["signal_key"], "setup": c["setup"],
+                "score": round(c["score"], 4),
                 "time": datetime.now(timezone.utc).isoformat(),
+                "telegram_sent": bool(msg_id), "telegram_message_id": msg_id,
             }
+            if msg_id:
+                record["status"] = "OPEN"
+                record["opened_ms"] = now_ms()
+                sent += 1
+                print(f"✅ {c['direction']} signal for {symbol} sent! ({sent}/{bot.max_signals})")
+            else:
+                # NOT_SENT: معامله باز نیست و قفل نماد ندارد؛ signal_key ثبت می‌شود تا همان ستاپ دوباره ارسال نشود
+                record["status"] = "NOT_SENT"
+                print(f"⚠️ {symbol}: پیام تلگرام ارسال نشد؛ معامله ثبت نشد (NOT_SENT).")
+            signals[symbol] = record
             save_json(bot.signals_file, signals)
-            sent += 1
-            print(f"✅ {c['direction']} signal for {symbol} sent! ({sent}/{bot.max_signals})")
         except Exception as e:
             print(f"⚠️ خطا در ارسال {symbol}: {e}")
             continue
