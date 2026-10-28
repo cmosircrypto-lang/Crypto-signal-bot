@@ -936,7 +936,7 @@ BOTS = [
         cooldown_hours=B4_COOLDOWN_HOURS, btc_filter_4h=False),
     Bot("crypto-signal-bot-v50", "SMC", analyze_smc,
         "server_messages_v50.json", "last_signals_v50.json",
-        cooldown_hours=B5_COOLDOWN_HOURS, live=False),
+        cooldown_hours=B5_COOLDOWN_HOURS, live=True),
 ]
 # فقط رباتهای زنده در حلقه‌ی اجرا، heartbeat و خلاصه‌ی روزانه می‌آیند؛ بک‌تست همه‌ی BOTS را می‌بیند
 LIVE_BOTS = [b for b in BOTS if b.live]
