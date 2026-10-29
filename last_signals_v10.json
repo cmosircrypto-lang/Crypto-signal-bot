@@ -1,1 +1,1 @@
-{}
+{"BTC-SWAP-USDT": {"direction": "SHORT", "entry": 80018.3, "tp": 78615.49846782669, "sl": 80675.86321820624, "signal_key": 1793235600000, "setup": "Breakout 20x1H (low 80358.40)", "score": 0.7157, "time": "2026-10-29T02:01:46.128980+00:00", "telegram_sent": true, "telegram_message_id": 9279, "status": "OPEN", "opened_ms": 1793239306128}}
