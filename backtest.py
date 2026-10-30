@@ -25,6 +25,8 @@ SLIP = float(os.environ.get("BT_SLIP", "0.0005"))         # ۰.۰۵٪ لغزش �
 BT_WARMUP_DAYS = float(os.environ.get("BT_WARMUP_DAYS", "10"))  # ۱۵دقیقه‌ای حدود ۳۶ روز تاریخچه دارد
 WARMUP_MS = int(BT_WARMUP_DAYS * 24 * 3600 * 1000)
 MIN_CANDLES = 120
+MIN_CANDLES_1D = 40                                     # فیلتر BTC روزانه (ربات ۶) به حدود ۴۰ کندل نیاز دارد
+D1_EXTRA_MS = 200 * 24 * 3600 * 1000                    # تاریخچه‌ی اضافه‌ی روزانه برای گرم شدن EMA
 PAGE = 1000
 M15 = M.TF_MS["15m"]
 COLS = ["timestamp", "open", "high", "low", "close", "volume"]
@@ -39,6 +41,7 @@ class BTCtx:
         self.exchange = None
         self.cache = cache
         self.tickers = {}
+        self.btc_filter = None   # برای ربات ۶: نتیجه‌ی get_btc_filter در همان لحظه‌ی تصمیم
 
 
 # =====================================================================
@@ -93,9 +96,16 @@ def load_data(ex, symbols, since, until):
     for sym in symbols:
         try:
             f = {}
-            for tf in ("15m", "1h", "4h"):
-                df = fetch_history(ex, sym, tf, since, until)
-                if len(df) < MIN_CANDLES:
+            tfs = ("15m", "1h", "4h", "1d") if sym == BTC else ("15m", "1h", "4h")
+            for tf in tfs:
+                if tf == "1d":
+                    # فقط برای فیلتر BTC؛ تاریخچه‌ی بیشتری می‌گیریم تا EMA روزانه گرم شود
+                    df = fetch_history(ex, sym, tf, since - D1_EXTRA_MS, until)
+                    min_c = MIN_CANDLES_1D
+                else:
+                    df = fetch_history(ex, sym, tf, since, until)
+                    min_c = MIN_CANDLES
+                if len(df) < min_c:
                     raise ValueError(f"فقط {len(df)} کندل {tf}")
                 df = M.calculate_indicators(df)   # علّی است؛ مقدار هر ردیف فقط به گذشته وابسته است
                 f[tf] = {"df": df, "ts": df["timestamp"].values, "o": df["open"].values,
@@ -129,6 +139,31 @@ def cache_at(sym, f, al, j):
     return cache
 
 
+def btc_filters_series(data, aligns, grid):
+    """
+    برای هر کندل ۱۵دقیقه‌ای، نتیجه‌ی get_btc_filter همان لحظه را محاسبه می‌کند (همان منطق main.py).
+    فیلتر روزانه/۴ساعته‌ی BTC فقط با کندل‌های بسته‌شده تا لحظه‌ی تصمیم ساخته می‌شود.
+    """
+    out = [None] * len(grid)
+    if BTC not in data or "1d" not in data[BTC]:
+        return out
+    f, al = data[BTC], aligns[BTC]
+    for j in range(len(grid)):
+        cache = cache_at(BTC, f, al, j)
+        if cache is None:
+            continue
+        k1 = int(al["1d"][j])
+        if k1 + 1 < MIN_CANDLES_1D:
+            continue
+        cache[(BTC, "1d")] = f["1d"]["df"].iloc[: k1 + 1]
+        try:
+            with contextlib.redirect_stdout(_DEVNULL):
+                out[j] = M.get_btc_filter(BTCtx(cache))
+        except Exception:
+            out[j] = None
+    return out
+
+
 def trend_arr(f, al):
     df = f["4h"]["df"]
     e9, e21 = df["ema9"].values, df["ema21"].values
@@ -160,7 +195,7 @@ def trade_R(d, exit_px):
     return float((gross - 2 * FEE_PER_SIDE) / risk)
 
 
-def simulate(bot, data, grid, aligns, btc4, btc1, start_j):
+def simulate(bot, data, grid, aligns, btc4, btc1, start_j, btc_filters=None):
     syms = list(data.keys())
     open_tr, closed, last_key, cool = {}, [], {}, {}
     taken = 0
@@ -205,9 +240,11 @@ def simulate(bot, data, grid, aligns, btc4, btc1, start_j):
             cache = cache_at(sym, data[sym], aligns[sym], j)
             if cache is None:
                 continue
+            bctx = BTCtx(cache)
+            bctx.btc_filter = btc_filters[j] if btc_filters is not None else None
             try:
                 with contextlib.redirect_stdout(_DEVNULL):
-                    c = bot.analyze(sym, BTCtx(cache))
+                    c = bot.analyze(sym, bctx)
             except Exception:
                 c = None
             if c is None:
@@ -516,6 +553,14 @@ def run(ex, send=True, days=BT_DAYS, symbols=None):
     aligns = {s: build_align(data[s], grid) for s in data}
     btc4 = trend_arr_tf(data[BTC], "4h", aligns[BTC]["4h"])
     btc1 = trend_arr_tf(data[BTC], "1h", aligns[BTC]["1h"])
+    if "1d" in data[BTC]:
+        # کندل روزانه‌ی بسته‌شده تا لحظه‌ی تصمیم (همان قاعده‌ی هم‌ترازی ۴ساعته و ۱ساعته)
+        aligns[BTC]["1d"] = np.searchsorted(data[BTC]["1d"]["ts"], grid + M15 - M.TF_MS["1d"],
+                                            side="right") - 1
+    print("  محاسبه‌ی فیلتر BTC برای هر کندل ۱۵دقیقه‌ای (ربات ۶)...")
+    btc_filters = btc_filters_series(data, aligns, grid)
+    n_ok = sum(1 for x in btc_filters if x)
+    print(f"  فیلتر BTC فعال در {n_ok} از {len(grid)} کندل")
 
     market = market_move(data, grid, start_j)
     print(f"  بازار در بازه: BTC {market['btc_pct']:+.2f}% | میانه‌ی نمادها {market['median_pct']:+.2f}%")
@@ -523,7 +568,7 @@ def run(ex, send=True, days=BT_DAYS, symbols=None):
     stats = []
     for bot in M.BOTS:
         print(f"▶ backtest {bot.name} ...")
-        res = simulate(bot, data, grid, aligns, btc4, btc1, start_j)
+        res = simulate(bot, data, grid, aligns, btc4, btc1, start_j, btc_filters)
         st = summarize(bot, res)
         st["baseline"] = random_baseline(res, data, grid, aligns, start_j)
         stats.append(st)
