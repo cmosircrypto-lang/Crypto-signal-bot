@@ -1,0 +1,1 @@
+{"TON-SWAP-USDT": {"direction": "SHORT", "entry": 1.172, "tp": 1.1372608129149673, "sl": 1.1893695935425161, "signal_key": 1793437200000, "setup": "BTC-aligned pullback 1H (BTC SHORT)", "score": 0.6296, "time": "2026-10-31T10:02:23.726786+00:00", "telegram_sent": true, "telegram_message_id": 10839, "status": "OPEN", "opened_ms": 1793440943726}}
