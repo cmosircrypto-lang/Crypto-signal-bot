@@ -4,7 +4,7 @@
   1) crypto-signal-bot      : کراس EMA 9/21 در ۴ساعته + تایید قوی ۱ساعته
   2) crypto-signal-bot-v10  : شکست رنج تمیز در ۱ساعته با حجم قوی
   3) crypto-signal-bot-v20  : پرایس‌اکشن با کیفیت بالا در پولبک به EMA21
-  4) crypto-signal-bot-v40  : رژیم بازار (ADX): پولبک روند یا بازگشت از باند در رنج
+  4) crypto-signal-bot-v40  : رژیم بازار (ADX) — نسخه سخت‌تر کیفیت
   5) crypto-signal-bot-v50  : SMC/ICT ترکیبی
   6) crypto-signal-bot-v60  : فیلتر BTC (1D+4H) + پولبک هم‌جهت روی نمادها
 
@@ -118,20 +118,21 @@ B3_RR = 2.2
 B3_COOLDOWN_HOURS = 3
 B3_MIN_SCORE = 0.60
 
-# --- ربات ۴ ---
+# --- ربات ۴ (سخت‌تر شده برای کیفیت) ---
 B4_ADX_TREND = 25
 B4_ADX_RANGE = 20
-B4_TREND_GAP_4H_ATR = 0.30
-B4_TREND_TOUCH_ATR = 0.20
-B4_TREND_MAX_EXT_ATR = 1.0
-B4_TREND_RSI_LONG = (40, 62)
-B4_TREND_RSI_SHORT = (38, 60)
+B4_TREND_GAP_4H_ATR = 0.35
+B4_TREND_TOUCH_ATR = 0.15
+B4_TREND_MAX_EXT_ATR = 0.80
+B4_TREND_RSI_LONG = (42, 58)
+B4_TREND_RSI_SHORT = (42, 58)
 B4_TREND_SL_ATR, B4_TREND_TP_ATR = 1.2, 3.0
-B4_RANGE_RSI_LONG_MAX = 35
-B4_RANGE_RSI_SHORT_MIN = 65
+B4_TREND_MIN_VOL = 1.15
+B4_RANGE_RSI_LONG_MAX = 30
+B4_RANGE_RSI_SHORT_MIN = 70
 B4_RANGE_SL_BUFFER_ATR = 0.5
-B4_RANGE_MIN_RR = 1.5
-B4_MIN_SCORE = 0.50
+B4_RANGE_MIN_RR = 2.0
+B4_MIN_SCORE = 0.62
 B4_COOLDOWN_HOURS = 3
 
 # --- ربات ۵ ---
@@ -146,7 +147,7 @@ B5_MAX_RISK_ATR = 3.0
 B5_MIN_SCORE = 0.50
 B5_COOLDOWN_HOURS = 3
 
-# --- ربات ۶ (فیلتر BTC + ورود هم‌جهت) ---
+# --- ربات ۶ ---
 B6_MIN_GAP_ATR = 0.30
 B6_MIN_ADX = 22
 B6_MAX_EXT_ATR = 1.5
@@ -653,7 +654,7 @@ def analyze_price_action(symbol, ctx):
 
 
 # =====================================================================
-# استراتژی ۴: رژیم ADX
+# استراتژی ۴: رژیم ADX (نسخه سخت‌تر کیفیت)
 # =====================================================================
 def analyze_regime(symbol, ctx):
     df = get_data(ctx, symbol, "1h")
@@ -689,6 +690,15 @@ def analyze_regime(symbol, ctx):
         if gap_4h < B4_TREND_GAP_4H_ATR * atr_4h:
             return None
 
+        # فیلتر BTC فقط برای حالت TREND
+        try:
+            btc_4h = trend_of(get_data(ctx, BTC_SYMBOL, "4h"))
+            if btc_4h in ("LONG", "SHORT") and direction != btc_4h:
+                print(f"  {symbol}: TREND {direction} rejected (BTC 4H={btc_4h})")
+                return None
+        except Exception:
+            pass
+
         ema21 = float(last["ema21"])
         if direction == "LONG":
             touched = (low <= ema21 + B4_TREND_TOUCH_ATR * atr and close > ema21 and close > open_
@@ -699,15 +709,18 @@ def analyze_regime(symbol, ctx):
                        and ema21 - close <= B4_TREND_MAX_EXT_ATR * atr)
             rsi_ok = B4_TREND_RSI_SHORT[0] <= rsi <= B4_TREND_RSI_SHORT[1]
 
-        print(f"  {symbol}: ADX {adx:.1f} TREND {direction} | پولبک ok={touched} | RSI {rsi:.1f} ok={rsi_ok}")
-        if not (touched and rsi_ok):
+        vol_ok = vol_ratio >= B4_TREND_MIN_VOL
+
+        print(f"  {symbol}: ADX {adx:.1f} TREND {direction} | پولبک ok={touched} | "
+              f"RSI {rsi:.1f} ok={rsi_ok} | Vol x{vol_ratio:.2f} ok={vol_ok}")
+        if not (touched and rsi_ok and vol_ok):
             return None
         if (atr * B4_TREND_SL_ATR) / close < MIN_SL_PCT:
             return None
 
-        score = (0.50 * min(adx / 40.0, 1.0)
+        score = (0.45 * min(adx / 40.0, 1.0)
                  + 0.30 * min(gap_4h / atr_4h, 1.0)
-                 + 0.20 * min(vol_ratio / 2.0, 1.0))
+                 + 0.25 * min(vol_ratio / 2.0, 1.0))
         if score < B4_MIN_SCORE:
             print(f"  {symbol}: score too low ({score:.3f})")
             return None
@@ -721,6 +734,7 @@ def analyze_regime(symbol, ctx):
             "levels": atr_levels(direction, atr, B4_TREND_SL_ATR, B4_TREND_TP_ATR),
         }
 
+    # ---------- حالت رنج (سخت‌تر) ----------
     bb_lo, bb_mid, bb_up = (float(last[k]) for k in ("bb_lo", "bb_mid", "bb_up"))
     if any(np.isnan(v) for v in (bb_lo, bb_mid, bb_up)):
         return None
@@ -751,7 +765,7 @@ def analyze_regime(symbol, ctx):
         return (sl, tp) if tp < entry < sl else None
 
     score = (0.50 * min(rr / 3.0, 1.0)
-             + 0.30 * min(abs(rsi - 50) / 20.0, 1.0)
+             + 0.30 * min(abs(rsi - 50) / 25.0, 1.0)
              + 0.20 * min(vol_ratio / 2.0, 1.0))
     if score < B4_MIN_SCORE:
         print(f"  {symbol}: score too low ({score:.3f})")
@@ -897,11 +911,6 @@ def analyze_smc(symbol, ctx):
 # استراتژی ۶: فیلتر BTC + پولبک هم‌جهت
 # =====================================================================
 def get_btc_filter(ctx):
-    """
-    فیلتر ۱: 1D و 4H هم‌جهت (اجباری)
-    فیلتر ۲: قدرت روند کافی + عدم گسترش افراطی در 4H
-    1H هم‌جهت فقط برای امتیاز بیشتر
-    """
     try:
         df_1d = get_data(ctx, BTC_SYMBOL, "1d")
         df_4h = get_data(ctx, BTC_SYMBOL, "4h")
