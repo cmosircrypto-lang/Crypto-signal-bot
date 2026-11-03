@@ -192,23 +192,39 @@ def get_iran_time():
     return date_gregorian, date_jalali, time_str
 
 
-def send_telegram(message):
+def send_telegram(message, max_retries=3, timeout=20):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    try:
-        r = requests.post(url, json={"chat_id": CHAT_ID, "text": message}, timeout=10)
-        if r.status_code == 200:
-            return r.json().get("result", {}).get("message_id")
-    except Exception as e:
-        print(f"⚠️ خطا در ارسال تلگرام: {e}")
+    for attempt in range(1, max_retries + 1):
+        try:
+            r = requests.post(
+                url,
+                json={"chat_id": CHAT_ID, "text": message},
+                timeout=timeout,
+            )
+            if r.status_code == 200:
+                return r.json().get("result", {}).get("message_id")
+            print(f"⚠️ تلگرام status={r.status_code} (تلاش {attempt}/{max_retries})")
+        except Exception as e:
+            print(f"⚠️ خطا در ارسال تلگرام (تلاش {attempt}/{max_retries}): {e}")
+        if attempt < max_retries:
+            time.sleep(2 * attempt)  # 2s، 4s بین تلاش‌ها
     return None
 
 
-def delete_telegram(message_id):
+def delete_telegram(message_id, max_retries=2, timeout=15):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/deleteMessage"
-    try:
-        requests.post(url, json={"chat_id": CHAT_ID, "message_id": message_id}, timeout=10)
-    except Exception as e:
-        print(f"⚠️ خطا در حذف پیام: {e}")
+    for attempt in range(1, max_retries + 1):
+        try:
+            requests.post(
+                url,
+                json={"chat_id": CHAT_ID, "message_id": message_id},
+                timeout=timeout,
+            )
+            return
+        except Exception as e:
+            print(f"⚠️ خطا در حذف پیام (تلاش {attempt}/{max_retries}): {e}")
+            if attempt < max_retries:
+                time.sleep(1)
 
 
 def format_number(value):
