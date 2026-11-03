@@ -4,9 +4,10 @@
   1) crypto-signal-bot      : کراس EMA 9/21 در ۴ساعته + تایید قوی ۱ساعته
   2) crypto-signal-bot-v10  : شکست رنج تمیز در ۱ساعته با حجم قوی
   3) crypto-signal-bot-v20  : پرایس‌اکشن با کیفیت بالا در پولبک به EMA21
-  4) crypto-signal-bot-v40  : رژیم بازار (ADX) — نسخه سخت‌تر کیفیت
-  5) crypto-signal-bot-v50  : SMC/ICT ترکیبی
-  6) crypto-signal-bot-v60  : فیلتر BTC (1D+4H) + پولبک هم‌جهت روی نمادها
+  4) crypto-signal-bot-v30  : AMD + نقدینگی سشن (رنج آسیا → سوییپ → FVG)
+  5) crypto-signal-bot-v40  : رژیم بازار (ADX) — نسخه سخت‌تر کیفیت
+  6) crypto-signal-bot-v50  : SMC/ICT ترکیبی
+  7) crypto-signal-bot-v60  : فیلتر BTC (1D+4H) + پولبک هم‌جهت روی نمادها
 
 هر ربات: تگ جدا، heartbeat جدا و فایل وضعیت جدا دارد.
 خلاصه روزانه ساعت ۸ صبح به وقت ایران برای همه ربات‌های زنده ارسال می‌شود.
@@ -18,7 +19,7 @@ import requests
 import numpy as np
 import pandas as pd
 import ccxt
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from zoneinfo import ZoneInfo
 import jdatetime
 
@@ -118,7 +119,23 @@ B3_RR = 2.2
 B3_COOLDOWN_HOURS = 3
 B3_MIN_SCORE = 0.60
 
-# --- ربات ۴ (سخت‌تر شده برای کیفیت) ---
+# --- ربات v30: AMD + Session Liquidity ---
+B30_ASIA_START_H = 0          # UTC
+B30_ASIA_END_H = 8            # UTC
+B30_ACTIVE_START_H = 7        # از باز شدن لندن
+B30_ACTIVE_END_H = 20         # تا بعدازظهر نیویورک
+B30_SWEEP_MAX_AGE_1H = 5      # سوییپ حداکثر چند ساعت پیش
+B30_FVG_RECENT = 12
+B30_SL_BUFFER_ATR = 0.12
+B30_MIN_RR = 2.0
+B30_MAX_RISK_ATR = 2.5
+B30_MIN_RANGE_ATR = 0.8
+B30_MAX_RANGE_ATR = 6.0
+B30_MIN_SCORE = 0.55
+B30_COOLDOWN_HOURS = 3
+B30_TREND_GAP_4H_ATR = 0.25
+
+# --- ربات ۴ ---
 B4_ADX_TREND = 25
 B4_ADX_RANGE = 20
 B4_TREND_GAP_4H_ATR = 0.35
@@ -654,7 +671,224 @@ def analyze_price_action(symbol, ctx):
 
 
 # =====================================================================
-# استراتژی ۴: رژیم ADX (نسخه سخت‌تر کیفیت)
+# استراتژی v30: AMD + Session Liquidity
+# =====================================================================
+def _utc_hour(ts_ms):
+    return datetime.fromtimestamp(ts_ms / 1000, tz=timezone.utc).hour
+
+
+def _in_active_session():
+    h = datetime.now(timezone.utc).hour
+    return B30_ACTIVE_START_H <= h < B30_ACTIVE_END_H
+
+
+def _asia_range_1h(df1):
+    """آخرین رنج آسیای تکمیل‌شده (UTC 00–08) را از کندل‌های ۱H استخراج می‌کند."""
+    highs, lows, ts = [], [], []
+    for i in range(len(df1)):
+        h = _utc_hour(int(df1["timestamp"].iloc[i]))
+        if B30_ASIA_START_H <= h < B30_ASIA_END_H:
+            highs.append(float(df1["high"].iloc[i]))
+            lows.append(float(df1["low"].iloc[i]))
+            ts.append(int(df1["timestamp"].iloc[i]))
+
+    if len(highs) < 3:
+        return None
+
+    # آخرین بلوک پیوسته آسیا
+    # ساده‌سازی: از انتها به عقب، فقط کندل‌های آسیای اخیر
+    # اگر الان داخل آسیا هستیم، رنج هنوز Accumulation است → سیگنال نده
+    now_h = datetime.now(timezone.utc).hour
+    if B30_ASIA_START_H <= now_h < B30_ASIA_END_H:
+        return None
+
+    # ۸ کندل آسیای آخر (تقریبی یک سشن)
+    asia_hi = max(highs[-8:]) if len(highs) >= 8 else max(highs)
+    asia_lo = min(lows[-8:]) if len(lows) >= 8 else min(lows)
+    asia_end_ts = ts[-1]
+    return {"high": asia_hi, "low": asia_lo, "end_ts": asia_end_ts}
+
+
+def analyze_amd_session(symbol, ctx):
+    """
+    AMD + Session Liquidity:
+      A) رنج آسیا (Accumulation)
+      M) سوییپ سقف/کف آسیا بعد از پایان آسیا (Manipulation)
+      D) ورود روی پولبک به FVG در جهت برگشت (Distribution)
+    فقط در پنجره فعال لندن/نیویورک سیگنال می‌دهد.
+    """
+    if not _in_active_session():
+        return None
+
+    df4 = get_data(ctx, symbol, "4h")
+    l4 = df4.iloc[-1]
+    bias_4h = trend_of(df4)
+    atr4 = float(l4["atr"])
+    if bias_4h not in ("LONG", "SHORT") or np.isnan(atr4) or atr4 <= 0:
+        return None
+    gap4 = abs(float(l4["ema9"]) - float(l4["ema21"]))
+    if gap4 < B30_TREND_GAP_4H_ATR * atr4:
+        return None
+
+    df1 = get_data(ctx, symbol, "1h")
+    if len(df1) < 30:
+        return None
+    atr1 = float(df1["atr"].iloc[-1])
+    if np.isnan(atr1) or atr1 <= 0:
+        return None
+
+    asia = _asia_range_1h(df1)
+    if asia is None:
+        return None
+
+    rng_size = asia["high"] - asia["low"]
+    if rng_size < B30_MIN_RANGE_ATR * atr1 or rng_size > B30_MAX_RANGE_ATR * atr1:
+        print(f"  {symbol}: Asia range invalid ({rng_size / atr1:.1f} ATR)")
+        return None
+
+    # پیدا کردن سوییپ بعد از پایان آسیا
+    hi1 = df1["high"].values
+    lo1 = df1["low"].values
+    c1 = df1["close"].values
+    ts1 = df1["timestamp"].values
+    n1 = len(df1)
+
+    sweep = None
+    for i in range(n1 - 1, max(0, n1 - 1 - B30_SWEEP_MAX_AGE_1H) - 1, -1):
+        if int(ts1[i]) <= asia["end_ts"]:
+            break
+        # سوییپ کف آسیا → لانگ (Manipulation نزولی)
+        if lo1[i] < asia["low"] and c1[i] > asia["low"]:
+            sweep = {
+                "direction": "LONG",
+                "extreme": float(lo1[i]),
+                "level": asia["low"],
+                "ts": int(ts1[i]),
+                "target": asia["high"],
+            }
+            break
+        # سوییپ سقف آسیا → شورت
+        if hi1[i] > asia["high"] and c1[i] < asia["high"]:
+            sweep = {
+                "direction": "SHORT",
+                "extreme": float(hi1[i]),
+                "level": asia["high"],
+                "ts": int(ts1[i]),
+                "target": asia["low"],
+            }
+            break
+
+    if sweep is None:
+        return None
+
+    # هم‌جهت با بایاس ۴H
+    if sweep["direction"] != bias_4h:
+        print(f"  {symbol}: AMD sweep {sweep['direction']} مخالف 4H={bias_4h}")
+        return None
+
+    direction = sweep["direction"]
+
+    # FVG روی ۱۵m بعد از سوییپ
+    df15 = get_data(ctx, symbol, "15m")
+    h = df15["high"].values
+    l = df15["low"].values
+    o = df15["open"].values
+    c = df15["close"].values
+    v = df15["volume"].values
+    ts15 = df15["timestamp"].values
+    last = len(df15) - 1
+    price = float(c[last])
+
+    fvg = None
+    for i in range(last - 1, max(2, last - B30_FVG_RECENT) - 1, -1):
+        if int(ts15[i]) < sweep["ts"]:
+            break
+        if direction == "LONG" and h[i - 2] < l[i]:
+            bottom, top = float(h[i - 2]), float(l[i])
+            if (c[i + 1:last] < bottom).any():
+                continue
+            mid = (bottom + top) / 2
+            if l[last] <= top and c[last] >= mid * 0.98:
+                fvg = {"bottom": bottom, "top": top, "ts": int(ts15[i])}
+                break
+        if direction == "SHORT" and l[i - 2] > h[i]:
+            bottom, top = float(h[i]), float(l[i - 2])
+            if (c[i + 1:last] > top).any():
+                continue
+            mid = (bottom + top) / 2
+            if h[last] >= bottom and c[last] <= mid * 1.02:
+                fvg = {"bottom": bottom, "top": top, "ts": int(ts15[i])}
+                break
+
+    if fvg is None:
+        print(f"  {symbol}: AMD {direction} | sweep ok | FVG missing")
+        return None
+
+    # SL / TP ساختاری
+    if direction == "LONG":
+        sl = sweep["extreme"] - B30_SL_BUFFER_ATR * atr1
+        tp = sweep["target"]
+    else:
+        sl = sweep["extreme"] + B30_SL_BUFFER_ATR * atr1
+        tp = sweep["target"]
+
+    def levels(entry):
+        if direction == "LONG":
+            if not (sl < entry < tp):
+                return None
+            risk, reward = entry - sl, tp - entry
+        else:
+            if not (tp < entry < sl):
+                return None
+            risk, reward = sl - entry, entry - tp
+        if risk <= 0 or risk > B30_MAX_RISK_ATR * atr1 or reward / risk < B30_MIN_RR:
+            return None
+        return sl, tp
+
+    if levels(price) is None:
+        print(f"  {symbol}: AMD {direction} rejected (RR/levels)")
+        return None
+
+    risk = abs(price - sl)
+    if risk / price < MIN_SL_PCT:
+        return None
+    rr = abs(tp - price) / risk
+
+    depth = abs(sweep["level"] - sweep["extreme"]) / atr1
+    vol = float(v[last])
+    avg_vol = float(df15["volume"].iloc[-21:-1].mean())
+    vol_ratio = ratio(vol, avg_vol)
+    rsi = float(df15["rsi"].iloc[-1])
+    if np.isnan(rsi):
+        rsi = 50.0
+
+    score = (0.35 * min(depth / 0.6, 1.0)
+             + 0.30 * min(rr / 3.0, 1.0)
+             + 0.20 * min(vol_ratio / 2.0, 1.0)
+             + 0.15 * min(gap4 / atr4, 1.0))
+
+    if score < B30_MIN_SCORE:
+        print(f"  {symbol}: AMD score too low ({score:.3f})")
+        return None
+
+    print(f"  {symbol}: AMD {direction} | Asia sweep ok | FVG ok | RR {rr:.2f} | score {score:.3f}")
+    return {
+        "symbol": symbol,
+        "direction": direction,
+        "close": price,
+        "atr": atr1,
+        "rsi": rsi,
+        "volume": vol,
+        "avg_volume": avg_vol,
+        "signal_key": fvg["ts"],
+        "score": score,
+        "setup": f"AMD: Asia sweep + FVG ({direction})",
+        "levels": levels,
+    }
+
+
+# =====================================================================
+# استراتژی ۴: رژیم ADX
 # =====================================================================
 def analyze_regime(symbol, ctx):
     df = get_data(ctx, symbol, "1h")
@@ -690,7 +924,6 @@ def analyze_regime(symbol, ctx):
         if gap_4h < B4_TREND_GAP_4H_ATR * atr_4h:
             return None
 
-        # فیلتر BTC فقط برای حالت TREND
         try:
             btc_4h = trend_of(get_data(ctx, BTC_SYMBOL, "4h"))
             if btc_4h in ("LONG", "SHORT") and direction != btc_4h:
@@ -734,7 +967,6 @@ def analyze_regime(symbol, ctx):
             "levels": atr_levels(direction, atr, B4_TREND_SL_ATR, B4_TREND_TP_ATR),
         }
 
-    # ---------- حالت رنج (سخت‌تر) ----------
     bb_lo, bb_mid, bb_up = (float(last[k]) for k in ("bb_lo", "bb_mid", "bb_up"))
     if any(np.isnan(v) for v in (bb_lo, bb_mid, bb_up)):
         return None
@@ -1085,6 +1317,9 @@ BOTS = [
     Bot("crypto-signal-bot-v20", "Price Action", analyze_price_action,
         "server_messages_v20.json", "last_signals_v20.json",
         cooldown_hours=B3_COOLDOWN_HOURS),
+    Bot("crypto-signal-bot-v30", "AMD Session", analyze_amd_session,
+        "server_messages_v30.json", "last_signals_v30.json",
+        cooldown_hours=B30_COOLDOWN_HOURS, btc_filter_4h=True),
     Bot("crypto-signal-bot-v40", "Regime", analyze_regime,
         "server_messages_v40.json", "last_signals_v40.json",
         cooldown_hours=B4_COOLDOWN_HOURS, btc_filter_4h=False),
@@ -1344,7 +1579,7 @@ def run_bot(bot, ctx, btc_4h, btc_1h):
 
 
 # =====================================================================
-# خلاصه‌ی روزانه (ساعت ۸ صبح ایران)
+# خلاصه‌ی روزانه
 # =====================================================================
 def maybe_send_daily_summary():
     now = datetime.now(ZoneInfo("Asia/Tehran"))
