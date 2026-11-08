@@ -54,7 +54,7 @@ jobs:
           done
 
           # لاگ معاملات برای ارزیابی ۱۰۰تایی
-          for f in trades_bot*.csv ranking.csv; do
+          for f in trades_bot*.csv ranking.csv signals_bot*.xlsx; do
             if [ -f "$f" ]; then git add "$f"; fi
           done
 
