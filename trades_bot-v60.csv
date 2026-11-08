@@ -1,0 +1,2 @@
+bot,symbol,direction,entry,sl,tp,exit,result,pnl_r,setup,score,opened_ms,closed_ms
+crypto-signal-bot-v60,1000FLOKI-SWAP-USDT,SHORT,0.02114,0.02135342173728402,0.020690289910722956,0.020690289910722956,TP,2.107,BTC-aligned pullback 1H (BTC SHORT),0.6405,1794172316006,1794175316397

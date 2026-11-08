@@ -1,8 +1,8 @@
 label,bot,trades,wins,losses,win_rate,total_r,avg_r,profit_factor,max_drawdown_r,max_win_streak,max_lose_streak,score,ready,file
+BTC Filter,crypto-signal-bot-v60,1,1,0,100.0,2.11,2.107,999.0,0.0,1,0,0.076,False,trades_bot-v60.csv
 EMA Cross,crypto-signal-bot,0,0,0,0.0,0.0,0.0,0.0,0.0,0,0,-999.0,False,trades_bot.csv
 Breakout,crypto-signal-bot-v10,0,0,0,0.0,0.0,0.0,0.0,0.0,0,0,-999.0,False,trades_bot-v10.csv
 MTF Pullback,crypto-signal-bot-v20,0,0,0,0.0,0.0,0.0,0.0,0.0,0,0,-999.0,False,trades_bot-v20.csv
 AMD Session,crypto-signal-bot-v30,0,0,0,0.0,0.0,0.0,0.0,0.0,0,0,-999.0,False,trades_bot-v30.csv
 Regime ADX,crypto-signal-bot-v40,0,0,0,0.0,0.0,0.0,0.0,0.0,0,0,-999.0,False,trades_bot-v40.csv
 SMC,crypto-signal-bot-v50,0,0,0,0.0,0.0,0.0,0.0,0.0,0,0,-999.0,False,trades_bot-v50.csv
-BTC Filter,crypto-signal-bot-v60,0,0,0,0.0,0.0,0.0,0.0,0.0,0,0,-999.0,False,trades_bot-v60.csv
