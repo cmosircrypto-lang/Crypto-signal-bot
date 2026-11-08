@@ -1645,23 +1645,48 @@ LIVE_BOTS = [b for b in BOTS if b.live]
 # =====================================================================
 # Heartbeat
 # =====================================================================
-def send_heartbeat(bot, warning=None):
+HEARTBEAT_FILE = "server_messages.json"
+
+
+def send_heartbeat_all(results, btc_4h, btc_1h, warning=None):
     date_gregorian, date_jalali, time_str = get_iran_time()
+
+    # پاکسازی یک‌باره‌ی پیام‌های قدیمی فایل‌های جدا (v10 تا v60)
+    for bot in LIVE_BOTS[1:]:
+        old = load_json(bot.heartbeat_file, {}).get("message_ids", [])
+        if old:
+            for mid in old:
+                delete_telegram(mid)
+            save_json(bot.heartbeat_file, {"message_ids": []})
+
+    lines, ok = [], 0
+    for bot in LIVE_BOTS:
+        r = results.get(bot.name, "ERROR")
+        if r == "ERROR":
+            lines.append(f"❌ {bot.name}")
+        else:
+            ok += 1
+            lines.append(f"✅ {bot.name}" + (f"  ({r} سیگنال جدید)" if r else ""))
+
     extra = f"\n⚠️ {warning}" if warning else ""
-    msg = f"""🖥️ {bot.title_tag} سرور آنلاین{extra}
+    msg = f"""🖥️ سیستم آنلاین | {ok}/{len(LIVE_BOTS)} ربات سالم{extra}
 ━━━━━━━━━━━━━━━━━
+{chr(10).join(lines)}
+━━━━━━━━━━━━━━━━━
+🌍 BTC: 4H={btc_4h} | 1H={btc_1h}
 📅 تاریخ شمسی: {date_jalali}
 📅 تاریخ میلادی: {date_gregorian}
 ⏰ ساعت: {time_str}
 ━━━━━━━━━━━━━━━━━"""
 
-    ids = load_json(bot.heartbeat_file, {}).get("message_ids", [])
+    ids = load_json(HEARTBEAT_FILE, {}).get("message_ids", [])
     new_id = send_telegram(msg)
     if new_id:
         ids.append(new_id)
         while len(ids) > MAX_HEARTBEATS:
             delete_telegram(ids.pop(0))
-        save_json(bot.heartbeat_file, {"message_ids": ids})
+        save_json(HEARTBEAT_FILE, {"message_ids": ids})
+
 
 
 # =====================================================================
@@ -1887,6 +1912,7 @@ def run_bot(bot, ctx, btc_4h, btc_1h):
             continue
 
     print(f"{bot.name}: analysis complete ({sent} signal(s) sent).")
+    return sent
 
 
 # =====================================================================
@@ -1940,15 +1966,17 @@ if __name__ == "__main__":
     if not ctx.btc_filter:
         print("🌍 BTC filter blocked — v60 will skip all symbols this cycle.")
 
-    for bot in LIVE_BOTS:
-        send_heartbeat(bot, warning)
-    print("✅ Heartbeats sent.")
-
+        results = {}
     for bot in LIVE_BOTS:
         try:
-            run_bot(bot, ctx, btc_4h, btc_1h)
+            results[bot.name] = run_bot(bot, ctx, btc_4h, btc_1h)
         except Exception as e:
+            results[bot.name] = "ERROR"
             print(f"⚠️ خطای کلی در {bot.name}: {e}")
+
+    send_heartbeat_all(results, btc_4h, btc_1h, warning)
+    print("✅ Heartbeat sent.")
+
 
     try:
         maybe_send_daily_summary()
