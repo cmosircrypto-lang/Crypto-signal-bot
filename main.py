@@ -1966,7 +1966,7 @@ if __name__ == "__main__":
     if not ctx.btc_filter:
         print("🌍 BTC filter blocked — v60 will skip all symbols this cycle.")
 
-        results = {}
+    results = {}
     for bot in LIVE_BOTS:
         try:
             results[bot.name] = run_bot(bot, ctx, btc_4h, btc_1h)
@@ -1974,9 +1974,11 @@ if __name__ == "__main__":
             results[bot.name] = "ERROR"
             print(f"⚠️ خطای کلی در {bot.name}: {e}")
 
-    send_heartbeat_all(results, btc_4h, btc_1h, warning)
-    print("✅ Heartbeat sent.")
-
+    try:
+        send_heartbeat_all(results, btc_4h, btc_1h, warning)
+        print("✅ Heartbeat sent.")
+    except Exception as e:
+        print(f"⚠️ خطا در heartbeat: {e}")
 
     try:
         maybe_send_daily_summary()
