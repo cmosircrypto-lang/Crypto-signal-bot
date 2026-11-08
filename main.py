@@ -1781,8 +1781,9 @@ def update_open_trades(bot, exchange):
                 data["symbol"] = symbol
                 updated = True
                 append_trade_csv(bot.name, data)
-               excel_log.log_result(bot.name, symbol, result, data["closed_ms"])
-                    print(f"{'🎯' if result == 'TP' else '🛑'} {symbol} {data['direction']} hit {result} at {close_price}")
+                excel_log.log_result(bot.name, symbol, result, data["closed_ms"])
+                print(f"{'🎯' if result == 'TP' else '🛑'} {symbol} {data['direction']} hit {result} at {close_price}")
+
 
         if (data.get("status") == "CLOSED" and data.get("close_telegram_sent") is False
                 and data.get("close_msg_attempts", 0) < CLOSE_MSG_MAX_ATTEMPTS):
@@ -1792,7 +1793,7 @@ def update_open_trades(bot, exchange):
             data["close_telegram_sent"] = bool(msg_id)
             updated = True
             if not msg_id:
-            print(f"⚠️ {symbol}: پیام بسته شدن ارسال نشد (تلاش {data['close_msg_attempts']})")
+                print(f"⚠️ {symbol}: پیام بسته شدن ارسال نشد (تلاش {data['close_msg_attempts']})")
 
     if updated:
         save_json(bot.signals_file, signals)
