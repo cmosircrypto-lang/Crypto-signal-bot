@@ -22,6 +22,7 @@ import ccxt
 from datetime import datetime, timezone, timedelta
 from zoneinfo import ZoneInfo
 import jdatetime
+import excel_log
 
 # =====================================================================
 # تنظیمات عمومی
@@ -1780,7 +1781,8 @@ def update_open_trades(bot, exchange):
                 data["symbol"] = symbol
                 updated = True
                 append_trade_csv(bot.name, data)
-                print(f"{'🎯' if result == 'TP' else '🛑'} {symbol} {data['direction']} hit {result} at {close_price}")
+               excel_log.log_result(bot.name, symbol, result, data["closed_ms"])
+                    print(f"{'🎯' if result == 'TP' else '🛑'} {symbol} {data['direction']} hit {result} at {close_price}")
 
         if (data.get("status") == "CLOSED" and data.get("close_telegram_sent") is False
                 and data.get("close_msg_attempts", 0) < CLOSE_MSG_MAX_ATTEMPTS):
@@ -1790,7 +1792,7 @@ def update_open_trades(bot, exchange):
             data["close_telegram_sent"] = bool(msg_id)
             updated = True
             if not msg_id:
-                print(f"⚠️ {symbol}: پیام بسته شدن ارسال نشد (تلاش {data['close_msg_attempts']})")
+            print(f"⚠️ {symbol}: پیام بسته شدن ارسال نشد (تلاش {data['close_msg_attempts']})")
 
     if updated:
         save_json(bot.signals_file, signals)
@@ -1901,6 +1903,7 @@ def run_bot(bot, ctx, btc_4h, btc_1h):
                 record["status"] = "OPEN"
                 record["opened_ms"] = now_ms()
                 sent += 1
+                excel_log.log_signal(bot.name, symbol, c["direction"], entry, tp, sl)
                 print(f"✅ {c['direction']} signal for {symbol} sent! ({sent}/{bot.max_signals})")
             else:
                 record["status"] = "NOT_SENT"
