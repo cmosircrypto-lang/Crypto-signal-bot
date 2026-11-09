@@ -1,1 +1,1 @@
-{}
+{"LTC-SWAP-USDT": {"direction": "SHORT", "entry": 50.56, "tp": 49.032556182467374, "sl": 51.269170343854434, "signal_key": 1794218400000, "setup": "\u0631\u0698\u06cc\u0645 \u0631\u0648\u0646\u062f: \u067e\u0648\u0644\u0628\u06a9 \u0628\u0647 \u0645\u06cc\u0627\u0646\u06af\u06cc\u0646 \u06f1H", "score": 0.8554, "time": "2026-11-09T11:02:12.513447+00:00", "telegram_sent": true, "telegram_message_id": 16039, "status": "OPEN", "opened_ms": 1794222132513}}
