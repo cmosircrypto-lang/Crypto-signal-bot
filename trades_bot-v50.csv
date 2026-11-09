@@ -1,2 +1,3 @@
 bot,symbol,direction,entry,sl,tp,exit,result,pnl_r,setup,score,opened_ms,closed_ms
 crypto-signal-bot-v50,CRV-SWAP-USDT,SHORT,0.2607,0.26473573301641257,0.2476,0.26473573301641257,SL,-1.0,SMC: برداشت نقدینگی و FVG با پولبک,0.7007,1794223001939,1794226610777
+crypto-signal-bot-v50,UNI-SWAP-USDT,SHORT,6.954,7.013713021123271,6.623,7.013713021123271,SL,-1.0,SMC: برداشت نقدینگی و FVG با پولبک,0.6037,1794245547706,1794249165099
