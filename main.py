@@ -367,7 +367,9 @@ def calculate_indicators(df):
 def get_data(ctx, symbol, timeframe):
     key = (symbol, timeframe)
     if key not in ctx.cache:
-        df = fetch_ohlcv(ctx.exchange, symbol, timeframe, 150)
+        limit = 300 if timeframe == "1d" else 150
+        df = fetch_ohlcv(ctx.exchange, symbol, timeframe, limit)
+
         if len(df) < 40:
             raise ValueError(f"داده‌ی کافی برای {symbol} {timeframe} نیست ({len(df)} کندل)")
         ctx.cache[key] = calculate_indicators(df)
@@ -844,7 +846,7 @@ def analyze_mtf_pullback(symbol, ctx):
         df_1d = get_data(ctx, symbol, "1d")
     except Exception:
         return None
-    if len(df_1d) < 60:
+    if len(df_1d) < 200:
         return None
 
     ema50_d = df_1d["close"].ewm(span=50, adjust=False).mean()
