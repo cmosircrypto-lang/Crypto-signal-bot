@@ -1,0 +1,2 @@
+bot,symbol,direction,entry,sl,tp,exit,result,pnl_r,setup,score,opened_ms,closed_ms
+crypto-signal-bot-v30,ENA-SWAP-USDT,SHORT,0.15433,0.15501813957280736,0.14612,0.15501813957280736,SL,-1.0,AMD: Asia sweep + FVG (SHORT),0.6176,1794245543750,1794250004486
