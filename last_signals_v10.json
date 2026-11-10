@@ -1,1 +1,1 @@
-{}
+{"BCH-SWAP-USDT": {"direction": "SHORT", "entry": 234.1, "tp": 227.67688655301617, "sl": 237.09745294192578, "signal_key": 1794304800000, "setup": "Breakout 18x1H (low 236.0600)", "score": 0.6422, "time": "2026-11-10T11:01:50.295226+00:00", "telegram_sent": true, "telegram_message_id": 16159, "status": "OPEN", "opened_ms": 1794308510295}}
