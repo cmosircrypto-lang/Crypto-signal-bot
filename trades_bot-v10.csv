@@ -1,0 +1,2 @@
+bot,symbol,direction,entry,sl,tp,exit,result,pnl_r,setup,score,opened_ms,closed_ms
+crypto-signal-bot-v10,BCH-SWAP-USDT,SHORT,234.1,237.09745294192578,227.67688655301617,227.67688655301617,TP,2.143,Breakout 18x1H (low 236.0600),0.6422,1794308510295,1794325573912
