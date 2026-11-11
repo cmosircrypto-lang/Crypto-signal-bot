@@ -1,0 +1,2 @@
+bot,symbol,direction,entry,sl,tp,exit,result,pnl_r,setup,score,opened_ms,closed_ms
+crypto-signal-bot-v70,ICP-SWAP-USDT,SHORT,2.596,2.614868744307185,2.4351406961601882,2.614868744307185,SL,-1.0,SMC Winner (SHORT Sweep),0.8,1794427327750,1794428228585
