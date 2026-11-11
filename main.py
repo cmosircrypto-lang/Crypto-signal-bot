@@ -1,6 +1,5 @@
 """
 ربات‌های سیگنال با تمرکز روی کیفیت بالا (Win Rate)
-
   1) crypto-signal-bot      : کراس EMA 9/21 در ۴ساعته + تایید قوی ۱ساعته
   2) crypto-signal-bot-v10  : شکست رنج تمیز در ۱ساعته با حجم قوی
   3) crypto-signal-bot-v20  : MTF Pullback (Daily EMA50/200 + 1H Swing/Donchian)
@@ -8,9 +7,7 @@
   5) crypto-signal-bot-v40  : رژیم بازار (ADX) — نسخه سخت‌تر کیفیت
   6) crypto-signal-bot-v50  : SMC/ICT ترکیبی
   7) crypto-signal-bot-v60  : فیلتر BTC (1D+4H) + پولبک هم‌جهت روی نمادها
-
-هر ربات: تگ جدا، heartbeat جدا و فایل وضعیت جدا دارد.
-خلاصه روزانه ساعت ۸ صبح به وقت ایران برای همه ربات‌های زنده ارسال می‌شود.
+  8) crypto-signal-bot-v70  : SMC Winner (نسخه بهینه‌شده با بک‌تست ۱ ساله)
 """
 import os
 import json
@@ -184,6 +181,11 @@ B6_SL_ATR, B6_TP_ATR = 1.4, 2.95
 B6_MIN_SCORE = 0.60
 B6_COOLDOWN_HOURS = 3
 
+# --- ربات ۸: SMC Winner (نسخه برنده بک‌تست) ---
+B8_SWEEP_LOOKBACK = 10
+B8_TP_ATR_MULT = 2.5
+B8_COOLDOWN_HOURS = 4
+
 
 # =====================================================================
 # ابزارهای عمومی
@@ -212,7 +214,7 @@ def send_telegram(message, max_retries=3, timeout=20):
         except Exception as e:
             print(f"⚠️ خطا در ارسال تلگرام (تلاش {attempt}/{max_retries}): {e}")
         if attempt < max_retries:
-            time.sleep(2 * attempt)  # 2s، 4s بین تلاش‌ها
+            time.sleep(2 * attempt)
     return None
 
 
@@ -255,7 +257,6 @@ def save_json(path, data):
 
 
 def append_trade_csv(bot_name, record):
-    """ثبت معامله بسته‌شده برای ارزیابی عملکرد هر ربات."""
     import csv
     fname = f"trades_{bot_name.replace('crypto-signal-bot', 'bot')}.csv"
     file_exists = os.path.exists(fname)
@@ -433,21 +434,13 @@ def find_recent_cross(df, direction, lookback=B1_CROSS_LOOKBACK):
 
 
 def analyze_cross(symbol, ctx):
-
     df_4h = get_data(ctx, symbol, "4h")
-
     direction = None
     cross_age = None
     cross_ts = None
 
     for d in ("LONG", "SHORT"):
-
-        age, ts = find_recent_cross(
-            df_4h,
-            d,
-            lookback=B1_CROSS_LOOKBACK
-        )
-
+        age, ts = find_recent_cross(df_4h, d, lookback=B1_CROSS_LOOKBACK)
         if age is not None:
             direction = d
             cross_age = age
@@ -458,270 +451,116 @@ def analyze_cross(symbol, ctx):
         return None
 
     last4 = df_4h.iloc[-1]
-
     atr_4h = float(last4["atr"])
-
     if np.isnan(atr_4h) or atr_4h <= 0:
         return None
 
     adx_4h = float(last4["adx"])
-
     if np.isnan(adx_4h):
         return None
 
     if adx_4h < B1_MIN_ADX_4H:
-        print(
-            f"  {symbol}: weak 4H ADX "
-            f"({adx_4h:.1f})"
-        )
+        print(f"  {symbol}: weak 4H ADX ({adx_4h:.1f})")
         return None
 
     ema9_4h = float(last4["ema9"])
     ema21_4h = float(last4["ema21"])
     ema50_4h = float(last4["ema50"])
 
-    gap_4h = abs(
-        ema9_4h - ema21_4h
-    )
-
+    gap_4h = abs(ema9_4h - ema21_4h)
     if gap_4h < 0.40 * atr_4h:
-        print(
-            f"  {symbol}: weak 4H trend"
-        )
+        print(f"  {symbol}: weak 4H trend")
         return None
 
-    ema9_slope = (
-        ema9_4h -
-        float(df_4h["ema9"].iloc[-4])
-    )
-
-    slope_atr = (
-        abs(ema9_slope) / atr_4h
-    )
+    ema9_slope = (ema9_4h - float(df_4h["ema9"].iloc[-4]))
+    slope_atr = (abs(ema9_slope) / atr_4h)
 
     if slope_atr < B1_MIN_SLOPE_ATR:
-        print(
-            f"  {symbol}: EMA slope too weak"
-        )
+        print(f"  {symbol}: EMA slope too weak")
         return None
 
     if direction == "LONG" and ema9_slope <= 0:
         return None
-
     if direction == "SHORT" and ema9_slope >= 0:
         return None
 
     if direction == "LONG":
-
         if ema21_4h <= ema50_4h:
-
-            print(
-                f"  {symbol}: LONG cross "
-                f"but EMA21 below EMA50"
-            )
-
+            print(f"  {symbol}: LONG cross but EMA21 below EMA50")
             return None
-
     else:
-
         if ema21_4h >= ema50_4h:
-
-            print(
-                f"  {symbol}: SHORT cross "
-                f"but EMA21 above EMA50"
-            )
-
+            print(f"  {symbol}: SHORT cross but EMA21 above EMA50")
             return None
 
-    df_1h = get_data(
-        ctx,
-        symbol,
-        "1h"
-    )
-
+    df_1h = get_data(ctx, symbol, "1h")
     if trend_of(df_1h) != direction:
         return None
 
     last_1h = df_1h.iloc[-1]
-
     atr_1h = float(last_1h["atr"])
-
     if np.isnan(atr_1h) or atr_1h <= 0:
         return None
 
     adx_1h = float(last_1h["adx"])
-
     if np.isnan(adx_1h):
         return None
 
     if adx_1h < B1_MIN_ADX_1H:
-        print(
-            f"  {symbol}: weak 1H ADX "
-            f"({adx_1h:.1f})"
-        )
+        print(f"  {symbol}: weak 1H ADX ({adx_1h:.1f})")
         return None
 
-    gap_1h = abs(
-        float(last_1h["ema9"])
-        -
-        float(last_1h["ema21"])
-    )
-
+    gap_1h = abs(float(last_1h["ema9"]) - float(last_1h["ema21"]))
     if gap_1h < 0.45 * atr_1h:
-
-        print(
-            f"  {symbol}: weak 1H trend"
-        )
-
+        print(f"  {symbol}: weak 1H trend")
         return None
 
-    vol_1h = float(
-        last_1h["volume"]
-    )
-
-    avg_vol_1h = float(
-        df_1h["volume"]
-        .iloc[-21:-1]
-        .mean()
-    )
-
-    vol_ratio_1h = ratio(
-        vol_1h,
-        avg_vol_1h
-    )
+    vol_1h = float(last_1h["volume"])
+    avg_vol_1h = float(df_1h["volume"].iloc[-21:-1].mean())
+    vol_ratio_1h = ratio(vol_1h, avg_vol_1h)
 
     if vol_ratio_1h < B1_VOLUME_MULT:
-
-        print(
-            f"  {symbol}: weak volume "
-            f"(x{vol_ratio_1h:.2f})"
-        )
-
+        print(f"  {symbol}: weak volume (x{vol_ratio_1h:.2f})")
         return None
 
-    df_15m = get_data(
-        ctx,
-        symbol,
-        "15m"
-    )
-
+    df_15m = get_data(ctx, symbol, "15m")
     last = df_15m.iloc[-1]
-
     rsi = float(last["rsi"])
-
     if np.isnan(rsi):
         return None
 
-    lo, hi = (
-        B1_RSI_LONG
-        if direction == "LONG"
-        else B1_RSI_SHORT
-    )
-
+    lo, hi = (B1_RSI_LONG if direction == "LONG" else B1_RSI_SHORT)
     if not (lo <= rsi <= hi):
-
-        print(
-            f"  {symbol}: RSI "
-            f"{rsi:.1f} not in range"
-        )
-
+        print(f"  {symbol}: RSI {rsi:.1f} not in range")
         return None
 
     close = float(last["close"])
-
-    if (
-        atr_1h * B1_SL_ATR
-    ) / close < MIN_SL_PCT:
+    if (atr_1h * B1_SL_ATR) / close < MIN_SL_PCT:
         return None
 
-    trend1_score = (
-        min(
-            gap_1h / atr_1h,
-            1.5
-        ) / 1.5
-    )
+    trend1_score = (min(gap_1h / atr_1h, 1.5) / 1.5)
+    trend4_score = (min(gap_4h / atr_4h, 1.5) / 1.5)
+    vol_score = (min(vol_ratio_1h, 3.0) / 3.0)
+    cross_score = (B1_CROSS_LOOKBACK - cross_age) / B1_CROSS_LOOKBACK
+    rsi_score = min(abs(rsi - 50) / 20.0, 1.0)
+    adx_score = min(adx_4h / 35.0, 1.0)
 
-    trend4_score = (
-        min(
-            gap_4h / atr_4h,
-            1.5
-        ) / 1.5
-    )
+    score = (0.25 * trend1_score + 0.25 * trend4_score + 0.20 * adx_score + 
+             0.15 * vol_score + 0.10 * cross_score + 0.05 * rsi_score)
 
-    vol_score = (
-        min(
-            vol_ratio_1h,
-            3.0
-        ) / 3.0
-    )
-
-    cross_score = (
-        B1_CROSS_LOOKBACK -
-        cross_age
-    ) / B1_CROSS_LOOKBACK
-
-    rsi_score = min(
-        abs(rsi - 50) / 20.0,
-        1.0
-    )
-
-    adx_score = min(
-        adx_4h / 35.0,
-        1.0
-    )
-
-    score = (
-        0.25 * trend1_score +
-        0.25 * trend4_score +
-        0.20 * adx_score +
-        0.15 * vol_score +
-        0.10 * cross_score +
-        0.05 * rsi_score
-    )
-
-    print(
-        f"  {symbol}: "
-        f"{direction} "
-        f"| score={score:.3f} "
-        f"| ADX4={adx_4h:.1f} "
-        f"| ADX1={adx_1h:.1f} "
-        f"| vol={vol_ratio_1h:.2f}"
-    )
+    print(f"  {symbol}: {direction} | score={score:.3f} | ADX4={adx_4h:.1f} | ADX1={adx_1h:.1f} | vol={vol_ratio_1h:.2f}")
 
     if score < B1_MIN_SCORE:
-
-        print(
-            f"  {symbol}: "
-            f"score too low "
-            f"({score:.3f})"
-        )
-
+        print(f"  {symbol}: score too low ({score:.3f})")
         return None
 
     return {
-        "symbol": symbol,
-        "direction": direction,
-        "close": close,
-        "atr": atr_1h,
-        "rsi": rsi,
-        "volume": vol_1h,
-        "avg_volume": avg_vol_1h,
-        "signal_key": cross_ts,
-        "score": score,
-        "setup": (
-            f"EMA Cross PRO "
-            f"(4H age {cross_age})"
-        ),
-        "levels": atr_levels(
-            direction,
-            atr_1h,
-            B1_SL_ATR,
-            B1_TP_ATR
-        ),
+        "symbol": symbol, "direction": direction, "close": close,
+        "atr": atr_1h, "rsi": rsi, "volume": vol_1h, "avg_volume": avg_vol_1h,
+        "signal_key": cross_ts, "score": score,
+        "setup": f"EMA Cross PRO (4H age {cross_age})",
+        "levels": atr_levels(direction, atr_1h, B1_SL_ATR, B1_TP_ATR),
     }
-
-
-
 
 
 # =====================================================================
@@ -758,16 +597,12 @@ def analyze_breakout(symbol, ctx):
 
     direction = level = None
 
-    if (close > range_high and
-            float(prev["close"]) <= range_high and
-            (close - low) / rng >= B2_CLOSE_POS and
-            (close - range_high) <= B2_MAX_EXTENSION_ATR * atr):
+    if (close > range_high and float(prev["close"]) <= range_high and
+            (close - low) / rng >= B2_CLOSE_POS and (close - range_high) <= B2_MAX_EXTENSION_ATR * atr):
         direction, level = "LONG", range_high
 
-    elif (close < range_low and
-          float(prev["close"]) >= range_low and
-          (high - close) / rng >= B2_CLOSE_POS and
-          (range_low - close) <= B2_MAX_EXTENSION_ATR * atr):
+    elif (close < range_low and float(prev["close"]) >= range_low and
+          (high - close) / rng >= B2_CLOSE_POS and (range_low - close) <= B2_MAX_EXTENSION_ATR * atr):
         direction, level = "SHORT", range_low
 
     if direction is None:
@@ -795,17 +630,13 @@ def analyze_breakout(symbol, ctx):
     slow_trend = "LONG" if l4["ema21"] > l4["ema50"] else "SHORT" if l4["ema21"] < l4["ema50"] else "NONE"
     trend_ok = slow_trend == direction
 
-    print(f"  {symbol}: {direction} breakout 1H | RSI {rsi:.1f} ok={rsi_ok} | "
-          f"Vol x{vol_ratio:.2f} ok={vol_ok} | 4H ok={trend_ok}")
+    print(f"  {symbol}: {direction} breakout 1H | RSI {rsi:.1f} ok={rsi_ok} | Vol x{vol_ratio:.2f} ok={vol_ok} | 4H ok={trend_ok}")
 
     if not (rsi_ok and vol_ok and trend_ok):
         reasons = []
-        if not rsi_ok:
-            reasons.append(f"RSI {rsi:.1f} خارج {lo}-{hi}")
-        if not vol_ok:
-            reasons.append(f"حجم {vol_ratio:.2f} < {B2_VOLUME_MULT}")
-        if not trend_ok:
-            reasons.append(f"روند ۴ساعته {slow_trend} مخالف {direction}")
+        if not rsi_ok: reasons.append(f"RSI {rsi:.1f} خارج {lo}-{hi}")
+        if not vol_ok: reasons.append(f"حجم {vol_ratio:.2f} < {B2_VOLUME_MULT}")
+        if not trend_ok: reasons.append(f"روند ۴ساعته {slow_trend} مخالف {direction}")
         print(f"    -> rejected: " + " | ".join(reasons))
         return None
 
@@ -818,10 +649,8 @@ def analyze_breakout(symbol, ctx):
     gap_4h = abs(float(l4["ema21"]) - float(l4["ema50"]))
     trend_score = min(gap_4h / atr_4h, 1.0) if atr_4h > 0 else 0.0
 
-    score = (0.35 * min(vol_ratio, 4.0) / 4.0
-             + 0.25 * strength
-             + 0.20 * body_score
-             + 0.20 * trend_score)
+    score = (0.35 * min(vol_ratio, 4.0) / 4.0 + 0.25 * strength +
+             0.20 * body_score + 0.20 * trend_score)
 
     if score < B2_MIN_SCORE:
         print(f"    -> rejected (score {score:.3f} < {B2_MIN_SCORE})")
@@ -829,8 +658,7 @@ def analyze_breakout(symbol, ctx):
 
     return {
         "symbol": symbol, "direction": direction, "close": close,
-        "atr": atr, "rsi": rsi,
-        "volume": volume, "avg_volume": avg_volume,
+        "atr": atr, "rsi": rsi, "volume": volume, "avg_volume": avg_volume,
         "signal_key": int(last["timestamp"]), "score": score,
         "setup": f"Breakout {lb}x1H ({'high' if direction == 'LONG' else 'low'} {format_number(level)})",
         "levels": atr_levels(direction, atr, B2_SL_ATR, B2_TP_ATR),
@@ -841,7 +669,6 @@ def analyze_breakout(symbol, ctx):
 # استراتژی ۳: MTF Pullback (Daily Bias + 1H Entry)
 # =====================================================================
 def analyze_mtf_pullback(symbol, ctx):
-    """Daily EMA50/200 bias + 1H pullback to Swing/Donchian."""
     try:
         df_1d = get_data(ctx, symbol, "1d")
     except Exception:
@@ -896,10 +723,8 @@ def analyze_mtf_pullback(symbol, ctx):
     lows = look["low"].values
     swing_lows, swing_highs = [], []
     for i in range(2, len(look) - 2):
-        if lows[i] <= min(lows[i-2:i+3]):
-            swing_lows.append(float(lows[i]))
-        if highs[i] >= max(highs[i-2:i+3]):
-            swing_highs.append(float(highs[i]))
+        if lows[i] <= min(lows[i-2:i+3]): swing_lows.append(float(lows[i]))
+        if highs[i] >= max(highs[i-2:i+3]): swing_highs.append(float(highs[i]))
 
     if direction == "LONG":
         levels_list = ([swing_lows[-1]] if swing_lows else []) + [donch_low]
@@ -922,14 +747,11 @@ def analyze_mtf_pullback(symbol, ctx):
 
         def levels(entry):
             r = entry - sl_level
-            if r <= 0:
-                return None
+            if r <= 0: return None
             return sl_level, entry + B3_RR * r
 
-        score = (0.30 * min(sep / 0.02, 1.0)
-                 + 0.25 * (1.0 - dist / B3_NEAR_PCT)
-                 + 0.25 * min(body_ratio / 0.7, 1.0)
-                 + 0.20 * min(abs(rsi - 38) / 15.0, 1.0))
+        score = (0.30 * min(sep / 0.02, 1.0) + 0.25 * (1.0 - dist / B3_NEAR_PCT) +
+                 0.25 * min(body_ratio / 0.7, 1.0) + 0.20 * min(abs(rsi - 38) / 15.0, 1.0))
     else:
         levels_list = ([swing_highs[-1]] if swing_highs else []) + [donch_high]
         level = max(levels_list)
@@ -951,34 +773,22 @@ def analyze_mtf_pullback(symbol, ctx):
 
         def levels(entry):
             r = sl_level - entry
-            if r <= 0:
-                return None
+            if r <= 0: return None
             return sl_level, entry - B3_RR * r
 
-        score = (0.30 * min(sep / 0.02, 1.0)
-                 + 0.25 * (1.0 - dist / B3_NEAR_PCT)
-                 + 0.25 * min(body_ratio / 0.7, 1.0)
-                 + 0.20 * min(abs(rsi - 62) / 15.0, 1.0))
+        score = (0.30 * min(sep / 0.02, 1.0) + 0.25 * (1.0 - dist / B3_NEAR_PCT) +
+                 0.25 * min(body_ratio / 0.7, 1.0) + 0.20 * min(abs(rsi - 62) / 15.0, 1.0))
 
     if score < B3_MIN_SCORE:
         print(f"  {symbol}: MTF score too low ({score:.3f})")
         return None
 
-    print(f"  {symbol}: MTF {direction} | RSI {rsi:.1f} | body {body_ratio:.2f} | "
-          f"dist {dist*100:.2f}% | score {score:.3f}")
+    print(f"  {symbol}: MTF {direction} | RSI {rsi:.1f} | body {body_ratio:.2f} | dist {dist*100:.2f}% | score {score:.3f}")
 
     return {
-        "symbol": symbol,
-        "direction": direction,
-        "close": c,
-        "atr": atr,
-        "rsi": rsi,
-        "volume": volume,
-        "avg_volume": avg_volume,
-        "signal_key": int(last["timestamp"]),
-        "score": score,
-        "setup": f"MTF Pullback 1H (Daily {direction})",
-        "levels": levels,
+        "symbol": symbol, "direction": direction, "close": c, "atr": atr, "rsi": rsi,
+        "volume": volume, "avg_volume": avg_volume, "signal_key": int(last["timestamp"]),
+        "score": score, "setup": f"MTF Pullback 1H (Daily {direction})", "levels": levels,
     }
 
 
@@ -995,7 +805,6 @@ def _in_active_session():
 
 
 def _asia_range_1h(df1):
-    """آخرین رنج آسیای تکمیل‌شده (UTC 00–08) را از کندل‌های ۱H استخراج می‌کند."""
     highs, lows, ts = [], [], []
     for i in range(len(df1)):
         h = _utc_hour(int(df1["timestamp"].iloc[i]))
@@ -1007,14 +816,10 @@ def _asia_range_1h(df1):
     if len(highs) < 3:
         return None
 
-    # آخرین بلوک پیوسته آسیا
-    # ساده‌سازی: از انتها به عقب، فقط کندل‌های آسیای اخیر
-    # اگر الان داخل آسیا هستیم، رنج هنوز Accumulation است → سیگنال نده
     now_h = datetime.now(timezone.utc).hour
     if B30_ASIA_START_H <= now_h < B30_ASIA_END_H:
         return None
 
-    # ۸ کندل آسیای آخر (تقریبی یک سشن)
     asia_hi = max(highs[-8:]) if len(highs) >= 8 else max(highs)
     asia_lo = min(lows[-8:]) if len(lows) >= 8 else min(lows)
     asia_end_ts = ts[-1]
@@ -1022,13 +827,6 @@ def _asia_range_1h(df1):
 
 
 def analyze_amd_session(symbol, ctx):
-    """
-    AMD + Session Liquidity:
-      A) رنج آسیا (Accumulation)
-      M) سوییپ سقف/کف آسیا بعد از پایان آسیا (Manipulation)
-      D) ورود روی پولبک به FVG در جهت برگشت (Distribution)
-    فقط در پنجره فعال لندن/نیویورک سیگنال می‌دهد.
-    """
     if not _in_active_session():
         return None
 
@@ -1058,7 +856,6 @@ def analyze_amd_session(symbol, ctx):
         print(f"  {symbol}: Asia range invalid ({rng_size / atr1:.1f} ATR)")
         return None
 
-    # پیدا کردن سوییپ بعد از پایان آسیا
     hi1 = df1["high"].values
     lo1 = df1["low"].values
     c1 = df1["close"].values
@@ -1069,45 +866,24 @@ def analyze_amd_session(symbol, ctx):
     for i in range(n1 - 1, max(0, n1 - 1 - B30_SWEEP_MAX_AGE_1H) - 1, -1):
         if int(ts1[i]) <= asia["end_ts"]:
             break
-        # سوییپ کف آسیا → لانگ (Manipulation نزولی)
         if lo1[i] < asia["low"] and c1[i] > asia["low"]:
-            sweep = {
-                "direction": "LONG",
-                "extreme": float(lo1[i]),
-                "level": asia["low"],
-                "ts": int(ts1[i]),
-                "target": asia["high"],
-            }
+            sweep = {"direction": "LONG", "extreme": float(lo1[i]), "level": asia["low"], "ts": int(ts1[i]), "target": asia["high"]}
             break
-        # سوییپ سقف آسیا → شورت
         if hi1[i] > asia["high"] and c1[i] < asia["high"]:
-            sweep = {
-                "direction": "SHORT",
-                "extreme": float(hi1[i]),
-                "level": asia["high"],
-                "ts": int(ts1[i]),
-                "target": asia["low"],
-            }
+            sweep = {"direction": "SHORT", "extreme": float(hi1[i]), "level": asia["high"], "ts": int(ts1[i]), "target": asia["low"]}
             break
 
     if sweep is None:
         return None
 
-    # هم‌جهت با بایاس ۴H
     if sweep["direction"] != bias_4h:
         print(f"  {symbol}: AMD sweep {sweep['direction']} مخالف 4H={bias_4h}")
         return None
 
     direction = sweep["direction"]
 
-    # FVG روی ۱۵m بعد از سوییپ
     df15 = get_data(ctx, symbol, "15m")
-    h = df15["high"].values
-    l = df15["low"].values
-    o = df15["open"].values
-    c = df15["close"].values
-    v = df15["volume"].values
-    ts15 = df15["timestamp"].values
+    h, l, o, c, v, ts15 = (df15[k].values for k in ("high", "low", "open", "close", "volume", "timestamp"))
     last = len(df15) - 1
     price = float(c[last])
 
@@ -1136,7 +912,6 @@ def analyze_amd_session(symbol, ctx):
         print(f"  {symbol}: AMD {direction} | sweep ok | FVG missing")
         return None
 
-    # SL / TP ساختاری
     if direction == "LONG":
         sl = sweep["extreme"] - B30_SL_BUFFER_ATR * atr1
         tp = sweep["target"]
@@ -1146,12 +921,10 @@ def analyze_amd_session(symbol, ctx):
 
     def levels(entry):
         if direction == "LONG":
-            if not (sl < entry < tp):
-                return None
+            if not (sl < entry < tp): return None
             risk, reward = entry - sl, tp - entry
         else:
-            if not (tp < entry < sl):
-                return None
+            if not (tp < entry < sl): return None
             risk, reward = sl - entry, entry - tp
         if risk <= 0 or risk > B30_MAX_RISK_ATR * atr1 or reward / risk < B30_MIN_RR:
             return None
@@ -1170,14 +943,10 @@ def analyze_amd_session(symbol, ctx):
     vol = float(v[last])
     avg_vol = float(df15["volume"].iloc[-21:-1].mean())
     vol_ratio = ratio(vol, avg_vol)
-    rsi = float(df15["rsi"].iloc[-1])
-    if np.isnan(rsi):
-        rsi = 50.0
+    rsi = float(df15["rsi"].iloc[-1]) if not np.isnan(df15["rsi"].iloc[-1]) else 50.0
 
-    score = (0.35 * min(depth / 0.6, 1.0)
-             + 0.30 * min(rr / 3.0, 1.0)
-             + 0.20 * min(vol_ratio / 2.0, 1.0)
-             + 0.15 * min(gap4 / atr4, 1.0))
+    score = (0.35 * min(depth / 0.6, 1.0) + 0.30 * min(rr / 3.0, 1.0) +
+             0.20 * min(vol_ratio / 2.0, 1.0) + 0.15 * min(gap4 / atr4, 1.0))
 
     if score < B30_MIN_SCORE:
         print(f"  {symbol}: AMD score too low ({score:.3f})")
@@ -1185,17 +954,9 @@ def analyze_amd_session(symbol, ctx):
 
     print(f"  {symbol}: AMD {direction} | Asia sweep ok | FVG ok | RR {rr:.2f} | score {score:.3f}")
     return {
-        "symbol": symbol,
-        "direction": direction,
-        "close": price,
-        "atr": atr1,
-        "rsi": rsi,
-        "volume": vol,
-        "avg_volume": avg_vol,
-        "signal_key": fvg["ts"],
-        "score": score,
-        "setup": f"AMD: Asia sweep + FVG ({direction})",
-        "levels": levels,
+        "symbol": symbol, "direction": direction, "close": price, "atr": atr1, "rsi": rsi,
+        "volume": vol, "avg_volume": avg_vol, "signal_key": fvg["ts"], "score": score,
+        "setup": f"AMD: Asia sweep + FVG ({direction})", "levels": levels,
     }
 
 
@@ -1217,10 +978,8 @@ def analyze_regime(symbol, ctx):
     avg_volume = float(df["volume"].iloc[-21:-1].mean())
     vol_ratio = ratio(volume, avg_volume)
 
-    if adx >= B4_ADX_TREND:
-        mode = "trend"
-    elif adx <= B4_ADX_RANGE:
-        mode = "range"
+    if adx >= B4_ADX_TREND: mode = "trend"
+    elif adx <= B4_ADX_RANGE: mode = "range"
     else:
         print(f"  {symbol}: ADX {adx:.1f} بین دو رژیم، بدون معامله")
         return None
@@ -1241,42 +1000,33 @@ def analyze_regime(symbol, ctx):
             if btc_4h in ("LONG", "SHORT") and direction != btc_4h:
                 print(f"  {symbol}: TREND {direction} rejected (BTC 4H={btc_4h})")
                 return None
-        except Exception:
-            pass
+        except Exception: pass
 
         ema21 = float(last["ema21"])
         if direction == "LONG":
-            touched = (low <= ema21 + B4_TREND_TOUCH_ATR * atr and close > ema21 and close > open_
-                       and close - ema21 <= B4_TREND_MAX_EXT_ATR * atr)
+            touched = (low <= ema21 + B4_TREND_TOUCH_ATR * atr and close > ema21 and close > open_ and close - ema21 <= B4_TREND_MAX_EXT_ATR * atr)
             rsi_ok = B4_TREND_RSI_LONG[0] <= rsi <= B4_TREND_RSI_LONG[1]
         else:
-            touched = (high >= ema21 - B4_TREND_TOUCH_ATR * atr and close < ema21 and close < open_
-                       and ema21 - close <= B4_TREND_MAX_EXT_ATR * atr)
+            touched = (high >= ema21 - B4_TREND_TOUCH_ATR * atr and close < ema21 and close < open_ and ema21 - close <= B4_TREND_MAX_EXT_ATR * atr)
             rsi_ok = B4_TREND_RSI_SHORT[0] <= rsi <= B4_TREND_RSI_SHORT[1]
 
         vol_ok = vol_ratio >= B4_TREND_MIN_VOL
 
-        print(f"  {symbol}: ADX {adx:.1f} TREND {direction} | پولبک ok={touched} | "
-              f"RSI {rsi:.1f} ok={rsi_ok} | Vol x{vol_ratio:.2f} ok={vol_ok}")
+        print(f"  {symbol}: ADX {adx:.1f} TREND {direction} | پولبک ok={touched} | RSI {rsi:.1f} ok={rsi_ok} | Vol x{vol_ratio:.2f} ok={vol_ok}")
         if not (touched and rsi_ok and vol_ok):
             return None
         if (atr * B4_TREND_SL_ATR) / close < MIN_SL_PCT:
             return None
 
-        score = (0.45 * min(adx / 40.0, 1.0)
-                 + 0.30 * min(gap_4h / atr_4h, 1.0)
-                 + 0.25 * min(vol_ratio / 2.0, 1.0))
+        score = (0.45 * min(adx / 40.0, 1.0) + 0.30 * min(gap_4h / atr_4h, 1.0) + 0.25 * min(vol_ratio / 2.0, 1.0))
         if score < B4_MIN_SCORE:
             print(f"  {symbol}: score too low ({score:.3f})")
             return None
 
         return {
-            "symbol": symbol, "direction": direction, "close": close,
-            "atr": atr, "rsi": rsi,
-            "volume": volume, "avg_volume": avg_volume,
-            "signal_key": int(last["timestamp"]), "score": score,
-            "setup": "رژیم روند: پولبک به میانگین ۱H",
-            "levels": atr_levels(direction, atr, B4_TREND_SL_ATR, B4_TREND_TP_ATR),
+            "symbol": symbol, "direction": direction, "close": close, "atr": atr, "rsi": rsi,
+            "volume": volume, "avg_volume": avg_volume, "signal_key": int(last["timestamp"]), "score": score,
+            "setup": "رژیم روند: پولبک به میانگین ۱H", "levels": atr_levels(direction, atr, B4_TREND_SL_ATR, B4_TREND_TP_ATR),
         }
 
     bb_lo, bb_mid, bb_up = (float(last[k]) for k in ("bb_lo", "bb_mid", "bb_up"))
@@ -1304,25 +1054,19 @@ def analyze_regime(symbol, ctx):
         return None
 
     def levels(entry):
-        if direction == "LONG":
-            return (sl, tp) if sl < entry < tp else None
+        if direction == "LONG": return (sl, tp) if sl < entry < tp else None
         return (sl, tp) if tp < entry < sl else None
 
-    score = (0.50 * min(rr / 3.0, 1.0)
-             + 0.30 * min(abs(rsi - 50) / 25.0, 1.0)
-             + 0.20 * min(vol_ratio / 2.0, 1.0))
+    score = (0.50 * min(rr / 3.0, 1.0) + 0.30 * min(abs(rsi - 50) / 25.0, 1.0) + 0.20 * min(vol_ratio / 2.0, 1.0))
     if score < B4_MIN_SCORE:
         print(f"  {symbol}: score too low ({score:.3f})")
         return None
 
     print(f"  {symbol}: ADX {adx:.1f} RANGE {direction} | RSI {rsi:.1f} | RR {rr:.2f}")
     return {
-        "symbol": symbol, "direction": direction, "close": close,
-        "atr": atr, "rsi": rsi,
-        "volume": volume, "avg_volume": avg_volume,
-        "signal_key": int(last["timestamp"]), "score": score,
-        "setup": "رژیم رنج: بازگشت از باند به میانگین ۱H",
-        "levels": levels,
+        "symbol": symbol, "direction": direction, "close": close, "atr": atr, "rsi": rsi,
+        "volume": volume, "avg_volume": avg_volume, "signal_key": int(last["timestamp"]), "score": score,
+        "setup": "رژیم رنج: بازگشت از باند به میانگین ۱H", "levels": levels,
     }
 
 
@@ -1346,8 +1090,7 @@ def analyze_smc(symbol, ctx):
     atr1 = float(df1["atr"].iloc[-1])
     if np.isnan(atr1) or atr1 <= 0:
         return None
-    hi1, lo1, c1 = df1["high"].values, df1["low"].values, df1["close"].values
-    ts1 = df1["timestamp"].values
+    hi1, lo1, c1, ts1 = (df1[k].values for k in ("high", "low", "close", "timestamp"))
 
     sweep = None
     for m in range(n1 - 1, n1 - 1 - B5_SWEEP_RECENT, -1):
@@ -1370,8 +1113,7 @@ def analyze_smc(symbol, ctx):
     eq = (rng_hi + rng_lo) / 2
 
     df15 = get_data(ctx, symbol, "15m")
-    h, l, o, c, v = (df15[k].values for k in ("high", "low", "open", "close", "volume"))
-    ts15 = df15["timestamp"].values
+    h, l, o, c, v, ts15 = (df15[k].values for k in ("high", "low", "open", "close", "volume", "timestamp"))
     last = len(df15) - 1
     price = float(c[last])
     if (direction == "LONG" and price > eq) or (direction == "SHORT" and price < eq):
@@ -1383,15 +1125,13 @@ def analyze_smc(symbol, ctx):
             break
         if direction == "LONG" and h[i - 2] < l[i]:
             bottom, top = float(h[i - 2]), float(l[i])
-            if (c[i + 1:last] < bottom).any():
-                continue
+            if (c[i + 1:last] < bottom).any(): continue
             if l[last] <= top and c[last] > o[last] and c[last] >= (bottom + top) / 2:
                 fvg = {"ts": int(ts15[i])}
                 break
         if direction == "SHORT" and l[i - 2] > h[i]:
             bottom, top = float(h[i]), float(l[i - 2])
-            if (c[i + 1:last] > top).any():
-                continue
+            if (c[i + 1:last] > top).any(): continue
             if h[last] >= bottom and c[last] < o[last] and c[last] <= (bottom + top) / 2:
                 fvg = {"ts": int(ts15[i])}
                 break
@@ -1407,12 +1147,10 @@ def analyze_smc(symbol, ctx):
 
     def levels(entry):
         if direction == "LONG":
-            if not (sl < entry < tp):
-                return None
+            if not (sl < entry < tp): return None
             risk, reward = entry - sl, tp - entry
         else:
-            if not (tp < entry < sl):
-                return None
+            if not (tp < entry < sl): return None
             risk, reward = sl - entry, entry - tp
         if risk <= 0 or risk > B5_MAX_RISK_ATR * atr1 or reward / risk < B5_MIN_RR:
             return None
@@ -1430,24 +1168,17 @@ def analyze_smc(symbol, ctx):
     vol = float(v[last])
     avg_vol = float(df15["volume"].iloc[-21:-1].mean())
     vol_ratio = ratio(vol, avg_vol)
-    score = (0.35 * min(depth / 0.5, 1.0)
-             + 0.35 * min(vol_ratio / 2.0, 1.0)
-             + 0.30 * min(rr / 3.0, 1.0))
+    score = (0.35 * min(depth / 0.5, 1.0) + 0.35 * min(vol_ratio / 2.0, 1.0) + 0.30 * min(rr / 3.0, 1.0))
     if score < B5_MIN_SCORE:
         print(f"  {symbol}: SMC score too low ({score:.3f})")
         return None
 
-    rsi = float(df15["rsi"].iloc[-1])
-    if np.isnan(rsi):
-        rsi = 50.0
+    rsi = float(df15["rsi"].iloc[-1]) if not np.isnan(df15["rsi"].iloc[-1]) else 50.0
     print(f"  {symbol}: SMC {direction} | sweep ok | FVG ok | RR {rr:.2f} | score {score:.3f}")
     return {
-        "symbol": symbol, "direction": direction, "close": price,
-        "atr": atr1, "rsi": rsi,
-        "volume": vol, "avg_volume": avg_vol,
-        "signal_key": fvg["ts"], "score": score,
-        "setup": "SMC: برداشت نقدینگی و FVG با پولبک",
-        "levels": levels,
+        "symbol": symbol, "direction": direction, "close": price, "atr": atr1, "rsi": rsi,
+        "volume": vol, "avg_volume": avg_vol, "signal_key": fvg["ts"], "score": score,
+        "setup": "SMC: برداشت نقدینگی و FVG با پولبک", "levels": levels,
     }
 
 
@@ -1463,9 +1194,7 @@ def get_btc_filter(ctx):
         print(f"⚠️ BTC filter data error: {e}")
         return None
 
-    t_1d = trend_of(df_1d)
-    t_4h = trend_of(df_4h)
-    t_1h = trend_of(df_1h)
+    t_1d, t_4h, t_1h = trend_of(df_1d), trend_of(df_4h), trend_of(df_1h)
 
     if t_1d not in ("LONG", "SHORT") or t_4h not in ("LONG", "SHORT"):
         print(f"🌍 BTC filter: no clear bias (1D={t_1d}, 4H={t_4h})")
@@ -1476,13 +1205,11 @@ def get_btc_filter(ctx):
 
     bias = t_1d
     last = df_4h.iloc[-1]
-    atr = float(last["atr"])
-    close = float(last["close"])
+    atr, close = float(last["atr"]), float(last["close"])
     ema9, ema21 = float(last["ema9"]), float(last["ema21"])
     adx = float(last["adx"]) if not np.isnan(last["adx"]) else 0.0
 
-    if np.isnan(atr) or atr <= 0:
-        return None
+    if np.isnan(atr) or atr <= 0: return None
 
     gap = abs(ema9 - ema21)
     gap_atr = gap / atr
@@ -1497,64 +1224,38 @@ def get_btc_filter(ctx):
         return None
 
     align_1h = t_1h == bias
-    print(f"🌍 BTC filter OK | bias={bias} | 1D={t_1d} 4H={t_4h} 1H={t_1h} "
-          f"| gap={gap_atr:.2f} ADX={adx:.1f} ext={ext_atr:.2f} | 1H_align={align_1h}")
+    print(f"🌍 BTC filter OK | bias={bias} | 1D={t_1d} 4H={t_4h} 1H={t_1h} | gap={gap_atr:.2f} ADX={adx:.1f} ext={ext_atr:.2f} | 1H_align={align_1h}")
 
-    return {
-        "bias": bias,
-        "t_1d": t_1d,
-        "t_4h": t_4h,
-        "t_1h": t_1h,
-        "align_1h": align_1h,
-        "gap_atr": gap_atr,
-        "adx": adx,
-        "ext_atr": ext_atr,
-    }
+    return {"bias": bias, "t_1d": t_1d, "t_4h": t_4h, "t_1h": t_1h, "align_1h": align_1h,
+            "gap_atr": gap_atr, "adx": adx, "ext_atr": ext_atr}
 
 
 def analyze_btc_aligned(symbol, ctx):
     btc = getattr(ctx, "btc_filter", None)
-    if not btc:
-        return None
-
+    if not btc: return None
     bias = btc["bias"]
 
     df_4h = get_data(ctx, symbol, "4h")
-    if trend_of(df_4h) != bias:
-        return None
+    if trend_of(df_4h) != bias: return None
 
     l4 = df_4h.iloc[-1]
     atr_4h = float(l4["atr"])
-    if np.isnan(atr_4h) or atr_4h <= 0:
-        return None
+    if np.isnan(atr_4h) or atr_4h <= 0: return None
     gap_4h = abs(float(l4["ema9"]) - float(l4["ema21"]))
-    if gap_4h < B6_ALT_GAP_ATR * atr_4h:
-        return None
+    if gap_4h < B6_ALT_GAP_ATR * atr_4h: return None
 
     df_1h = get_data(ctx, symbol, "1h")
     last = df_1h.iloc[-1]
-    close = float(last["close"])
-    open_ = float(last["open"])
-    high = float(last["high"])
-    low = float(last["low"])
-    atr = float(last["atr"])
-    rsi = float(last["rsi"])
-    ema21 = float(last["ema21"])
+    close, open_, high, low = (float(last[k]) for k in ("close", "open", "high", "low"))
+    atr, rsi, ema21 = float(last["atr"]), float(last["rsi"]), float(last["ema21"])
 
-    if np.isnan(atr) or np.isnan(rsi) or atr <= 0:
-        return None
+    if np.isnan(atr) or np.isnan(rsi) or atr <= 0: return None
 
     if bias == "LONG":
-        touched = (low <= ema21 + B6_TOUCH_ATR * atr
-                   and close > ema21
-                   and close > open_
-                   and close - ema21 <= B6_MAX_EXT_ALT_ATR * atr)
+        touched = (low <= ema21 + B6_TOUCH_ATR * atr and close > ema21 and close > open_ and close - ema21 <= B6_MAX_EXT_ALT_ATR * atr)
         rsi_ok = B6_RSI_LONG[0] <= rsi <= B6_RSI_LONG[1]
     else:
-        touched = (high >= ema21 - B6_TOUCH_ATR * atr
-                   and close < ema21
-                   and close < open_
-                   and ema21 - close <= B6_MAX_EXT_ALT_ATR * atr)
+        touched = (high >= ema21 - B6_TOUCH_ATR * atr and close < ema21 and close < open_ and ema21 - close <= B6_MAX_EXT_ALT_ATR * atr)
         rsi_ok = B6_RSI_SHORT[0] <= rsi <= B6_RSI_SHORT[1]
 
     volume = float(last["volume"])
@@ -1562,39 +1263,93 @@ def analyze_btc_aligned(symbol, ctx):
     vol_ratio = ratio(volume, avg_volume)
     vol_ok = vol_ratio >= B6_VOLUME_MULT
 
-    print(f"  {symbol}: BTC={bias} | pullback ok={touched} | RSI {rsi:.1f} ok={rsi_ok} | "
-          f"Vol x{vol_ratio:.2f} ok={vol_ok}")
+    print(f"  {symbol}: BTC={bias} | pullback ok={touched} | RSI {rsi:.1f} ok={rsi_ok} | Vol x{vol_ratio:.2f} ok={vol_ok}")
 
-    if not (touched and rsi_ok and vol_ok):
-        return None
-    if (atr * B6_SL_ATR) / close < MIN_SL_PCT:
-        return None
+    if not (touched and rsi_ok and vol_ok): return None
+    if (atr * B6_SL_ATR) / close < MIN_SL_PCT: return None
 
     trend_score = min(gap_4h / atr_4h, 1.2) / 1.2
     vol_score = min(vol_ratio / 2.5, 1.0)
     btc_score = 0.55 + (B6_1H_ALIGN_BONUS if btc["align_1h"] else 0.0)
     btc_score += 0.15 * min(btc["gap_atr"] / 0.6, 1.0)
-    score = (0.35 * btc_score
-             + 0.30 * trend_score
-             + 0.20 * vol_score
-             + 0.15 * min(abs(rsi - 50) / 20.0, 1.0))
+    score = (0.35 * btc_score + 0.30 * trend_score + 0.20 * vol_score + 0.15 * min(abs(rsi - 50) / 20.0, 1.0))
 
     if score < B6_MIN_SCORE:
         print(f"  {symbol}: score too low ({score:.3f})")
         return None
 
     return {
-        "symbol": symbol,
-        "direction": bias,
-        "close": close,
-        "atr": atr,
-        "rsi": rsi,
-        "volume": volume,
-        "avg_volume": avg_volume,
-        "signal_key": int(last["timestamp"]),
-        "score": score,
-        "setup": f"BTC-aligned pullback 1H (BTC {bias})",
-        "levels": atr_levels(bias, atr, B6_SL_ATR, B6_TP_ATR),
+        "symbol": symbol, "direction": bias, "close": close, "atr": atr, "rsi": rsi,
+        "volume": volume, "avg_volume": avg_volume, "signal_key": int(last["timestamp"]), "score": score,
+        "setup": f"BTC-aligned pullback 1H (BTC {bias})", "levels": atr_levels(bias, atr, B6_SL_ATR, B6_TP_ATR),
+    }
+
+
+# =====================================================================
+# استراتژی ۸: SMC Winner (نسخه بک‌تست شده با سود ۱۴.۷۷ دلار)
+# =====================================================================
+def analyze_smc_winner(symbol, ctx):
+    try:
+        df4 = get_data(ctx, symbol, "4h")
+    except Exception:
+        return None
+    if len(df4) < 20:
+        return None
+    
+    curr = df4.iloc[-1]
+    atr = float(curr["atr"])
+    if np.isnan(atr) or atr <= 0:
+        return None
+
+    # پیدا کردن سطوح نقدینگی (سوییپ) در ۱۰ کندل اخیر
+    prev_low = float(df4["low"].iloc[-B8_SWEEP_LOOKBACK-1:-1].min())
+    prev_high = float(df4["high"].iloc[-B8_SWEEP_LOOKBACK-1:-1].max())
+    
+    close = float(curr["close"])
+    low = float(curr["low"])
+    high = float(curr["high"])
+    rsi = float(curr["rsi"]) if not np.isnan(curr["rsi"]) else 50.0
+    
+    direction = None
+    sl_dist = 0
+    tp_dist = 0
+
+    # سوییپ کف و بازگشت -> خرید
+    if low < prev_low and close > prev_low:
+        direction = "LONG"
+        sl_dist = close - (low - atr * 0.2)
+        tp_dist = atr * B8_TP_ATR_MULT
+        
+    # سوییپ سقف و بازگشت -> فروش
+    elif high > prev_high and close < prev_high:
+        direction = "SHORT"
+        sl_dist = (high + atr * 0.2) - close
+        tp_dist = atr * B8_TP_ATR_MULT
+    else:
+        return None
+
+    if sl_dist <= 0 or close <= 0:
+        return None
+        
+    if sl_dist / close < MIN_SL_PCT:
+        return None
+
+    # محاسبه امتیاز ساده برای این ربات
+    score = 0.8 if (direction == "LONG" and rsi < 50) or (direction == "SHORT" and rsi > 50) else 0.6
+
+    def levels(entry):
+        if direction == "LONG":
+            return entry - sl_dist, entry + tp_dist
+        else:
+            return entry + sl_dist, entry - tp_dist
+
+    return {
+        "symbol": symbol, "direction": direction, "close": close,
+        "atr": atr, "rsi": rsi,
+        "volume": float(curr["volume"]), "avg_volume": float(df4["volume"].iloc[-21:-1].mean()),
+        "signal_key": int(curr["timestamp"]), "score": score,
+        "setup": f"SMC Winner ({direction} Sweep)",
+        "levels": levels,
     }
 
 
@@ -1641,6 +1396,11 @@ BOTS = [
     Bot("crypto-signal-bot-v60", "BTC Filter", analyze_btc_aligned,
         "server_messages_v60.json", "last_signals_v60.json",
         cooldown_hours=B6_COOLDOWN_HOURS, btc_filter_4h=False),
+    
+    # --- ربات جدید ۸ (SMC Winner) ---
+    Bot("crypto-signal-bot-v70", "SMC Winner", analyze_smc_winner,
+        "server_messages_v70.json", "last_signals_v70.json",
+        cooldown_hours=B8_COOLDOWN_HOURS, btc_filter_4h=False),
 ]
 LIVE_BOTS = [b for b in BOTS if b.live]
 
@@ -1650,23 +1410,19 @@ LIVE_BOTS = [b for b in BOTS if b.live]
 # =====================================================================
 HEARTBEAT_FILE = "server_messages.json"
 
-
 def send_heartbeat_all(results, btc_4h, btc_1h, warning=None):
     date_gregorian, date_jalali, time_str = get_iran_time()
 
-    # پاکسازی یک‌باره‌ی پیام‌های قدیمی فایل‌های جدا (v10 تا v60)
     for bot in LIVE_BOTS[1:]:
         old = load_json(bot.heartbeat_file, {}).get("message_ids", [])
         if old:
-            for mid in old:
-                delete_telegram(mid)
+            for mid in old: delete_telegram(mid)
             save_json(bot.heartbeat_file, {"message_ids": []})
 
     lines, ok = [], 0
     for bot in LIVE_BOTS:
         r = results.get(bot.name, "ERROR")
-        if r == "ERROR":
-            lines.append(f"❌ {bot.name}")
+        if r == "ERROR": lines.append(f"❌ {bot.name}")
         else:
             ok += 1
             lines.append(f"✅ {bot.name}" + (f"  ({r} سیگنال جدید)" if r else ""))
@@ -1686,10 +1442,8 @@ def send_heartbeat_all(results, btc_4h, btc_1h, warning=None):
     new_id = send_telegram(msg)
     if new_id:
         ids.append(new_id)
-        while len(ids) > MAX_HEARTBEATS:
-            delete_telegram(ids.pop(0))
+        while len(ids) > MAX_HEARTBEATS: delete_telegram(ids.pop(0))
         save_json(HEARTBEAT_FILE, {"message_ids": ids})
-
 
 
 # =====================================================================
@@ -1706,38 +1460,27 @@ def check_trade_result(exchange, symbol, data):
             print(f"⚠️ خطا در دریافت کندل‌های {symbol}: {e}")
             candles = []
         for cd in candles:
-            if cd[0] < opened_ms:
-                continue
+            if cd[0] < opened_ms: continue
             high, low = cd[2], cd[3]
-            if direction == "LONG":
-                hit_sl, hit_tp = low <= sl, high >= tp
-            else:
-                hit_sl, hit_tp = high >= sl, low <= tp
-            if hit_sl:
-                return "SL", sl
-            if hit_tp:
-                return "TP", tp
+            if direction == "LONG": hit_sl, hit_tp = low <= sl, high >= tp
+            else: hit_sl, hit_tp = high >= sl, low <= tp
+            if hit_sl: return "SL", sl
+            if hit_tp: return "TP", tp
 
     price = float(exchange.fetch_ticker(symbol)["last"])
     if direction == "LONG":
-        if price <= sl:
-            return "SL", price
-        if price >= tp:
-            return "TP", price
+        if price <= sl: return "SL", price
+        if price >= tp: return "TP", price
     else:
-        if price >= sl:
-            return "SL", price
-        if price <= tp:
-            return "TP", price
+        if price >= sl: return "SL", price
+        if price <= tp: return "TP", price
     return None, None
 
 
 def trade_r(rec):
-    if rec.get("status") != "CLOSED":
-        return None
+    if rec.get("status") != "CLOSED": return None
     risk = abs(rec["entry"] - rec["sl"])
-    if risk <= 0:
-        return None
+    if risk <= 0: return None
     return abs(rec["tp"] - rec["entry"]) / risk if rec.get("result") == "TP" else -1.0
 
 
@@ -1760,7 +1503,6 @@ def build_close_message(bot, symbol, direction, result, close_price, entry):
 
 
 CLOSE_MSG_MAX_ATTEMPTS = 5
-
 
 def update_open_trades(bot, exchange):
     signals = load_json(bot.signals_file, {})
@@ -1785,7 +1527,6 @@ def update_open_trades(bot, exchange):
                 append_trade_csv(bot.name, data)
                 excel_log.log_result(bot.name, symbol, result, data["closed_ms"])
                 print(f"{'🎯' if result == 'TP' else '🛑'} {symbol} {data['direction']} hit {result} at {close_price}")
-
 
         if (data.get("status") == "CLOSED" and data.get("close_telegram_sent") is False
                 and data.get("close_msg_attempts", 0) < CLOSE_MSG_MAX_ATTEMPTS):
@@ -1869,13 +1610,11 @@ def run_bot(bot, ctx, btc_4h, btc_1h):
             continue
 
     candidates.sort(key=lambda x: x["score"], reverse=True)
-    print(f"📋 {len(candidates)} candidate(s): " +
-          ", ".join(f"{c['symbol']}({c['score']:.2f})" for c in candidates))
+    print(f"📋 {len(candidates)} candidate(s): " + ", ".join(f"{c['symbol']}({c['score']:.2f})" for c in candidates))
 
     sent = 0
     for c in candidates:
-        if sent >= bot.max_signals:
-            break
+        if sent >= bot.max_signals: break
         symbol = c["symbol"]
         try:
             entry = get_price(ctx, symbol)
