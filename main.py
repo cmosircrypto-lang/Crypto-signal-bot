@@ -1121,44 +1121,38 @@ def analyze_smc(symbol, ctx):
 
     sweep = None
 
-    for m in range(
-        n1 - 1,
-        n1 - 1 - B5_SWEEP_RECENT,
-        -1
-    ):
+    if direction == "LONG":
 
-        win = slice(
-            m - B5_LOOKBACK_1H,
-            m
-        )
+    level = float(
+        lo1[win].min()
+    )
 
-        if direction == "LONG":
+    if lo1[m] < level and cl1[m] > level:
 
-            level = float(
-                lo1[win].min()
-            )
+        sweep = {
+            "ts": int(ts1[m]),
+            "extreme": float(lo1[m]),
+            "level": level
+        }
 
-            if lo1[m] < level < cl1sweep = {
-                    "ts": int(ts1[m]),
-                    "extreme": float(lo1[m]),
-                    "level": level
-                }
+        break
 
-                break
+else:
 
-        else:
+    level = float(
+        hi1[win].max()
+    )
 
-            level = float(
-                hi1[win].max()
-            )
+    if cl1[m] < level and hi1[m] > level:
 
-            if cl1[m] < level < hi1sweep = {
-                    "ts": int(ts1[m]),
-                    "extreme": float(hi1[m]),
-                    "level": level
-                }
+        sweep = {
+            "ts": int(ts1[m]),
+            "extreme": float(hi1[m]),
+            "level": level
+        }
 
-                break
+        break
+
 
     if sweep is None:
         return None
