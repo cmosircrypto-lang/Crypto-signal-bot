@@ -1,0 +1,37 @@
+name: Manual Trade Recovery
+
+on:
+  workflow_dispatch: # این خط به شما اجازه می‌دهد دکمه اجرای دستی داشته باشید
+
+jobs:
+  recover:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install ccxt pandas numpy openpyxl jdatetime
+
+      - name: Run Recovery Script
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          CHAT_ID: ${{ secrets.CHAT_ID }}
+          TOOBIT_API_KEY: ${{ secrets.TOOBIT_API_KEY }}
+          TOOBIT_SECRET: ${{ secrets.TOOBIT_SECRET }}
+        run: python recover_trades.py
+
+      - name: Commit and Push changes
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add last_signals*.json *.csv
+          git commit -m "Auto-recover trades [skip ci]" || echo "No changes to commit"
+          git push
