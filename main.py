@@ -1075,7 +1075,6 @@ def analyze_regime(symbol, ctx):
 # =====================================================================
 # استراتژی ۵: SMC/ICT
 # =====================================================================
-
 def analyze_smc(symbol, ctx):
 
     df4 = get_data(ctx, symbol, "4h")
@@ -1121,39 +1120,44 @@ def analyze_smc(symbol, ctx):
 
     sweep = None
 
-    if direction == "LONG":
+    for m in range(
+        n1 - 1,
+        n1 - 1 - B5_SWEEP_RECENT,
+        -1
+    ):
 
-    level = float(
-        lo1[win].min()
-    )
+        win = slice(
+            m - B5_LOOKBACK_1H,
+            m
+        )
 
-    if lo1[m] < level and cl1[m] > level:
+        if direction == "LONG":
 
-        sweep = {
-            "ts": int(ts1[m]),
-            "extreme": float(lo1[m]),
-            "level": level
-        }
+            level = float(
+                lo1[win].min()
+            )
 
-        break
+            if lo1[m] < level < cl1sweep = {
+                    "ts": int(ts1[m]),
+                    "extreme": float(lo1[m]),
+                    "level": level
+                }
 
-else:
+                break
 
-    level = float(
-        hi1[win].max()
-    )
+        else:
 
-    if cl1[m] < level and hi1[m] > level:
+            level = float(
+                hi1[win].max()
+            )
 
-        sweep = {
-            "ts": int(ts1[m]),
-            "extreme": float(hi1[m]),
-            "level": level
-        }
+            if cl1[m] < level < hi1sweep = {
+                    "ts": int(ts1[m]),
+                    "extreme": float(hi1[m]),
+                    "level": level
+                }
 
-        break
-
-
+                break
 
     if sweep is None:
         return None
@@ -1449,6 +1453,11 @@ else:
         "setup": "SMC PRO (Sweep+BOS+FVG)",
         "levels": levels,
     }
+
+
+    
+        
+  
 
 
 # =====================================================================
