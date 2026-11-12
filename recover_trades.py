@@ -1,7 +1,6 @@
 import json
 import os
 import time
-import pandas as pd
 import ccxt
 from datetime import datetime, timezone
 import excel_log
@@ -28,6 +27,9 @@ BOT_NAMES = {
     "last_signals_v70.json": "crypto-signal-bot-v70",
 }
 
+# محدوده زمانی بررسی به میلی‌ثانیه (پیش‌فرض: ۲۴ ساعت)
+CHECK_LAST_MS = 24 * 60 * 60 * 1000
+
 def now_ms():
     return int(time.time() * 1000)
 
@@ -49,6 +51,11 @@ def check_trade_result(exchange, symbol, data):
     opened_ms = data.get("opened_ms")
 
     if not opened_ms:
+        return None, None
+
+    # بررسی اینکه معامله در بازه زمانی مشخص شده (۲۴ ساعت) باز شده باشد
+    time_limit = now_ms() - CHECK_LAST_MS
+    if opened_ms < time_limit:
         return None, None
 
     try:
@@ -73,7 +80,7 @@ def check_trade_result(exchange, symbol, data):
     return None, None
 
 def main():
-    print("🚀 شروع فرایند بازیابی معاملات گم‌شده...")
+    print("🚀 شروع فرایند بازیابی معاملات گم‌شده (بررسی ۲۴ ساعت گذشته)...")
     exchange = ccxt.toobit({'enableRateLimit': True})
     
     total_recovered = 0
@@ -90,6 +97,13 @@ def main():
         
         for symbol, data in list(signals.items()):
             if data.get("status") == "OPEN":
+                opened_ms = data.get("opened_ms", 0)
+                
+                # فیلتر زمانی: فقط معاملاتی که در ۲۴ ساعت گذشته باز شده‌اند
+                if opened_ms < (now_ms() - CHECK_LAST_MS):
+                    print(f"  ⏭️  {symbol}: قدیمی‌تر از ۲۴ ساعت (نادیده گرفته شد).")
+                    continue
+                    
                 print(f"  ⏳ بررسی معامله باز: {symbol} {data['direction']} | Entry: {data['entry']}")
                 
                 result, close_price = check_trade_result(exchange, symbol, data)
@@ -115,7 +129,7 @@ def main():
             save_json(filename, signals)
             print(f"💾 فایل {filename} به‌روزرسانی شد.")
             
-    print(f"\n🎉 پایان! تعداد {total_recovered} معامله گم‌شده بازیابی و در اکسل ثبت شد.")
+    print(f"\n🎉 پایان! تعداد {total_recovered} معامله گم‌شده در ۲۴ ساعت گذشته بازیابی و در اکسل ثبت شد.")
 
 if __name__ == "__main__":
     main()
