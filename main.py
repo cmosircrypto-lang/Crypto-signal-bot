@@ -1075,41 +1075,29 @@ def analyze_regime(symbol, ctx):
 # =====================================================================
 # استراتژی ۵: SMC/ICT
 # =====================================================================
+# =====================================================================
+# استراتژی ۵: SMC/ICT
+# =====================================================================
 def analyze_smc(symbol, ctx):
-
     df4 = get_data(ctx, symbol, "4h")
-
     l4 = df4.iloc[-1]
-
     direction = trend_of(df4)
-
     atr4 = float(l4["atr"])
-
-    if (
-        direction not in ("LONG", "SHORT")
-        or np.isnan(atr4)
-        or atr4 <= 0
-    ):
+    
+    if direction not in ("LONG", "SHORT") or np.isnan(atr4) or atr4 <= 0:
         return None
-
-    trend_gap = abs(
-        float(l4["ema9"])
-        -
-        float(l4["ema21"])
-    )
-
+        
+    trend_gap = abs(float(l4["ema9"]) - float(l4["ema21"]))
     if trend_gap < B5_TREND_GAP_4H_ATR * atr4:
         return None
 
     df1 = get_data(ctx, symbol, "1h")
-
     n1 = len(df1)
-
+    
     if n1 < B5_RANGE_BARS + B5_LOOKBACK_1H + 5:
         return None
-
+        
     atr1 = float(df1["atr"].iloc[-1])
-
     if np.isnan(atr1) or atr1 <= 0:
         return None
 
@@ -1119,44 +1107,26 @@ def analyze_smc(symbol, ctx):
     ts1 = df1["timestamp"].values
 
     sweep = None
-
-    for m in range(
-        n1 - 1,
-        n1 - 1 - B5_SWEEP_RECENT,
-        -1
-    ):
-
-        win = slice(
-            m - B5_LOOKBACK_1H,
-            m
-        )
-
+    for m in range(n1 - 1, n1 - 1 - B5_SWEEP_RECENT, -1):
+        win = slice(m - B5_LOOKBACK_1H, m)
+        
         if direction == "LONG":
-
-            level = float(
-                lo1[win].min()
-            )
-
-            if lo1[m] < level < cl1sweep = {
+            level = float(lo1[win].min())
+            if lo1[m] < level < cl1[m]:  # <--- اینجا اصلاح شد
+                sweep = {
                     "ts": int(ts1[m]),
                     "extreme": float(lo1[m]),
                     "level": level
                 }
-
                 break
-
         else:
-
-            level = float(
-                hi1[win].max()
-            )
-
-            if cl1[m] < level < hi1sweep = {
+            level = float(hi1[win].max())
+            if cl1[m] < level < hi1[m]:  # <--- اینجا اصلاح شد
+                sweep = {
                     "ts": int(ts1[m]),
                     "extreme": float(hi1[m]),
                     "level": level
                 }
-
                 break
 
     if sweep is None:
@@ -1164,282 +1134,132 @@ def analyze_smc(symbol, ctx):
 
     # BOS FILTER
     bos_ok = False
-
     if direction == "LONG":
-
-        recent_high = float(
-            df1["high"].iloc[-10:-1].max()
-        )
-
+        recent_high = float(df1["high"].iloc[-10:-1].max())
         if float(df1["close"].iloc[-1]) > recent_high:
             bos_ok = True
-
     else:
-
-        recent_low = float(
-            df1["low"].iloc[-10:-1].min()
-        )
-
+        recent_low = float(df1["low"].iloc[-10:-1].min())
         if float(df1["close"].iloc[-1]) < recent_low:
             bos_ok = True
 
     if not bos_ok:
-
-        print(
-            f"  {symbol}: BOS missing"
-        )
-
+        print(f"  {symbol}: BOS missing")
         return None
 
-    rng = slice(
-        n1 - B5_RANGE_BARS,
-        n1
-    )
-
-    rng_hi = float(
-        hi1[rng].max()
-    )
-
-    rng_lo = float(
-        lo1[rng].min()
-    )
-
+    rng = slice(n1 - B5_RANGE_BARS, n1)
+    rng_hi = float(hi1[rng].max())
+    rng_lo = float(lo1[rng].min())
     eq = (rng_hi + rng_lo) / 2
 
-    df15 = get_data(
-        ctx,
-        symbol,
-        "15m"
-    )
-
+    df15 = get_data(ctx, symbol, "15m")
     h = df15["high"].values
     l = df15["low"].values
     o = df15["open"].values
     c = df15["close"].values
     v = df15["volume"].values
     ts15 = df15["timestamp"].values
-
+    
     last = len(df15) - 1
-
     price = float(c[last])
-
-    if (
-        direction == "LONG"
-        and price > eq
-    ):
+    
+    if (direction == "LONG" and price > eq):
         return None
-
-    if (
-        direction == "SHORT"
-        and price < eq
-    ):
+    if (direction == "SHORT" and price < eq):
         return None
 
     fvg = None
     fvg_size = 0
-
-    for i in range(
-        last - 1,
-        max(2, last - B5_FVG_RECENT) - 1,
-        -1
-    ):
-
+    
+    for i in range(last - 1, max(2, last - B5_FVG_RECENT) - 1, -1):
         if ts15[i - 1] < sweep["ts"]:
             break
-
-        if (
-            direction == "LONG"
-            and h[i - 2] < l[i]
-        ):
-
+            
+        if direction == "LONG" and h[i - 2] < l[i]:
             bottom = float(h[i - 2])
             top = float(l[i])
-
             if (c[i + 1:last] < bottom).any():
                 continue
-
-            if (
-                l[last] <= top
-                and c[last] > o[last]
-            ):
-
+            if (l[last] <= top and c[last] > o[last]):
                 fvg_size = abs(top - bottom)
-
-                if fvg_size < (
-                    B5_MIN_FVG_ATR * atr1
-                ):
+                if fvg_size < (B5_MIN_FVG_ATR * atr1):
                     continue
-
-                fvg = {
-                    "ts": int(ts15[i])
-                }
-
+                fvg = {"ts": int(ts15[i])}
                 break
-
-        if (
-            direction == "SHORT"
-            and l[i - 2] > h[i]
-        ):
-
+                
+        if direction == "SHORT" and l[i - 2] > h[i]:
             bottom = float(h[i])
             top = float(l[i - 2])
-
             if (c[i + 1:last] > top).any():
                 continue
-
-            if (
-                h[last] >= bottom
-                and c[last] < o[last]
-            ):
-
+            if (h[last] >= bottom and c[last] < o[last]):
                 fvg_size = abs(top - bottom)
-
-                if fvg_size < (
-                    B5_MIN_FVG_ATR * atr1
-                ):
+                if fvg_size < (B5_MIN_FVG_ATR * atr1):
                     continue
-
-                fvg = {
-                    "ts": int(ts15[i])
-                }
-
+                fvg = {"ts": int(ts15[i])}
                 break
 
     if fvg is None:
-
-        print(
-            f"  {symbol}: no quality FVG"
-        )
-
+        print(f"  {symbol}: no quality FVG")
         return None
 
     vol = float(v[last])
-
-    avg_vol = float(
-        df15["volume"]
-        .iloc[-21:-1]
-        .mean()
-    )
-
-    vol_ratio = ratio(
-        vol,
-        avg_vol
-    )
-
+    avg_vol = float(df15["volume"].iloc[-21:-1].mean())
+    vol_ratio = ratio(vol, avg_vol)
+    
     if vol_ratio < B5_MIN_VOLUME_RATIO:
-
-        print(
-            f"  {symbol}: weak volume"
-        )
-
+        print(f"  {symbol}: weak volume")
         return None
 
     if direction == "LONG":
-
-        sl = (
-            sweep["extreme"]
-            -
-            B5_SL_BUFFER_ATR * atr1
-        )
-
+        sl = sweep["extreme"] - B5_SL_BUFFER_ATR * atr1
         tp = rng_hi
-
     else:
-
-        sl = (
-            sweep["extreme"]
-            +
-            B5_SL_BUFFER_ATR * atr1
-        )
-
+        sl = sweep["extreme"] + B5_SL_BUFFER_ATR * atr1
         tp = rng_lo
 
     def levels(entry):
-
         if direction == "LONG":
-
-            if not (sl < entry < tp):
-                return None
-
+            if not (sl < entry < tp): return None
             risk = entry - sl
             reward = tp - entry
-
         else:
-
-            if not (tp < entry < sl):
-                return None
-
+            if not (tp < entry < sl): return None
             risk = sl - entry
             reward = entry - tp
-
-        if risk <= 0:
-            return None
-
-        if risk > (
-            B5_MAX_RISK_ATR * atr1
-        ):
-            return None
-
-        if reward / risk < B5_MIN_RR:
-            return None
-
+            
+        if risk <= 0: return None
+        if risk > (B5_MAX_RISK_ATR * atr1): return None
+        if reward / risk < B5_MIN_RR: return None
         return sl, tp
 
     if levels(price) is None:
         return None
-
-    risk = abs(
-        price - sl
-    )
-
+        
+    risk = abs(price - sl)
     if risk / price < MIN_SL_PCT:
         return None
-
-    rr = abs(
-        tp - price
-    ) / risk
-
-    depth = abs(
-        sweep["level"]
-        -
-        sweep["extreme"]
-    ) / atr1
-
+        
+    rr = abs(tp - price) / risk
+    depth = abs(sweep["level"] - sweep["extreme"]) / atr1
+    
     score = (
-        0.30 * min(depth / 0.60, 1.0)
-        +
-        0.25 * min(vol_ratio / 2.0, 1.0)
-        +
-        0.25 * min(rr / 3.0, 1.0)
-        +
+        0.30 * min(depth / 0.60, 1.0) +
+        0.25 * min(vol_ratio / 2.0, 1.0) +
+        0.25 * min(rr / 3.0, 1.0) +
         0.20 * min(fvg_size / atr1, 1.0)
     )
-
+    
     if score < B5_MIN_SCORE:
-
-        print(
-            f"  {symbol}: score too low "
-            f"({score:.3f})"
-        )
-
+        print(f"  {symbol}: score too low ({score:.3f})")
         return None
-
-    rsi = float(
-        df15["rsi"].iloc[-1]
-    )
-
+        
+    rsi = float(df15["rsi"].iloc[-1])
     if np.isnan(rsi):
         rsi = 50.0
-
-    print(
-        f"  {symbol}: "
-        f"SMC {direction}"
-        f" | BOS"
-        f" | FVG"
-        f" | RR={rr:.2f}"
-        f" | score={score:.3f}"
-    )
-
+        
+    print(f"  {symbol}: SMC {direction} | BOS | FVG | RR={rr:.2f} | score={score:.3f}")
+    
     return {
         "symbol": symbol,
         "direction": direction,
@@ -1453,9 +1273,12 @@ def analyze_smc(symbol, ctx):
         "setup": "SMC PRO (Sweep+BOS+FVG)",
         "levels": levels,
     }
-
-
     
+    
+        
+        
+        
+            
         
   
 
