@@ -92,8 +92,8 @@ B1_VOLUME_MULT = 1.5
 B1_SL_ATR = 1.6
 B1_TP_ATR = 3.4
 B1_MIN_SCORE = 0.70
-B1_MIN_ADX_4H = 20
-B1_MIN_ADX_1H = 18
+B1_MIN_ADX_4H = 18
+B1_MIN_ADX_1H = 16
 B1_MIN_SLOPE_ATR = 0.08
 
 # --- ربات ۲: Breakout (کیفیت بالاتر) ---
@@ -470,7 +470,7 @@ def analyze_cross(symbol, ctx):
     ema50_4h = float(last4["ema50"])
 
     gap_4h = abs(ema9_4h - ema21_4h)
-    if gap_4h < 0.40 * atr_4h:
+    if gap_4h < 0.35 * atr_4h:
         print(f"  {symbol}: weak 4H trend")
         return None
 
@@ -513,7 +513,7 @@ def analyze_cross(symbol, ctx):
         return None
 
     gap_1h = abs(float(last_1h["ema9"]) - float(last_1h["ema21"]))
-    if gap_1h < 0.45 * atr_1h:
+    if gap_1h < 0.40 * atr_1h:
         print(f"  {symbol}: weak 1H trend")
         return None
 
