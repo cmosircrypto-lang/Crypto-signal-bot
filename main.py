@@ -112,7 +112,7 @@ B2_MIN_ADX = 18
 # --- ربات ۳: MTF Pullback ---
 B3_RSI_LONG = (31, 45)
 B3_RSI_SHORT = (55, 69)
-B3_NEAR_PCT = 0.010
+B3_NEAR_PCT = 0.015
 B3_BODY_MIN = 0.42
 B3_ATR_MULT = 0.85
 B3_RR = 2.1
