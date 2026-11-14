@@ -1,0 +1,103 @@
+name: Daily Bot Report
+
+on:
+  workflow_dispatch:   # ← فقط دستی یا از cron-job.org
+
+concurrency:
+  group: daily-report
+  cancel-in-progress: true
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout main (scripts)
+        uses: actions/checkout@v4
+        with:
+          path: repo
+          ref: main
+          fetch-depth: 1
+
+      - name: Checkout state branch (data)
+        uses: actions/checkout@v4
+        with:
+          path: state
+          ref: state
+          fetch-depth: 1
+        continue-on-error: true
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+          cache: 'pip'
+          cache-dependency-path: repo/requirements.txt
+
+      - name: Install dependencies
+        working-directory: repo
+        run: pip install -r requirements.txt
+
+      - name: Copy trade CSVs from state
+        run: |
+          if [ -d "state" ]; then
+            cp state/trades_bot*.csv repo/ 2>/dev/null || true
+            echo "✅ Trade CSVs copied"
+          else
+            echo "⚠️ No state branch"
+          fi
+
+      - name: Run compare_bots
+        working-directory: repo
+        run: |
+          python compare_bots.py --min-trades 20 --export ranking.csv --show-all
+
+      - name: Upload ranking artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ranking-${{ github.run_id }}
+          path: repo/ranking.csv
+          retention-days: 90
+
+      - name: Send report to Telegram
+        if: always()
+        working-directory: repo
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          CHAT_ID: ${{ secrets.CHAT_ID }}
+        run: |
+          python << 'EOF'
+          import os, requests, sys
+          try:
+              import pandas as pd
+          except ImportError:
+              print("⚠️ pandas missing")
+              sys.exit(0)
+          
+          if not os.path.exists('ranking.csv'):
+              print('⚠️ No ranking.csv')
+              sys.exit(0)
+          
+          df = pd.read_csv('ranking.csv')
+          if df.empty:
+              print('⚠️ Empty ranking')
+              sys.exit(0)
+          
+          lines = ['📊 گزارش روزانه ربات‌ها', '━━━━━━━━━━━━━━━━━']
+          for _, r in df.head(10).iterrows():
+              emoji = '🟢' if r.get('total_r', 0) > 0 else '🔴'
+              n = int(r.get('trades', 0))
+              wr = r.get('win_rate', 0)
+              tr = r.get('total_r', 0)
+              pf = r.get('profit_factor', 0)
+              lines.append(f"{emoji} {r['label']}: n={n}, WR={wr}%, R={tr:+.1f}, PF={pf:.2f}")
+          lines.append('━━━━━━━━━━━━━━━━━')
+          msg = '\n'.join(lines)
+          
+          url = f"https://api.telegram.org/bot{os.environ['TELEGRAM_TOKEN']}/sendMessage"
+          r = requests.post(url, json={'chat_id': os.environ['CHAT_ID'], 'text': msg}, timeout=20)
+          print(f'✅ Telegram: {r.status_code}')
+          EOF
