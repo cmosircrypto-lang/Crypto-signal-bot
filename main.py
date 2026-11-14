@@ -1,14 +1,18 @@
 """
-ربات‌های سیگنال با تمرکز روی کیفیت بالا (Win Rate) — نسخه اصلاح‌شده
-  اصلاحات:
-    1) check_trade_result: تصمیم درست در لمس همزمان SL/TP
-    2) B30_ACTIVE_START_H = 8 (رفع تناقض پنجره زمانی)
-    3) _asia_range_1h بدون وابستگی به datetime.now()
-    4) Ctx.ref_time_ms برای پشتیبانی از backtest
-    5) get_price در backtest از close کندل استفاده می‌کند
-    6) analyze_amd_session از ctx.now_utc_hour()
-    7) پارامترهای v70 شل شدند + meta اضافه شد
-    8) run_bot: opened_ms در backtest از timestamp کندل
+ربات‌های سیگنال با تمرکز روی کیفیت بالا (Win Rate) — نسخه اصلاح‌شده v2
+  اصلاحات این نسخه:
+    1) B30_ACTIVE_END_H = 22 (پنجره فعال v30 بازتر)
+    2) get_btc_filter با لاگ کامل و دلیل دقیق block
+    3) __main__ با لاگ BTC 1D
+  اصلاحات نسخه قبل (حفظ شده):
+    - check_trade_result درست در لمس همزمان SL/TP
+    - B30_ACTIVE_START_H = 8 (رفع تناقض)
+    - _asia_range_1h بدون وابستگی به now()
+    - Ctx.ref_time_ms برای backtest
+    - get_price در backtest از close کندل
+    - analyze_amd_session از ctx.now_utc_hour()
+    - پارامترهای v70 شل‌شده + meta
+    - run_bot: opened_ms در backtest از timestamp کندل
 """
 import os
 import json
@@ -118,8 +122,8 @@ B3_MIN_SCORE = 0.55
 # --- ربات v30: AMD (اصلاح‌شده) ---
 B30_ASIA_START_H = 0
 B30_ASIA_END_H = 8
-B30_ACTIVE_START_H = 8      # ← اصلاح شد (بود: 7)
-B30_ACTIVE_END_H = 20
+B30_ACTIVE_START_H = 8
+B30_ACTIVE_END_H = 22      # ← تغییر (بود: 20)
 B30_SWEEP_MAX_AGE_1H = 4
 B30_FVG_RECENT = 8
 B30_SL_BUFFER_ATR = 0.15
@@ -182,15 +186,15 @@ B8_SWEEP_LOOKBACK = 10
 B8_TP_ATR_MULT = 2.0
 B8_COOLDOWN_HOURS = 4
 B8_SL_BUFFER_ATR = 0.2
-B8_MIN_SL_ATR = 0.6        # ← اصلاح (بود: 1.0)
-B8_MAX_SL_ATR = 3.0        # ← اصلاح (بود: 1.6)
-B8_MAX_SL_PCT = 0.07       # ← اصلاح (بود: 0.04)
-B8_MIN_RR = 1.2            # ← اصلاح (بود: 1.3)
-B8_MIN_VOL_RATIO = 0.9     # ← اصلاح (بود: 1.0)
-B8_RSI_MAX_LONG = 72       # ← اصلاح (بود: 70)
-B8_RSI_MIN_SHORT = 28      # ← اصلاح (بود: 30)
-B8_MIN_SCORE = 0.35        # ← اصلاح (بود: 0.45)
-B8_MAX_SIGNALS_PER_RUN = 3 # ← اصلاح (بود: 2)
+B8_MIN_SL_ATR = 0.6        # ← (بود: 1.0)
+B8_MAX_SL_ATR = 3.0        # ← (بود: 1.6)
+B8_MAX_SL_PCT = 0.07       # ← (بود: 0.04)
+B8_MIN_RR = 1.2            # ← (بود: 1.3)
+B8_MIN_VOL_RATIO = 0.9     # ← (بود: 1.0)
+B8_RSI_MAX_LONG = 72       # ← (بود: 70)
+B8_RSI_MIN_SHORT = 28      # ← (بود: 30)
+B8_MIN_SCORE = 0.35        # ← (بود: 0.45)
+B8_MAX_SIGNALS_PER_RUN = 3 # ← (بود: 2)
 
 
 # =====================================================================
@@ -451,11 +455,9 @@ def get_data(ctx, symbol, timeframe):
 
 
 def get_price(ctx, symbol):
-    # در بک‌تست: close آخرین کندل ۱ ساعته
     if ctx.ref_time_ms is not None:
         df = get_data(ctx, symbol, "1h")
         return float(df["close"].iloc[-1])
-    # در live: ticker
     if symbol not in ctx.tickers:
         ctx.tickers[symbol] = float(ctx.exchange.fetch_ticker(symbol)["last"])
     return ctx.tickers[symbol]
@@ -861,10 +863,6 @@ def _in_active_session(ctx):
 
 
 def _asia_range_1h(df1):
-    """
-    range آخرین سشن آسیای کامل‌شده (UTC 0-8).
-    اصلاح: بدون وابستگی به now() — همیشه آخرین سشن کامل را برمی‌گرداند.
-    """
     highs, lows, ts = [], [], []
     for i in range(len(df1)):
         h = _utc_hour(int(df1["timestamp"].iloc[i]))
@@ -1324,10 +1322,13 @@ def get_btc_filter(ctx):
         return None
 
     t_1d, t_4h, t_1h = trend_of(df_1d), trend_of(df_4h), trend_of(df_1h)
+    print(f"🌍 BTC filter check: 1D={t_1d} | 4H={t_4h} | 1H={t_1h}")
 
     if t_1d not in ("LONG", "SHORT") or t_4h not in ("LONG", "SHORT"):
+        print(f"🌍 BTC filter BLOCKED: trend unclear (1D={t_1d}, 4H={t_4h})")
         return None
     if t_1d != t_4h:
+        print(f"🌍 BTC filter BLOCKED: 1D/4H conflict (1D={t_1d}, 4H={t_4h})")
         return None
 
     bias = t_1d
@@ -1336,19 +1337,25 @@ def get_btc_filter(ctx):
     ema9, ema21 = float(last["ema9"]), float(last["ema21"])
     adx = float(last["adx"]) if not np.isnan(last["adx"]) else 0.0
 
-    if np.isnan(atr) or atr <= 0: return None
+    if np.isnan(atr) or atr <= 0:
+        print(f"🌍 BTC filter BLOCKED: bad ATR ({atr})")
+        return None
 
     gap = abs(ema9 - ema21)
     gap_atr = gap / atr
     strength_ok = (gap_atr >= B6_MIN_GAP_ATR) or (adx >= B6_MIN_ADX)
     if not strength_ok:
+        print(f"🌍 BTC filter BLOCKED: weak trend (gap={gap_atr:.2f} ATR, ADX={adx:.1f})")
         return None
 
     ext_atr = abs(close - ema21) / atr
     if ext_atr > B6_MAX_EXT_ATR:
+        print(f"🌍 BTC filter BLOCKED: overextended ({ext_atr:.2f} ATR from EMA21)")
         return None
 
     align_1h = t_1h == bias
+    print(f"🌍 BTC filter PASSED | bias={bias} | gap={gap_atr:.2f} ADX={adx:.1f} ext={ext_atr:.2f} | 1H_align={align_1h}")
+
     return {"bias": bias, "t_1d": t_1d, "t_4h": t_4h, "t_1h": t_1h, "align_1h": align_1h,
             "gap_atr": gap_atr, "adx": adx, "ext_atr": ext_atr}
 
@@ -1492,7 +1499,6 @@ def analyze_smc_winner(symbol, ctx):
             return entry - sl_dist, entry + tp_dist
         return entry + sl_dist, entry - tp_dist
 
-    # meta برای لاگ (اصلاح شد)
     sweep_depth = abs(prev_low - low) if direction == "LONG" else abs(high - prev_high)
     meta = {
         "fvg_size_atr": "",
@@ -1612,9 +1618,6 @@ def send_heartbeat_all(results, btc_4h, btc_1h, warning=None):
 # مدیریت معاملات
 # =====================================================================
 def check_trade_result(exchange, symbol, data):
-    """
-    اصلاح‌شده: تصمیم درست در لمس همزمان SL/TP.
-    """
     direction, tp, sl = data["direction"], data["tp"], data["sl"]
     opened_ms = data.get("opened_ms")
 
@@ -1636,7 +1639,6 @@ def check_trade_result(exchange, symbol, data):
                 hit_sl, hit_tp = high >= sl, low <= tp
 
             if hit_sl and hit_tp:
-                # هر دو در یک کندل: بر اساس close تصمیم بگیر
                 dist_tp = abs(close - tp)
                 dist_sl = abs(close - sl)
                 if dist_tp < dist_sl:
@@ -1648,7 +1650,6 @@ def check_trade_result(exchange, symbol, data):
             if hit_tp:
                 return "TP", tp
 
-    # fallback
     price = float(exchange.fetch_ticker(symbol)["last"])
     if direction == "LONG":
         if price <= sl: return "SL", price
@@ -1817,7 +1818,6 @@ def run_bot(bot, ctx, btc_4h, btc_1h):
 
             msg_id = send_telegram(build_signal_message(bot, c, entry, sl, tp, rr))
 
-            # اصلاح: در backtest از timestamp کندل استفاده کن
             opened_ts = ctx.ref_time_ms if ctx.ref_time_ms is not None else now_ms()
 
             record = {
@@ -1901,7 +1901,13 @@ if __name__ == "__main__":
     ctx = Ctx(exchange)
 
     btc_4h, btc_1h = get_btc_trend(ctx)
-    print(f"🌍 BTC 4H Trend: {btc_4h} | BTC 1H Trend: {btc_1h}")
+    # ← اصلاح: چاپ 1D هم برای دیباگ
+    try:
+        btc_1d_df = get_data(ctx, BTC_SYMBOL, "1d")
+        btc_1d = trend_of(btc_1d_df)
+    except Exception:
+        btc_1d = "UNKNOWN"
+    print(f"🌍 BTC Trend: 1D={btc_1d} | 4H={btc_4h} | 1H={btc_1h}")
     warning = "دریافت داده‌ی BTC ناموفق بود" if btc_4h == "UNKNOWN" else None
 
     ctx.btc_filter = get_btc_filter(ctx)
