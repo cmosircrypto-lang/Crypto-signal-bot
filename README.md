@@ -1,1 +1,1 @@
-# Crypto-signal-bot
+.Bot State Data
