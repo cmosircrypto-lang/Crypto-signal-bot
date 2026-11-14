@@ -71,6 +71,7 @@ SYMBOLS = [
 BTC_SYMBOL = "BTC-SWAP-USDT"
 MAX_HEARTBEATS = 2
 MAX_SIGNALS_PER_RUN = 5
+MAX_OPEN_SAME_DIR = 3      # سقف معاملات باز هم‌جهت برای هر ربات
 SUMMARY_FILE = "daily_summary.json"
 SUMMARY_HOUR = 8
 
@@ -300,7 +301,26 @@ def append_trade_csv(bot_name, record):
     fname = f"trades_{bot_name.replace('crypto-signal-bot', 'bot')}.csv"
     file_exists = os.path.exists(fname)
     fields = ["bot", "symbol", "direction", "entry", "sl", "tp", "exit",
-              "result", "pnl_r", "setup", "score", "opened_ms", "closed_ms"]
+              "result", "pnl_r", "setup", "score",
+              "rsi", "vol_ratio", "atr_pct", "risk_pct", "rr", "drift_atr",
+              "btc_4h", "btc_1h", "open_same_dir", "hold_hours",
+              "opened_ms", "closed_ms"]
+    # اگر فایل قدیمی هدر متفاوت دارد، کنار گذاشته شود تا ستون‌ها جابه‌جا نشوند
+    if file_exists:
+        try:
+            with open(fname, "r", encoding="utf-8") as f:
+                old_header = f.readline().strip().split(",")
+            if old_header != fields:
+                os.replace(fname, fname + ".old")
+                file_exists = False
+        except Exception as e:
+            print(f"⚠️ CSV header check error: {e}")
+    hold_hours = ""
+    try:
+        if record.get("opened_ms") and record.get("closed_ms"):
+            hold_hours = round((record["closed_ms"] - record["opened_ms"]) / 3600000, 2)
+    except Exception:
+        pass
     risk = abs(float(record.get("entry", 0) or 0) - float(record.get("sl", 0) or 0))
     pnl_r = ""
     if risk > 0 and record.get("result") in ("TP", "SL"):
@@ -320,6 +340,16 @@ def append_trade_csv(bot_name, record):
         "pnl_r": pnl_r,
         "setup": record.get("setup", ""),
         "score": record.get("score", ""),
+        "rsi": record.get("rsi", ""),
+        "vol_ratio": record.get("vol_ratio", ""),
+        "atr_pct": record.get("atr_pct", ""),
+        "risk_pct": record.get("risk_pct", ""),
+        "rr": record.get("rr", ""),
+        "drift_atr": record.get("drift_atr", ""),
+        "btc_4h": record.get("btc_4h", ""),
+        "btc_1h": record.get("btc_1h", ""),
+        "open_same_dir": record.get("open_same_dir", ""),
+        "hold_hours": hold_hours,
         "opened_ms": record.get("opened_ms", ""),
         "closed_ms": record.get("closed_ms", ""),
     }
@@ -1797,10 +1827,15 @@ def run_bot(bot, ctx, btc_4h, btc_1h):
     print(f"📋 {len(candidates)} candidate(s): " + ", ".join(f"{c['symbol']}({c['score']:.2f})" for c in candidates))
 
     sent = 0
+    open_dir = Counter(r.get("direction") for r in signals.values() if r.get("status") == "OPEN")
     for c in candidates:
         if sent >= bot.max_signals: break
         symbol = c["symbol"]
         try:
+            if open_dir[c["direction"]] >= MAX_OPEN_SAME_DIR:
+                print(f"🧱 {symbol} {c['direction']}: سقف {MAX_OPEN_SAME_DIR} معامله‌ی باز هم‌جهت پر است. Skipping.")
+                funnel_count("~cap_same_direction")
+                continue
             entry = get_price(ctx, symbol)
             if abs(entry - c["close"]) > c["atr"] * MAX_ENTRY_DRIFT_ATR:
                 print(f"⌛ {symbol}: price drifted too far from signal candle. Skipping.")
@@ -1825,6 +1860,14 @@ def run_bot(bot, ctx, btc_4h, btc_1h):
                 "direction": c["direction"], "entry": entry, "tp": tp, "sl": sl,
                 "signal_key": c["signal_key"], "setup": c["setup"],
                 "score": round(c["score"], 4),
+                "rsi": round(c["rsi"], 2),
+                "vol_ratio": round(ratio(c["volume"], c["avg_volume"]), 2),
+                "atr_pct": round(c["atr"] / entry * 100, 3),
+                "risk_pct": round(abs(entry - sl) / entry * 100, 3),
+                "rr": round(rr, 2),
+                "drift_atr": round(abs(entry - c["close"]) / c["atr"], 3),
+                "btc_4h": btc_4h, "btc_1h": btc_1h,
+                "open_same_dir": open_dir[c["direction"]],
                 "time": datetime.now(timezone.utc).isoformat(),
                 "telegram_sent": bool(msg_id), "telegram_message_id": msg_id,
             }
@@ -1832,6 +1875,7 @@ def run_bot(bot, ctx, btc_4h, btc_1h):
                 record["status"] = "OPEN"
                 record["opened_ms"] = now_ms()
                 sent += 1
+                open_dir[c["direction"]] += 1
                 funnel_count("SENT_signal")
                 excel_log.log_signal(bot.name, symbol, c["direction"], entry, tp, sl)
                 print(f"✅ {c['direction']} signal for {symbol} sent! ({sent}/{bot.max_signals})")
