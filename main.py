@@ -185,8 +185,18 @@ B6_COOLDOWN_HOURS = 3
 
 # --- ربات ۸: SMC Winner (نسخه برنده بک‌تست) ---
 B8_SWEEP_LOOKBACK = 10
-B8_TP_ATR_MULT = 2.5
+B8_TP_ATR_MULT = 2.0
 B8_COOLDOWN_HOURS = 4
+B8_SL_BUFFER_ATR = 0.2
+B8_MIN_SL_ATR = 1.0        # حداقل فاصله SL (ضربدر ATR)
+B8_MAX_SL_ATR = 1.6        # سقف ریسک: SL دورتر از این رد می‌شود
+B8_MAX_SL_PCT = 0.04       # سقف ریسک درصدی (۴٪)
+B8_MIN_RR = 1.3
+B8_MIN_VOL_RATIO = 1.0     # حجم کندل سیگنال >= میانگین ۲۰ کندل
+B8_RSI_MAX_LONG = 70
+B8_RSI_MIN_SHORT = 30
+B8_MIN_SCORE = 0.45
+B8_MAX_SIGNALS_PER_RUN = 2
 
 
 # =====================================================================
@@ -1387,69 +1397,100 @@ def analyze_btc_aligned(symbol, ctx):
 
 
 # =====================================================================
-# استراتژی ۸: SMC Winner (نسخه بک‌تست شده با سود ۱۴.۷۷ دلار)
+# استراتژی ۸: SMC Winner (v70) - نسخه اصلاح‌شده
+# سوییپ نقدینگی ۴ ساعته + فیلتر روند + فیلتر حجم + سقف ریسک + RR حداقلی
 # =====================================================================
 def analyze_smc_winner(symbol, ctx):
     try:
         df4 = get_data(ctx, symbol, "4h")
     except Exception:
         return None
-    if len(df4) < 20:
+    if len(df4) < 60:
         return None
-    
+
     curr = df4.iloc[-1]
     atr = float(curr["atr"])
     if np.isnan(atr) or atr <= 0:
         return None
 
-    # پیدا کردن سطوح نقدینگی (سوییپ) در ۱۰ کندل اخیر
-    prev_low = float(df4["low"].iloc[-B8_SWEEP_LOOKBACK-1:-1].min())
-    prev_high = float(df4["high"].iloc[-B8_SWEEP_LOOKBACK-1:-1].max())
-    
     close = float(curr["close"])
+    open_ = float(curr["open"])
     low = float(curr["low"])
     high = float(curr["high"])
+    if close <= 0:
+        return None
     rsi = float(curr["rsi"]) if not np.isnan(curr["rsi"]) else 50.0
-    
-    direction = None
-    sl_dist = 0
-    tp_dist = 0
+    ema21 = float(curr["ema21"])
+    ema50 = float(curr["ema50"])
 
-    # سوییپ کف و بازگشت -> خرید
-    if low < prev_low and close > prev_low:
+    # سطوح نقدینگی در N کندل قبل از کندل سیگنال
+    prev_low = float(df4["low"].iloc[-B8_SWEEP_LOOKBACK - 1:-1].min())
+    prev_high = float(df4["high"].iloc[-B8_SWEEP_LOOKBACK - 1:-1].max())
+
+    # سوییپ + بازگشت + کندل تأییدی هم‌جهت + روند هم‌جهت (EMA21 / EMA50 و قیمت)
+    if low < prev_low and close > prev_low and close > open_:
         direction = "LONG"
-        sl_dist = close - (low - atr * 0.2)
-        tp_dist = atr * B8_TP_ATR_MULT
-        
-    # سوییپ سقف و بازگشت -> فروش
-    elif high > prev_high and close < prev_high:
+        if not (ema21 > ema50 and close > ema50):
+            return None
+        wick = min(open_, close) - low
+        sl_dist = close - (low - atr * B8_SL_BUFFER_ATR)
+    elif high > prev_high and close < prev_high and close < open_:
         direction = "SHORT"
-        sl_dist = (high + atr * 0.2) - close
-        tp_dist = atr * B8_TP_ATR_MULT
+        if not (ema21 < ema50 and close < ema50):
+            return None
+        wick = high - max(open_, close)
+        sl_dist = (high + atr * B8_SL_BUFFER_ATR) - close
     else:
         return None
 
-    if sl_dist <= 0 or close <= 0:
+    if sl_dist <= 0:
         return None
-        
+
+    # حداقل فاصله SL (جلوگیری از استاپ‌های نویزی) و سقف ریسک (رد سیگنال‌های SL دور)
+    sl_dist = max(sl_dist, atr * B8_MIN_SL_ATR)
+    if sl_dist > atr * B8_MAX_SL_ATR or sl_dist / close > B8_MAX_SL_PCT:
+        return None
     if sl_dist / close < MIN_SL_PCT:
         return None
 
-    # محاسبه امتیاز ساده برای این ربات
-    score = 0.8 if (direction == "LONG" and rsi < 50) or (direction == "SHORT" and rsi > 50) else 0.6
+    tp_dist = atr * B8_TP_ATR_MULT
+    rr = tp_dist / sl_dist
+    if rr < B8_MIN_RR:
+        return None
+
+    # فیلتر حجم
+    volume = float(curr["volume"])
+    avg_volume = float(df4["volume"].iloc[-21:-1].mean())
+    vol_ratio = ratio(volume, avg_volume)
+    if vol_ratio < B8_MIN_VOL_RATIO:
+        return None
+
+    # RSI نباید در جهت معامله اشباع شده باشد
+    if direction == "LONG" and rsi > B8_RSI_MAX_LONG:
+        return None
+    if direction == "SHORT" and rsi < B8_RSI_MIN_SHORT:
+        return None
+
+    # امتیازدهی واقعی: قدرت روند، حجم، اندازه سایه سوییپ، کیفیت RR
+    trend_score = min(abs(ema21 - ema50) / atr / 1.0, 1.0)
+    vol_score = min(vol_ratio / 2.0, 1.0)
+    wick_score = min((wick / atr) / 1.0, 1.0)
+    rr_score = min(rr / 2.5, 1.0)
+    score = 0.30 * trend_score + 0.25 * vol_score + 0.25 * wick_score + 0.20 * rr_score
+    if score < B8_MIN_SCORE:
+        return None
 
     def levels(entry):
         if direction == "LONG":
             return entry - sl_dist, entry + tp_dist
-        else:
-            return entry + sl_dist, entry - tp_dist
+        return entry + sl_dist, entry - tp_dist
 
     return {
         "symbol": symbol, "direction": direction, "close": close,
         "atr": atr, "rsi": rsi,
-        "volume": float(curr["volume"]), "avg_volume": float(df4["volume"].iloc[-21:-1].mean()),
+        "volume": volume, "avg_volume": avg_volume,
         "signal_key": int(curr["timestamp"]), "score": score,
-        "setup": f"SMC Winner ({direction} Sweep)",
+        "setup": f"SMC Winner ({direction} Sweep, RR {rr:.1f})",
         "levels": levels,
     }
 
@@ -1501,7 +1542,8 @@ BOTS = [
     # --- ربات جدید ۸ (SMC Winner) ---
     Bot("crypto-signal-bot-v70", "SMC Winner", analyze_smc_winner,
         "server_messages_v70.json", "last_signals_v70.json",
-        cooldown_hours=B8_COOLDOWN_HOURS, btc_filter_4h=False),
+        cooldown_hours=B8_COOLDOWN_HOURS, max_signals=B8_MAX_SIGNALS_PER_RUN,
+        btc_filter_4h=True),
 ]
 LIVE_BOTS = [b for b in BOTS if b.live]
 
