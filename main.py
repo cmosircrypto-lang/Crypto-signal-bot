@@ -1,13 +1,14 @@
 """
-ربات‌های سیگنال با تمرکز روی کیفیت بالا (Win Rate)
-  1) crypto-signal-bot      : کراس EMA 9/21 در ۴ساعته + تایید قوی ۱ساعته
-  2) crypto-signal-bot-v10  : شکست رنج تمیز در ۱ساعته با حجم قوی
-  3) crypto-signal-bot-v20  : MTF Pullback (Daily EMA50/200 + 1H Swing/Donchian)
-  4) crypto-signal-bot-v30  : AMD + نقدینگی سشن (رنج آسیا → سوییپ → FVG)
-  5) crypto-signal-bot-v40  : رژیم بازار (ADX) — نسخه سخت‌تر کیفیت
-  6) crypto-signal-bot-v50  : SMC/ICT ترکیبی
-  7) crypto-signal-bot-v60  : فیلتر BTC (1D+4H) + پولبک هم‌جهت روی نمادها
-  8) crypto-signal-bot-v70  : SMC Winner (نسخه بهینه‌شده با بک‌تست ۱ ساله)
+ربات‌های سیگنال با تمرکز روی کیفیت بالا (Win Rate) — نسخه اصلاح‌شده
+  اصلاحات:
+    1) check_trade_result: تصمیم درست در لمس همزمان SL/TP
+    2) B30_ACTIVE_START_H = 8 (رفع تناقض پنجره زمانی)
+    3) _asia_range_1h بدون وابستگی به datetime.now()
+    4) Ctx.ref_time_ms برای پشتیبانی از backtest
+    5) get_price در backtest از close کندل استفاده می‌کند
+    6) analyze_amd_session از ctx.now_utc_hour()
+    7) پارامترهای v70 شل شدند + meta اضافه شد
+    8) run_bot: opened_ms در backtest از timestamp کندل
 """
 import os
 import json
@@ -31,37 +32,26 @@ TOOBIT_API_KEY = os.environ.get("TOOBIT_API_KEY")
 TOOBIT_SECRET = os.environ.get("TOOBIT_SECRET")
 
 SYMBOLS = [
-    # --- Core Majors ---
     "BTC-SWAP-USDT", "ETH-SWAP-USDT", "SOL-SWAP-USDT", "XRP-SWAP-USDT",
     "BNB-SWAP-USDT", "DOGE-SWAP-USDT", "ADA-SWAP-USDT", "TRX-SWAP-USDT",
     "AVAX-SWAP-USDT", "LINK-SWAP-USDT", "DOT-SWAP-USDT", "LTC-SWAP-USDT",
     "BCH-SWAP-USDT", "TON-SWAP-USDT", "SUI-SWAP-USDT", "NEAR-SWAP-USDT",
     "APT-SWAP-USDT", "ARB-SWAP-USDT", "OP-SWAP-USDT", "ATOM-SWAP-USDT",
-
-    # --- High Volume / Popular ---
     "UNI-SWAP-USDT", "AAVE-SWAP-USDT", "FIL-SWAP-USDT", "INJ-SWAP-USDT",
     "TIA-SWAP-USDT", "JUP-SWAP-USDT", "ENA-SWAP-USDT", "WIF-SWAP-USDT",
     "1000PEPE-SWAP-USDT", "1000SHIB-SWAP-USDT", "WLD-SWAP-USDT", "SEI-SWAP-USDT",
     "RUNE-SWAP-USDT", "LDO-SWAP-USDT", "STX-SWAP-USDT", "IMX-SWAP-USDT",
     "HBAR-SWAP-USDT", "ICP-SWAP-USDT", "ETC-SWAP-USDT", "XLM-SWAP-USDT",
-
-    # --- DeFi & Layer 2 ---
     "CRV-SWAP-USDT", "SNX-SWAP-USDT",
     "COMP-SWAP-USDT", "SUSHI-SWAP-USDT", "1INCH-SWAP-USDT", "GRT-SWAP-USDT",
     "DYDX-SWAP-USDT", "GMX-SWAP-USDT", "PENDLE-SWAP-USDT", "ONDO-SWAP-USDT",
     "JTO-SWAP-USDT", "PYTH-SWAP-USDT", "STRK-SWAP-USDT", "MANTA-SWAP-USDT",
-
-    # --- Meme & Community ---
     "1000BONK-SWAP-USDT", "1000FLOKI-SWAP-USDT", "MEME-SWAP-USDT", "ORDI-SWAP-USDT",
     "1000SATS-SWAP-USDT", "1000RATS-SWAP-USDT", "POPCAT-SWAP-USDT",
     "BRETT-SWAP-USDT", "TURBO-SWAP-USDT", "1000000MOG-SWAP-USDT", "DOGS-SWAP-USDT",
-
-    # --- AI, Gaming & Metaverse ---
     "FET-SWAP-USDT", "TAO-SWAP-USDT",
     "AKT-SWAP-USDT", "ILV-SWAP-USDT",
     "AXS-SWAP-USDT", "SAND-SWAP-USDT", "MANA-SWAP-USDT", "GALA-SWAP-USDT",
-
-    # --- Infrastructure & Others ---
     "ALGO-SWAP-USDT", "VET-SWAP-USDT", "EGLD-SWAP-USDT", "FLOW-SWAP-USDT",
     "KAVA-SWAP-USDT", "ROSE-SWAP-USDT", "KAS-SWAP-USDT",
     "THETA-SWAP-USDT", "CHZ-SWAP-USDT", "ENJ-SWAP-USDT", "ZIL-SWAP-USDT",
@@ -71,8 +61,7 @@ SYMBOLS = [
 BTC_SYMBOL = "BTC-SWAP-USDT"
 MAX_HEARTBEATS = 2
 MAX_SIGNALS_PER_RUN = 5
-MAX_OPEN_SAME_DIR = 3      # سقف معاملات باز هم‌جهت برای هر ربات
-# ستون‌های اختصاصی (فعلاً فقط v30 مقدار می‌دهد؛ برای بقیه‌ی ربات‌ها خالی می‌ماند)
+MAX_OPEN_SAME_DIR = 3
 EXTRA_LOG_FIELDS = ["fvg_size_atr", "fvg_age_15m", "gap_pos", "last_candle_with_trade",
                     "sweep_depth_atr", "sweep_age_h", "asia_range_atr", "gap4_atr", "risk_atr"]
 SUMMARY_FILE = "daily_summary.json"
@@ -89,7 +78,7 @@ TF_MS = {
     "1d": 24 * 60 * 60 * 1000,
 }
 
-# --- ربات ۱: EMA Cross (بهبود یافته) ---
+# --- ربات ۱: EMA Cross ---
 B1_CROSS_LOOKBACK = 3
 B1_RSI_LONG = (45, 68)
 B1_RSI_SHORT = (32, 55)
@@ -101,7 +90,7 @@ B1_MIN_ADX_4H = 18
 B1_MIN_ADX_1H = 16
 B1_MIN_SLOPE_ATR = 0.08
 
-# --- ربات ۲: Breakout (کیفیت بالاتر) ---
+# --- ربات ۲: Breakout ---
 B2_LOOKBACK = 18
 B2_VOLUME_MULT = 1.8
 B2_CLOSE_POS = 0.72
@@ -126,10 +115,10 @@ B3_MIN_PULLBACK = 1.005
 B3_COOLDOWN_HOURS = 3
 B3_MIN_SCORE = 0.55
 
-# --- ربات v30: AMD (سخت‌گیرانه‌تر) ---
+# --- ربات v30: AMD (اصلاح‌شده) ---
 B30_ASIA_START_H = 0
 B30_ASIA_END_H = 8
-B30_ACTIVE_START_H = 7
+B30_ACTIVE_START_H = 8      # ← اصلاح شد (بود: 7)
 B30_ACTIVE_END_H = 20
 B30_SWEEP_MAX_AGE_1H = 4
 B30_FVG_RECENT = 8
@@ -188,31 +177,30 @@ B6_SL_ATR, B6_TP_ATR = 1.4, 2.95
 B6_MIN_SCORE = 0.60
 B6_COOLDOWN_HOURS = 3
 
-# --- ربات ۸: SMC Winner (نسخه برنده بک‌تست) ---
+# --- ربات ۸: SMC Winner (اصلاح‌شده - شل‌تر) ---
 B8_SWEEP_LOOKBACK = 10
 B8_TP_ATR_MULT = 2.0
 B8_COOLDOWN_HOURS = 4
 B8_SL_BUFFER_ATR = 0.2
-B8_MIN_SL_ATR = 1.0        # حداقل فاصله SL (ضربدر ATR)
-B8_MAX_SL_ATR = 1.6        # سقف ریسک: SL دورتر از این رد می‌شود
-B8_MAX_SL_PCT = 0.04       # سقف ریسک درصدی (۴٪)
-B8_MIN_RR = 1.3
-B8_MIN_VOL_RATIO = 1.0     # حجم کندل سیگنال >= میانگین ۲۰ کندل
-B8_RSI_MAX_LONG = 70
-B8_RSI_MIN_SHORT = 30
-B8_MIN_SCORE = 0.45
-B8_MAX_SIGNALS_PER_RUN = 2
+B8_MIN_SL_ATR = 0.6        # ← اصلاح (بود: 1.0)
+B8_MAX_SL_ATR = 3.0        # ← اصلاح (بود: 1.6)
+B8_MAX_SL_PCT = 0.07       # ← اصلاح (بود: 0.04)
+B8_MIN_RR = 1.2            # ← اصلاح (بود: 1.3)
+B8_MIN_VOL_RATIO = 0.9     # ← اصلاح (بود: 1.0)
+B8_RSI_MAX_LONG = 72       # ← اصلاح (بود: 70)
+B8_RSI_MIN_SHORT = 28      # ← اصلاح (بود: 30)
+B8_MIN_SCORE = 0.35        # ← اصلاح (بود: 0.45)
+B8_MAX_SIGNALS_PER_RUN = 3 # ← اصلاح (بود: 2)
 
 
 # =====================================================================
-# قیف فیلتر (Funnel): شمارش علت رد شدن نمادها در هر ربات
+# Funnel
 # =====================================================================
 FUNNEL = defaultdict(Counter)
 _CUR = {"bot": None}
 
 
 def rej(label="unlabeled"):
-    """ثبت علت رد شدن و برگرداندن None (جایگزین return None)"""
     FUNNEL[_CUR["bot"]][label] += 1
     return None
 
@@ -243,6 +231,8 @@ def get_iran_time():
 
 
 def send_telegram(message, max_retries=3, timeout=20):
+    if not TELEGRAM_TOKEN or not CHAT_ID:
+        return None
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     for attempt in range(1, max_retries + 1):
         try:
@@ -262,6 +252,8 @@ def send_telegram(message, max_retries=3, timeout=20):
 
 
 def delete_telegram(message_id, max_retries=2, timeout=15):
+    if not TELEGRAM_TOKEN or not CHAT_ID:
+        return
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/deleteMessage"
     for attempt in range(1, max_retries + 1):
         try:
@@ -308,7 +300,6 @@ def append_trade_csv(bot_name, record):
               "rsi", "vol_ratio", "atr_pct", "risk_pct", "rr", "drift_atr",
               "btc_4h", "btc_1h", "open_same_dir"] + EXTRA_LOG_FIELDS + [
               "hold_hours", "opened_ms", "closed_ms"]
-    # اگر فایل قدیمی هدر متفاوت دارد، کنار گذاشته شود تا ستون‌ها جابه‌جا نشوند
     if file_exists:
         try:
             with open(fname, "r", encoding="utf-8") as f:
@@ -373,16 +364,25 @@ def now_ms():
 
 
 # =====================================================================
-# داده و اندیکاتورها
+# Ctx (backtest-friendly)
 # =====================================================================
 class Ctx:
-    def __init__(self, exchange):
+    def __init__(self, exchange, ref_time_ms=None):
         self.exchange = exchange
         self.cache = {}
         self.tickers = {}
         self.btc_filter = None
+        self.ref_time_ms = ref_time_ms  # None → live
+
+    def now_utc_hour(self):
+        if self.ref_time_ms is None:
+            return datetime.now(timezone.utc).hour
+        return datetime.fromtimestamp(self.ref_time_ms / 1000, tz=timezone.utc).hour
 
 
+# =====================================================================
+# صرافی و داده
+# =====================================================================
 def create_exchange():
     params = {"enableRateLimit": True}
     if TOOBIT_API_KEY and TOOBIT_SECRET:
@@ -444,7 +444,6 @@ def get_data(ctx, symbol, timeframe):
     if key not in ctx.cache:
         limit = 300 if timeframe == "1d" else 150
         df = fetch_ohlcv(ctx.exchange, symbol, timeframe, limit)
-
         if len(df) < 40:
             raise ValueError(f"داده‌ی کافی برای {symbol} {timeframe} نیست ({len(df)} کندل)")
         ctx.cache[key] = calculate_indicators(df)
@@ -452,6 +451,11 @@ def get_data(ctx, symbol, timeframe):
 
 
 def get_price(ctx, symbol):
+    # در بک‌تست: close آخرین کندل ۱ ساعته
+    if ctx.ref_time_ms is not None:
+        df = get_data(ctx, symbol, "1h")
+        return float(df["close"].iloc[-1])
+    # در live: ticker
     if symbol not in ctx.tickers:
         ctx.tickers[symbol] = float(ctx.exchange.fetch_ticker(symbol)["last"])
     return ctx.tickers[symbol]
@@ -534,7 +538,6 @@ def analyze_cross(symbol, ctx):
         return rej("03_bad_adx_4h")
 
     if adx_4h < B1_MIN_ADX_4H:
-        print(f"  {symbol}: weak 4H ADX ({adx_4h:.1f})")
         return rej("04_adx_4h")
 
     ema9_4h = float(last4["ema9"])
@@ -543,14 +546,12 @@ def analyze_cross(symbol, ctx):
 
     gap_4h = abs(ema9_4h - ema21_4h)
     if gap_4h < 0.35 * atr_4h:
-        print(f"  {symbol}: weak 4H trend")
         return rej("05_gap_4h")
 
     ema9_slope = (ema9_4h - float(df_4h["ema9"].iloc[-4]))
     slope_atr = (abs(ema9_slope) / atr_4h)
 
     if slope_atr < B1_MIN_SLOPE_ATR:
-        print(f"  {symbol}: EMA slope too weak")
         return rej("06_slope_weak")
 
     if direction == "LONG" and ema9_slope <= 0:
@@ -560,11 +561,9 @@ def analyze_cross(symbol, ctx):
 
     if direction == "LONG":
         if ema21_4h <= ema50_4h:
-            print(f"  {symbol}: LONG cross but EMA21 below EMA50")
             return rej("08_ema21_vs_ema50")
     else:
         if ema21_4h >= ema50_4h:
-            print(f"  {symbol}: SHORT cross but EMA21 above EMA50")
             return rej("08_ema21_vs_ema50")
 
     df_1h = get_data(ctx, symbol, "1h")
@@ -581,12 +580,10 @@ def analyze_cross(symbol, ctx):
         return rej("11_bad_adx_1h")
 
     if adx_1h < B1_MIN_ADX_1H:
-        print(f"  {symbol}: weak 1H ADX ({adx_1h:.1f})")
         return rej("12_adx_1h")
 
     gap_1h = abs(float(last_1h["ema9"]) - float(last_1h["ema21"]))
     if gap_1h < 0.40 * atr_1h:
-        print(f"  {symbol}: weak 1H trend")
         return rej("13_gap_1h")
 
     vol_1h = float(last_1h["volume"])
@@ -594,7 +591,6 @@ def analyze_cross(symbol, ctx):
     vol_ratio_1h = ratio(vol_1h, avg_vol_1h)
 
     if vol_ratio_1h < B1_VOLUME_MULT:
-        print(f"  {symbol}: weak volume (x{vol_ratio_1h:.2f})")
         return rej("14_volume_1h")
 
     df_15m = get_data(ctx, symbol, "15m")
@@ -605,7 +601,6 @@ def analyze_cross(symbol, ctx):
 
     lo, hi = (B1_RSI_LONG if direction == "LONG" else B1_RSI_SHORT)
     if not (lo <= rsi <= hi):
-        print(f"  {symbol}: RSI {rsi:.1f} not in range")
         return rej("16_rsi_15m")
 
     close = float(last["close"])
@@ -619,13 +614,10 @@ def analyze_cross(symbol, ctx):
     rsi_score = min(abs(rsi - 50) / 20.0, 1.0)
     adx_score = min(adx_4h / 35.0, 1.0)
 
-    score = (0.25 * trend1_score + 0.25 * trend4_score + 0.20 * adx_score + 
+    score = (0.25 * trend1_score + 0.25 * trend4_score + 0.20 * adx_score +
              0.15 * vol_score + 0.10 * cross_score + 0.05 * rsi_score)
 
-    print(f"  {symbol}: {direction} | score={score:.3f} | ADX4={adx_4h:.1f} | ADX1={adx_1h:.1f} | vol={vol_ratio_1h:.2f}")
-
     if score < B1_MIN_SCORE:
-        print(f"  {symbol}: score too low ({score:.3f})")
         return rej("18_score")
 
     return {
@@ -666,7 +658,6 @@ def analyze_breakout(symbol, ctx):
         return rej("02_bad_values")
 
     if range_size > B2_MAX_RANGE_ATR * atr:
-        print(f"  {symbol}: range too wide ({range_size / atr:.1f} ATR)")
         return rej("03_range_too_wide")
 
     direction = level = None
@@ -683,12 +674,10 @@ def analyze_breakout(symbol, ctx):
         return rej("04_no_breakout")
 
     if body < B2_MIN_BODY_ATR * atr:
-        print(f"  {symbol}: {direction} breakout but body too weak ({body / atr:.2f} ATR)")
         return rej("05_body_weak")
 
     adx = float(last["adx"]) if not np.isnan(last["adx"]) else 0.0
     if adx < B2_MIN_ADX:
-        print(f"  {symbol}: breakout ADX too weak ({adx:.1f})")
         return rej("06_adx_weak")
 
     volume = float(last["volume"])
@@ -704,21 +693,11 @@ def analyze_breakout(symbol, ctx):
     slow_trend = "LONG" if l4["ema21"] > l4["ema50"] else "SHORT" if l4["ema21"] < l4["ema50"] else "NONE"
     trend_ok = slow_trend == direction
 
-    print(f"  {symbol}: {direction} breakout 1H | RSI {rsi:.1f} ok={rsi_ok} | Vol x{vol_ratio:.2f} ok={vol_ok} | 4H ok={trend_ok}")
-
     if not (rsi_ok and vol_ok and trend_ok):
-        reasons = []
         tags = []
-        if not rsi_ok:
-            reasons.append(f"RSI {rsi:.1f} خارج {lo}-{hi}")
-            tags.append("rsi")
-        if not vol_ok:
-            reasons.append(f"حجم {vol_ratio:.2f} < {B2_VOLUME_MULT}")
-            tags.append("vol")
-        if not trend_ok:
-            reasons.append(f"روند ۴ساعته {slow_trend} مخالف {direction}")
-            tags.append("trend4h")
-        print(f"    -> rejected: " + " | ".join(reasons))
+        if not rsi_ok: tags.append("rsi")
+        if not vol_ok: tags.append("vol")
+        if not trend_ok: tags.append("trend4h")
         return rej("07_filters_" + "+".join(tags))
 
     if (atr * B2_SL_ATR) / close < MIN_SL_PCT:
@@ -734,7 +713,6 @@ def analyze_breakout(symbol, ctx):
              0.20 * body_score + 0.20 * trend_score)
 
     if score < B2_MIN_SCORE:
-        print(f"    -> rejected (score {score:.3f} < {B2_MIN_SCORE})")
         return rej("09_score")
 
     return {
@@ -747,7 +725,7 @@ def analyze_breakout(symbol, ctx):
 
 
 # =====================================================================
-# استراتژی ۳: MTF Pullback (Daily Bias + 1H Entry)
+# استراتژی ۳: MTF Pullback
 # =====================================================================
 def analyze_mtf_pullback(symbol, ctx):
     try:
@@ -861,10 +839,7 @@ def analyze_mtf_pullback(symbol, ctx):
                  0.25 * min(body_ratio / 0.7, 1.0) + 0.20 * min(abs(rsi - 62) / 15.0, 1.0))
 
     if score < B3_MIN_SCORE:
-        print(f"  {symbol}: MTF score too low ({score:.3f})")
         return rej("14_score")
-
-    print(f"  {symbol}: MTF {direction} | RSI {rsi:.1f} | body {body_ratio:.2f} | dist {dist*100:.2f}% | score {score:.3f}")
 
     return {
         "symbol": symbol, "direction": direction, "close": c, "atr": atr, "rsi": rsi,
@@ -874,18 +849,22 @@ def analyze_mtf_pullback(symbol, ctx):
 
 
 # =====================================================================
-# استراتژی v30: AMD + Session Liquidity
+# استراتژی v30: AMD + Session Liquidity (اصلاح‌شده)
 # =====================================================================
 def _utc_hour(ts_ms):
     return datetime.fromtimestamp(ts_ms / 1000, tz=timezone.utc).hour
 
 
-def _in_active_session():
-    h = datetime.now(timezone.utc).hour
+def _in_active_session(ctx):
+    h = ctx.now_utc_hour()
     return B30_ACTIVE_START_H <= h < B30_ACTIVE_END_H
 
 
 def _asia_range_1h(df1):
+    """
+    range آخرین سشن آسیای کامل‌شده (UTC 0-8).
+    اصلاح: بدون وابستگی به now() — همیشه آخرین سشن کامل را برمی‌گرداند.
+    """
     highs, lows, ts = [], [], []
     for i in range(len(df1)):
         h = _utc_hour(int(df1["timestamp"].iloc[i]))
@@ -897,18 +876,14 @@ def _asia_range_1h(df1):
     if len(highs) < 3:
         return None
 
-    now_h = datetime.now(timezone.utc).hour
-    if B30_ASIA_START_H <= now_h < B30_ASIA_END_H:
-        return None
-
-    asia_hi = max(highs[-8:]) if len(highs) >= 8 else max(highs)
-    asia_lo = min(lows[-8:]) if len(lows) >= 8 else min(lows)
+    asia_hi = max(highs[-8:])
+    asia_lo = min(lows[-8:])
     asia_end_ts = ts[-1]
     return {"high": asia_hi, "low": asia_lo, "end_ts": asia_end_ts}
 
 
 def analyze_amd_session(symbol, ctx):
-    if not _in_active_session():
+    if not _in_active_session(ctx):
         return rej("01_outside_active_session")
 
     df4 = get_data(ctx, symbol, "4h")
@@ -934,7 +909,6 @@ def analyze_amd_session(symbol, ctx):
 
     rng_size = asia["high"] - asia["low"]
     if rng_size < B30_MIN_RANGE_ATR * atr1 or rng_size > B30_MAX_RANGE_ATR * atr1:
-        print(f"  {symbol}: Asia range invalid ({rng_size / atr1:.1f} ATR)")
         return rej("07_asia_range_invalid")
 
     hi1 = df1["high"].values
@@ -958,7 +932,6 @@ def analyze_amd_session(symbol, ctx):
         return rej("08_no_sweep")
 
     if sweep["direction"] != bias_4h:
-        print(f"  {symbol}: AMD sweep {sweep['direction']} مخالف 4H={bias_4h}")
         return rej("09_sweep_vs_4h_bias")
 
     direction = sweep["direction"]
@@ -990,7 +963,6 @@ def analyze_amd_session(symbol, ctx):
                 break
 
     if fvg is None:
-        print(f"  {symbol}: AMD {direction} | sweep ok | FVG missing")
         return rej("10_no_fvg")
 
     if direction == "LONG":
@@ -1012,7 +984,6 @@ def analyze_amd_session(symbol, ctx):
         return sl, tp
 
     if levels(price) is None:
-        print(f"  {symbol}: AMD {direction} rejected (RR/levels)")
         return rej("11_levels_rr")
 
     risk = abs(price - sl)
@@ -1030,10 +1001,8 @@ def analyze_amd_session(symbol, ctx):
              0.20 * min(vol_ratio / 2.0, 1.0) + 0.15 * min(gap4 / atr4, 1.0))
 
     if score < B30_MIN_SCORE:
-        print(f"  {symbol}: AMD score too low ({score:.3f})")
         return rej("13_score")
 
-    # ویژگی‌های ستاپ برای لاگ (روی تصمیم ربات اثری ندارد)
     fvg_size = fvg["top"] - fvg["bottom"]
     if direction == "LONG":
         gap_pos = (float(c[last]) - fvg["bottom"]) / fvg_size if fvg_size > 0 else ""
@@ -1041,6 +1010,7 @@ def analyze_amd_session(symbol, ctx):
     else:
         gap_pos = (fvg["top"] - float(c[last])) / fvg_size if fvg_size > 0 else ""
         with_trade = 1 if c[last] < o[last] else 0
+
     meta = {
         "fvg_size_atr": round(fvg_size / atr1, 3),
         "fvg_age_15m": int(last - fvg["i"]),
@@ -1053,7 +1023,6 @@ def analyze_amd_session(symbol, ctx):
         "risk_atr": round(risk / atr1, 3),
     }
 
-    print(f"  {symbol}: AMD {direction} | Asia sweep ok | FVG ok | RR {rr:.2f} | score {score:.3f}")
     return {
         "symbol": symbol, "direction": direction, "close": price, "atr": atr1, "rsi": rsi,
         "volume": vol, "avg_volume": avg_vol, "signal_key": fvg["ts"], "score": score,
@@ -1083,7 +1052,6 @@ def analyze_regime(symbol, ctx):
     if adx >= B4_ADX_TREND: mode = "trend"
     elif adx <= B4_ADX_RANGE: mode = "range"
     else:
-        print(f"  {symbol}: ADX {adx:.1f} بین دو رژیم، بدون معامله")
         return rej("02_adx_between_regimes")
 
     if mode == "trend":
@@ -1100,9 +1068,9 @@ def analyze_regime(symbol, ctx):
         try:
             btc_4h = trend_of(get_data(ctx, BTC_SYMBOL, "4h"))
             if btc_4h in ("LONG", "SHORT") and direction != btc_4h:
-                print(f"  {symbol}: TREND {direction} rejected (BTC 4H={btc_4h})")
                 return rej("T3_btc_4h_mismatch")
-        except Exception: pass
+        except Exception:
+            pass
 
         ema21 = float(last["ema21"])
         if direction == "LONG":
@@ -1114,7 +1082,6 @@ def analyze_regime(symbol, ctx):
 
         vol_ok = vol_ratio >= B4_TREND_MIN_VOL
 
-        print(f"  {symbol}: ADX {adx:.1f} TREND {direction} | پولبک ok={touched} | RSI {rsi:.1f} ok={rsi_ok} | Vol x{vol_ratio:.2f} ok={vol_ok}")
         if not (touched and rsi_ok and vol_ok):
             tags = []
             if not touched: tags.append("pullback")
@@ -1126,7 +1093,6 @@ def analyze_regime(symbol, ctx):
 
         score = (0.45 * min(adx / 40.0, 1.0) + 0.30 * min(gap_4h / atr_4h, 1.0) + 0.25 * min(vol_ratio / 2.0, 1.0))
         if score < B4_MIN_SCORE:
-            print(f"  {symbol}: score too low ({score:.3f})")
             return rej("T6_score")
 
         return {
@@ -1148,7 +1114,6 @@ def analyze_regime(symbol, ctx):
         sl = high + B4_RANGE_SL_BUFFER_ATR * atr
         tp = bb_mid
     else:
-        print(f"  {symbol}: ADX {adx:.1f} RANGE | بدون بازگشت از باند (RSI {rsi:.1f})")
         return rej("R2_no_band_reversal")
 
     if (direction == "LONG" and not (sl < close < tp)) or (direction == "SHORT" and not (tp < close < sl)):
@@ -1156,7 +1121,6 @@ def analyze_regime(symbol, ctx):
     risk = abs(close - sl)
     rr = abs(tp - close) / risk
     if rr < B4_RANGE_MIN_RR or risk / close < MIN_SL_PCT:
-        print(f"  {symbol}: RANGE {direction} rejected (RR {rr:.2f})")
         return rej("R4_rr_or_min_sl")
 
     def levels(entry):
@@ -1165,10 +1129,8 @@ def analyze_regime(symbol, ctx):
 
     score = (0.50 * min(rr / 3.0, 1.0) + 0.30 * min(abs(rsi - 50) / 25.0, 1.0) + 0.20 * min(vol_ratio / 2.0, 1.0))
     if score < B4_MIN_SCORE:
-        print(f"  {symbol}: score too low ({score:.3f})")
         return rej("R5_score")
 
-    print(f"  {symbol}: ADX {adx:.1f} RANGE {direction} | RSI {rsi:.1f} | RR {rr:.2f}")
     return {
         "symbol": symbol, "direction": direction, "close": close, "atr": atr, "rsi": rsi,
         "volume": volume, "avg_volume": avg_volume, "signal_key": int(last["timestamp"]), "score": score,
@@ -1184,20 +1146,20 @@ def analyze_smc(symbol, ctx):
     l4 = df4.iloc[-1]
     direction = trend_of(df4)
     atr4 = float(l4["atr"])
-    
+
     if direction not in ("LONG", "SHORT") or np.isnan(atr4) or atr4 <= 0:
         return rej("01_bad_4h_dir_atr")
-        
+
     trend_gap = abs(float(l4["ema9"]) - float(l4["ema21"]))
     if trend_gap < B5_TREND_GAP_4H_ATR * atr4:
         return rej("02_gap_4h")
 
     df1 = get_data(ctx, symbol, "1h")
     n1 = len(df1)
-    
+
     if n1 < B5_RANGE_BARS + B5_LOOKBACK_1H + 5:
         return rej("03_1h_short_data")
-        
+
     atr1 = float(df1["atr"].iloc[-1])
     if np.isnan(atr1) or atr1 <= 0:
         return rej("04_bad_atr_1h")
@@ -1210,30 +1172,20 @@ def analyze_smc(symbol, ctx):
     sweep = None
     for m in range(n1 - 1, n1 - 1 - B5_SWEEP_RECENT, -1):
         win = slice(m - B5_LOOKBACK_1H, m)
-        
         if direction == "LONG":
             level = float(lo1[win].min())
-            if lo1[m] < level < cl1[m]:  # <--- اینجا اصلاح شد
-                sweep = {
-                    "ts": int(ts1[m]),
-                    "extreme": float(lo1[m]),
-                    "level": level
-                }
+            if lo1[m] < level < cl1[m]:
+                sweep = {"ts": int(ts1[m]), "extreme": float(lo1[m]), "level": level}
                 break
         else:
             level = float(hi1[win].max())
-            if cl1[m] < level < hi1[m]:  # <--- اینجا اصلاح شد
-                sweep = {
-                    "ts": int(ts1[m]),
-                    "extreme": float(hi1[m]),
-                    "level": level
-                }
+            if cl1[m] < level < hi1[m]:
+                sweep = {"ts": int(ts1[m]), "extreme": float(hi1[m]), "level": level}
                 break
 
     if sweep is None:
         return rej("05_no_sweep")
 
-    # BOS FILTER
     bos_ok = False
     if direction == "LONG":
         recent_high = float(df1["high"].iloc[-10:-1].max())
@@ -1245,7 +1197,6 @@ def analyze_smc(symbol, ctx):
             bos_ok = True
 
     if not bos_ok:
-        print(f"  {symbol}: BOS missing")
         return rej("06_no_bos")
 
     rng = slice(n1 - B5_RANGE_BARS, n1)
@@ -1260,10 +1211,10 @@ def analyze_smc(symbol, ctx):
     c = df15["close"].values
     v = df15["volume"].values
     ts15 = df15["timestamp"].values
-    
+
     last = len(df15) - 1
     price = float(c[last])
-    
+
     if (direction == "LONG" and price > eq):
         return rej("07_price_vs_equilibrium")
     if (direction == "SHORT" and price < eq):
@@ -1271,11 +1222,10 @@ def analyze_smc(symbol, ctx):
 
     fvg = None
     fvg_size = 0
-    
+
     for i in range(last - 1, max(2, last - B5_FVG_RECENT) - 1, -1):
         if ts15[i - 1] < sweep["ts"]:
             break
-            
         if direction == "LONG" and h[i - 2] < l[i]:
             bottom = float(h[i - 2])
             top = float(l[i])
@@ -1287,7 +1237,6 @@ def analyze_smc(symbol, ctx):
                     continue
                 fvg = {"ts": int(ts15[i])}
                 break
-                
         if direction == "SHORT" and l[i - 2] > h[i]:
             bottom = float(h[i])
             top = float(l[i - 2])
@@ -1301,15 +1250,13 @@ def analyze_smc(symbol, ctx):
                 break
 
     if fvg is None:
-        print(f"  {symbol}: no quality FVG")
         return rej("08_no_quality_fvg")
 
     vol = float(v[last])
     avg_vol = float(df15["volume"].iloc[-21:-1].mean())
     vol_ratio = ratio(vol, avg_vol)
-    
+
     if vol_ratio < B5_MIN_VOLUME_RATIO:
-        print(f"  {symbol}: weak volume")
         return rej("09_weak_volume")
 
     if direction == "LONG":
@@ -1328,7 +1275,6 @@ def analyze_smc(symbol, ctx):
             if not (tp < entry < sl): return None
             risk = sl - entry
             reward = entry - tp
-            
         if risk <= 0: return None
         if risk > (B5_MAX_RISK_ATR * atr1): return None
         if reward / risk < B5_MIN_RR: return None
@@ -1336,43 +1282,32 @@ def analyze_smc(symbol, ctx):
 
     if levels(price) is None:
         return rej("10_levels_rr")
-        
+
     risk = abs(price - sl)
     if risk / price < MIN_SL_PCT:
         return rej("11_min_sl_pct")
-        
+
     rr = abs(tp - price) / risk
     depth = abs(sweep["level"] - sweep["extreme"]) / atr1
-    
+
     score = (
         0.30 * min(depth / 0.60, 1.0) +
         0.25 * min(vol_ratio / 2.0, 1.0) +
         0.25 * min(rr / 3.0, 1.0) +
         0.20 * min(fvg_size / atr1, 1.0)
     )
-    
+
     if score < B5_MIN_SCORE:
-        print(f"  {symbol}: score too low ({score:.3f})")
         return rej("12_score")
-        
+
     rsi = float(df15["rsi"].iloc[-1])
     if np.isnan(rsi):
         rsi = 50.0
-        
-    print(f"  {symbol}: SMC {direction} | BOS | FVG | RR={rr:.2f} | score={score:.3f}")
-    
+
     return {
-        "symbol": symbol,
-        "direction": direction,
-        "close": price,
-        "atr": atr1,
-        "rsi": rsi,
-        "volume": vol,
-        "avg_volume": avg_vol,
-        "signal_key": fvg["ts"],
-        "score": score,
-        "setup": "SMC PRO (Sweep+BOS+FVG)",
-        "levels": levels,
+        "symbol": symbol, "direction": direction, "close": price, "atr": atr1, "rsi": rsi,
+        "volume": vol, "avg_volume": avg_vol, "signal_key": fvg["ts"], "score": score,
+        "setup": "SMC PRO (Sweep+BOS+FVG)", "levels": levels,
     }
 
 
@@ -1391,10 +1326,8 @@ def get_btc_filter(ctx):
     t_1d, t_4h, t_1h = trend_of(df_1d), trend_of(df_4h), trend_of(df_1h)
 
     if t_1d not in ("LONG", "SHORT") or t_4h not in ("LONG", "SHORT"):
-        print(f"🌍 BTC filter: no clear bias (1D={t_1d}, 4H={t_4h})")
         return None
     if t_1d != t_4h:
-        print(f"🌍 BTC filter: 1D/4H conflict (1D={t_1d}, 4H={t_4h})")
         return None
 
     bias = t_1d
@@ -1409,17 +1342,13 @@ def get_btc_filter(ctx):
     gap_atr = gap / atr
     strength_ok = (gap_atr >= B6_MIN_GAP_ATR) or (adx >= B6_MIN_ADX)
     if not strength_ok:
-        print(f"🌍 BTC filter: weak trend (gap={gap_atr:.2f} ATR, ADX={adx:.1f})")
         return None
 
     ext_atr = abs(close - ema21) / atr
     if ext_atr > B6_MAX_EXT_ATR:
-        print(f"🌍 BTC filter: overextended ({ext_atr:.2f} ATR from EMA21)")
         return None
 
     align_1h = t_1h == bias
-    print(f"🌍 BTC filter OK | bias={bias} | 1D={t_1d} 4H={t_4h} 1H={t_1h} | gap={gap_atr:.2f} ADX={adx:.1f} ext={ext_atr:.2f} | 1H_align={align_1h}")
-
     return {"bias": bias, "t_1d": t_1d, "t_4h": t_4h, "t_1h": t_1h, "align_1h": align_1h,
             "gap_atr": gap_atr, "adx": adx, "ext_atr": ext_atr}
 
@@ -1457,8 +1386,6 @@ def analyze_btc_aligned(symbol, ctx):
     vol_ratio = ratio(volume, avg_volume)
     vol_ok = vol_ratio >= B6_VOLUME_MULT
 
-    print(f"  {symbol}: BTC={bias} | pullback ok={touched} | RSI {rsi:.1f} ok={rsi_ok} | Vol x{vol_ratio:.2f} ok={vol_ok}")
-
     if not (touched and rsi_ok and vol_ok):
         tags = []
         if not touched: tags.append("pullback")
@@ -1474,7 +1401,6 @@ def analyze_btc_aligned(symbol, ctx):
     score = (0.35 * btc_score + 0.30 * trend_score + 0.20 * vol_score + 0.15 * min(abs(rsi - 50) / 20.0, 1.0))
 
     if score < B6_MIN_SCORE:
-        print(f"  {symbol}: score too low ({score:.3f})")
         return rej("08_score")
 
     return {
@@ -1486,7 +1412,6 @@ def analyze_btc_aligned(symbol, ctx):
 
 # =====================================================================
 # استراتژی ۸: SMC Winner (v70) - نسخه اصلاح‌شده
-# سوییپ نقدینگی ۴ ساعته + فیلتر روند + فیلتر حجم + سقف ریسک + RR حداقلی
 # =====================================================================
 def analyze_smc_winner(symbol, ctx):
     try:
@@ -1511,11 +1436,9 @@ def analyze_smc_winner(symbol, ctx):
     ema21 = float(curr["ema21"])
     ema50 = float(curr["ema50"])
 
-    # سطوح نقدینگی در N کندل قبل از کندل سیگنال
     prev_low = float(df4["low"].iloc[-B8_SWEEP_LOOKBACK - 1:-1].min())
     prev_high = float(df4["high"].iloc[-B8_SWEEP_LOOKBACK - 1:-1].max())
 
-    # سوییپ + بازگشت + کندل تأییدی هم‌جهت + روند هم‌جهت (EMA21 / EMA50 و قیمت)
     if low < prev_low and close > prev_low and close > open_:
         direction = "LONG"
         if not (ema21 > ema50 and close > ema50):
@@ -1534,7 +1457,6 @@ def analyze_smc_winner(symbol, ctx):
     if sl_dist <= 0:
         return rej("07_sl_dist_invalid")
 
-    # حداقل فاصله SL (جلوگیری از استاپ‌های نویزی) و سقف ریسک (رد سیگنال‌های SL دور)
     sl_dist = max(sl_dist, atr * B8_MIN_SL_ATR)
     if sl_dist > atr * B8_MAX_SL_ATR or sl_dist / close > B8_MAX_SL_PCT:
         return rej("08_sl_too_far")
@@ -1546,20 +1468,17 @@ def analyze_smc_winner(symbol, ctx):
     if rr < B8_MIN_RR:
         return rej("10_rr_low")
 
-    # فیلتر حجم
     volume = float(curr["volume"])
     avg_volume = float(df4["volume"].iloc[-21:-1].mean())
     vol_ratio = ratio(volume, avg_volume)
     if vol_ratio < B8_MIN_VOL_RATIO:
         return rej("11_volume")
 
-    # RSI نباید در جهت معامله اشباع شده باشد
     if direction == "LONG" and rsi > B8_RSI_MAX_LONG:
         return rej("12_rsi_extreme")
     if direction == "SHORT" and rsi < B8_RSI_MIN_SHORT:
         return rej("12_rsi_extreme")
 
-    # امتیازدهی واقعی: قدرت روند، حجم، اندازه سایه سوییپ، کیفیت RR
     trend_score = min(abs(ema21 - ema50) / atr / 1.0, 1.0)
     vol_score = min(vol_ratio / 2.0, 1.0)
     wick_score = min((wick / atr) / 1.0, 1.0)
@@ -1573,18 +1492,31 @@ def analyze_smc_winner(symbol, ctx):
             return entry - sl_dist, entry + tp_dist
         return entry + sl_dist, entry - tp_dist
 
+    # meta برای لاگ (اصلاح شد)
+    sweep_depth = abs(prev_low - low) if direction == "LONG" else abs(high - prev_high)
+    meta = {
+        "fvg_size_atr": "",
+        "fvg_age_15m": "",
+        "gap_pos": "",
+        "last_candle_with_trade": 1 if ((direction == "LONG" and close > open_) or (direction == "SHORT" and close < open_)) else 0,
+        "sweep_depth_atr": round(sweep_depth / atr, 3),
+        "sweep_age_h": 0,
+        "asia_range_atr": "",
+        "gap4_atr": "",
+        "risk_atr": round(sl_dist / atr, 3),
+    }
+
     return {
         "symbol": symbol, "direction": direction, "close": close,
-        "atr": atr, "rsi": rsi,
-        "volume": volume, "avg_volume": avg_volume,
+        "atr": atr, "rsi": rsi, "volume": volume, "avg_volume": avg_volume,
         "signal_key": int(curr["timestamp"]), "score": score,
         "setup": f"SMC Winner ({direction} Sweep, RR {rr:.1f})",
-        "levels": levels,
+        "levels": levels, "meta": meta,
     }
 
 
 # =====================================================================
-# تعریف ربات‌ها
+# Bot
 # =====================================================================
 class Bot:
     def __init__(self, name, label, analyze, heartbeat_file, signals_file,
@@ -1626,8 +1558,6 @@ BOTS = [
     Bot("crypto-signal-bot-v60", "BTC Filter", analyze_btc_aligned,
         "server_messages_v60.json", "last_signals_v60.json",
         cooldown_hours=B6_COOLDOWN_HOURS, btc_filter_4h=False),
-    
-    # --- ربات جدید ۸ (SMC Winner) ---
     Bot("crypto-signal-bot-v70", "SMC Winner", analyze_smc_winner,
         "server_messages_v70.json", "last_signals_v70.json",
         cooldown_hours=B8_COOLDOWN_HOURS, max_signals=B8_MAX_SIGNALS_PER_RUN,
@@ -1640,6 +1570,7 @@ LIVE_BOTS = [b for b in BOTS if b.live]
 # Heartbeat
 # =====================================================================
 HEARTBEAT_FILE = "server_messages.json"
+
 
 def send_heartbeat_all(results, btc_4h, btc_1h, warning=None):
     date_gregorian, date_jalali, time_str = get_iran_time()
@@ -1681,6 +1612,9 @@ def send_heartbeat_all(results, btc_4h, btc_1h, warning=None):
 # مدیریت معاملات
 # =====================================================================
 def check_trade_result(exchange, symbol, data):
+    """
+    اصلاح‌شده: تصمیم درست در لمس همزمان SL/TP.
+    """
     direction, tp, sl = data["direction"], data["tp"], data["sl"]
     opened_ms = data.get("opened_ms")
 
@@ -1690,14 +1624,31 @@ def check_trade_result(exchange, symbol, data):
         except Exception as e:
             print(f"⚠️ خطا در دریافت کندل‌های {symbol}: {e}")
             candles = []
-        for cd in candles:
-            if cd[0] < opened_ms: continue
-            high, low = cd[2], cd[3]
-            if direction == "LONG": hit_sl, hit_tp = low <= sl, high >= tp
-            else: hit_sl, hit_tp = high >= sl, low <= tp
-            if hit_sl: return "SL", sl
-            if hit_tp: return "TP", tp
 
+        for cd in candles:
+            if cd[0] < opened_ms:
+                continue
+            high, low, close = cd[2], cd[3], cd[4]
+
+            if direction == "LONG":
+                hit_sl, hit_tp = low <= sl, high >= tp
+            else:
+                hit_sl, hit_tp = high >= sl, low <= tp
+
+            if hit_sl and hit_tp:
+                # هر دو در یک کندل: بر اساس close تصمیم بگیر
+                dist_tp = abs(close - tp)
+                dist_sl = abs(close - sl)
+                if dist_tp < dist_sl:
+                    return "TP", tp
+                return "SL", sl
+
+            if hit_sl:
+                return "SL", sl
+            if hit_tp:
+                return "TP", tp
+
+    # fallback
     price = float(exchange.fetch_ticker(symbol)["last"])
     if direction == "LONG":
         if price <= sl: return "SL", price
@@ -1726,14 +1677,11 @@ def build_close_message(bot, symbol, direction, result, close_price, entry):
 🏁 نتیجه: {title}
 💰 قیمت بسته شدن: {format_number(close_price)}
 🚪 قیمت ورود: {format_number(entry)}
-━━━━━━━━━━━━━━━━━
-📅 تاریخ شمسی: {date_jalali}
-📅 تاریخ میلادی: {date_gregorian}
-⏰ ساعت: {time_str}
 ━━━━━━━━━━━━━━━━━"""
 
 
 CLOSE_MSG_MAX_ATTEMPTS = 5
+
 
 def update_open_trades(bot, exchange):
     signals = load_json(bot.signals_file, {})
@@ -1766,8 +1714,6 @@ def update_open_trades(bot, exchange):
             data["close_msg_attempts"] = data.get("close_msg_attempts", 0) + 1
             data["close_telegram_sent"] = bool(msg_id)
             updated = True
-            if not msg_id:
-                print(f"⚠️ {symbol}: پیام بسته شدن ارسال نشد (تلاش {data['close_msg_attempts']})")
 
     if updated:
         save_json(bot.signals_file, signals)
@@ -1795,7 +1741,7 @@ def build_signal_message(bot, c, entry, sl, tp, rr):
 
 
 # =====================================================================
-# چرخه‌ی یک ربات
+# چرخه ربات
 # =====================================================================
 def run_bot(bot, ctx, btc_4h, btc_1h):
     _CUR["bot"] = bot.name
@@ -1811,12 +1757,10 @@ def run_bot(bot, ctx, btc_4h, btc_1h):
         try:
             prev = signals.get(symbol)
             if prev and prev.get("status") == "OPEN":
-                print(f"⏳ {symbol} has an OPEN trade. Skipping.")
                 funnel_count("~skip_open_trade")
                 continue
             if (prev and bot.cooldown_ms and prev.get("closed_ms")
                     and t_now - prev["closed_ms"] < bot.cooldown_ms):
-                print(f"❄️ {symbol} in cooldown. Skipping.")
                 funnel_count("~skip_cooldown")
                 continue
 
@@ -1828,29 +1772,24 @@ def run_bot(bot, ctx, btc_4h, btc_1h):
 
             prev_key = (prev.get("signal_key", prev.get("cross_ts")) if prev else None)
             if prev and prev_key == c["signal_key"] and prev.get("direction") == c["direction"]:
-                print(f"♻️ {symbol} {c['direction']}: this setup was already signaled. Skipping.")
                 funnel_count("~already_signaled")
                 continue
 
             if symbol != BTC_SYMBOL:
                 if bot.btc_filter_4h and btc_4h in ("LONG", "SHORT") and c["direction"] != btc_4h:
-                    print(f"🚫 {symbol} {c['direction']} rejected. BTC 4H trend is {btc_4h}.")
                     funnel_count("~btc_4h_filter")
                     continue
                 if bot.btc_filter_1h and btc_1h in ("LONG", "SHORT") and c["direction"] != btc_1h:
-                    print(f"🚫 {symbol} {c['direction']} rejected. BTC 1H trend is {btc_1h}.")
                     funnel_count("~btc_1h_filter")
                     continue
 
             candidates.append(c)
-            print(f"✅ Candidate: {symbol} {c['direction']} score={c['score']:.3f}")
         except Exception as e:
             funnel_count("EXCEPTION")
             print(f"⚠️ خطا در {symbol}: {e}")
             continue
 
     candidates.sort(key=lambda x: x["score"], reverse=True)
-    print(f"📋 {len(candidates)} candidate(s): " + ", ".join(f"{c['symbol']}({c['score']:.2f})" for c in candidates))
 
     sent = 0
     open_dir = Counter(r.get("direction") for r in signals.values() if r.get("status") == "OPEN")
@@ -1859,28 +1798,27 @@ def run_bot(bot, ctx, btc_4h, btc_1h):
         symbol = c["symbol"]
         try:
             if open_dir[c["direction"]] >= MAX_OPEN_SAME_DIR:
-                print(f"🧱 {symbol} {c['direction']}: سقف {MAX_OPEN_SAME_DIR} معامله‌ی باز هم‌جهت پر است. Skipping.")
                 funnel_count("~cap_same_direction")
                 continue
             entry = get_price(ctx, symbol)
             if abs(entry - c["close"]) > c["atr"] * MAX_ENTRY_DRIFT_ATR:
-                print(f"⌛ {symbol}: price drifted too far from signal candle. Skipping.")
                 funnel_count("~send_price_drift")
                 continue
 
             lv = c["levels"](entry)
             if lv is None:
-                print(f"⚠️ {symbol}: price already beyond stop level. Skipping.")
                 funnel_count("~send_levels_none")
                 continue
             sl, tp = lv
             if sl <= 0 or tp <= 0:
-                print(f"⚠️ {symbol}: invalid SL/TP. Skipping.")
                 funnel_count("~send_invalid_sl_tp")
                 continue
             rr = abs(tp - entry) / abs(entry - sl)
 
             msg_id = send_telegram(build_signal_message(bot, c, entry, sl, tp, rr))
+
+            # اصلاح: در backtest از timestamp کندل استفاده کن
+            opened_ts = ctx.ref_time_ms if ctx.ref_time_ms is not None else now_ms()
 
             record = {
                 "direction": c["direction"], "entry": entry, "tp": tp, "sl": sl,
@@ -1900,16 +1838,14 @@ def run_bot(bot, ctx, btc_4h, btc_1h):
             }
             if msg_id:
                 record["status"] = "OPEN"
-                record["opened_ms"] = now_ms()
+                record["opened_ms"] = opened_ts
                 sent += 1
                 open_dir[c["direction"]] += 1
                 funnel_count("SENT_signal")
                 excel_log.log_signal(bot.name, symbol, c["direction"], entry, tp, sl)
-                print(f"✅ {c['direction']} signal for {symbol} sent! ({sent}/{bot.max_signals})")
             else:
                 record["status"] = "NOT_SENT"
                 funnel_count("~telegram_not_sent")
-                print(f"⚠️ {symbol}: پیام تلگرام ارسال نشد؛ معامله ثبت نشد (NOT_SENT).")
             signals[symbol] = record
             save_json(bot.signals_file, signals)
         except Exception as e:
@@ -1917,13 +1853,12 @@ def run_bot(bot, ctx, btc_4h, btc_1h):
             print(f"⚠️ خطا در ارسال {symbol}: {e}")
             continue
 
-    print(f"{bot.name}: analysis complete ({sent} signal(s) sent).")
     print_funnel(bot.name)
     return sent
 
 
 # =====================================================================
-# خلاصه‌ی روزانه
+# خلاصه روزانه
 # =====================================================================
 def maybe_send_daily_summary():
     now = datetime.now(ZoneInfo("Asia/Tehran"))
@@ -1983,7 +1918,6 @@ if __name__ == "__main__":
 
     try:
         send_heartbeat_all(results, btc_4h, btc_1h, warning)
-        print("✅ Heartbeat sent.")
     except Exception as e:
         print(f"⚠️ خطا در heartbeat: {e}")
 
