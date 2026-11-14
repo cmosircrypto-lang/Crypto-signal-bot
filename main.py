@@ -16,6 +16,7 @@ import requests
 import numpy as np
 import pandas as pd
 import ccxt
+from collections import Counter, defaultdict
 from datetime import datetime, timezone, timedelta
 from zoneinfo import ZoneInfo
 import jdatetime
@@ -197,6 +198,32 @@ B8_RSI_MAX_LONG = 70
 B8_RSI_MIN_SHORT = 30
 B8_MIN_SCORE = 0.45
 B8_MAX_SIGNALS_PER_RUN = 2
+
+
+# =====================================================================
+# قیف فیلتر (Funnel): شمارش علت رد شدن نمادها در هر ربات
+# =====================================================================
+FUNNEL = defaultdict(Counter)
+_CUR = {"bot": None}
+
+
+def rej(label="unlabeled"):
+    """ثبت علت رد شدن و برگرداندن None (جایگزین return None)"""
+    FUNNEL[_CUR["bot"]][label] += 1
+    return None
+
+
+def funnel_count(label):
+    FUNNEL[_CUR["bot"]][label] += 1
+
+
+def print_funnel(bot_name, top=12):
+    c = FUNNEL.pop(bot_name, None)
+    if not c:
+        return
+    print(f"📉 {bot_name} funnel:")
+    for k, n in sorted(c.items(), key=lambda kv: (-kv[1], kv[0]))[:top]:
+        print(f"   {k}: {n}")
 
 
 # =====================================================================
@@ -460,20 +487,20 @@ def analyze_cross(symbol, ctx):
             break
 
     if direction is None:
-        return None
+        return rej("01_no_recent_4h_cross")
 
     last4 = df_4h.iloc[-1]
     atr_4h = float(last4["atr"])
     if np.isnan(atr_4h) or atr_4h <= 0:
-        return None
+        return rej("02_bad_atr_4h")
 
     adx_4h = float(last4["adx"])
     if np.isnan(adx_4h):
-        return None
+        return rej("03_bad_adx_4h")
 
     if adx_4h < B1_MIN_ADX_4H:
         print(f"  {symbol}: weak 4H ADX ({adx_4h:.1f})")
-        return None
+        return rej("04_adx_4h")
 
     ema9_4h = float(last4["ema9"])
     ema21_4h = float(last4["ema21"])
@@ -482,50 +509,50 @@ def analyze_cross(symbol, ctx):
     gap_4h = abs(ema9_4h - ema21_4h)
     if gap_4h < 0.35 * atr_4h:
         print(f"  {symbol}: weak 4H trend")
-        return None
+        return rej("05_gap_4h")
 
     ema9_slope = (ema9_4h - float(df_4h["ema9"].iloc[-4]))
     slope_atr = (abs(ema9_slope) / atr_4h)
 
     if slope_atr < B1_MIN_SLOPE_ATR:
         print(f"  {symbol}: EMA slope too weak")
-        return None
+        return rej("06_slope_weak")
 
     if direction == "LONG" and ema9_slope <= 0:
-        return None
+        return rej("07_slope_direction")
     if direction == "SHORT" and ema9_slope >= 0:
-        return None
+        return rej("07_slope_direction")
 
     if direction == "LONG":
         if ema21_4h <= ema50_4h:
             print(f"  {symbol}: LONG cross but EMA21 below EMA50")
-            return None
+            return rej("08_ema21_vs_ema50")
     else:
         if ema21_4h >= ema50_4h:
             print(f"  {symbol}: SHORT cross but EMA21 above EMA50")
-            return None
+            return rej("08_ema21_vs_ema50")
 
     df_1h = get_data(ctx, symbol, "1h")
     if trend_of(df_1h) != direction:
-        return None
+        return rej("09_trend_1h_mismatch")
 
     last_1h = df_1h.iloc[-1]
     atr_1h = float(last_1h["atr"])
     if np.isnan(atr_1h) or atr_1h <= 0:
-        return None
+        return rej("10_bad_atr_1h")
 
     adx_1h = float(last_1h["adx"])
     if np.isnan(adx_1h):
-        return None
+        return rej("11_bad_adx_1h")
 
     if adx_1h < B1_MIN_ADX_1H:
         print(f"  {symbol}: weak 1H ADX ({adx_1h:.1f})")
-        return None
+        return rej("12_adx_1h")
 
     gap_1h = abs(float(last_1h["ema9"]) - float(last_1h["ema21"]))
     if gap_1h < 0.40 * atr_1h:
         print(f"  {symbol}: weak 1H trend")
-        return None
+        return rej("13_gap_1h")
 
     vol_1h = float(last_1h["volume"])
     avg_vol_1h = float(df_1h["volume"].iloc[-21:-1].mean())
@@ -533,22 +560,22 @@ def analyze_cross(symbol, ctx):
 
     if vol_ratio_1h < B1_VOLUME_MULT:
         print(f"  {symbol}: weak volume (x{vol_ratio_1h:.2f})")
-        return None
+        return rej("14_volume_1h")
 
     df_15m = get_data(ctx, symbol, "15m")
     last = df_15m.iloc[-1]
     rsi = float(last["rsi"])
     if np.isnan(rsi):
-        return None
+        return rej("15_bad_rsi")
 
     lo, hi = (B1_RSI_LONG if direction == "LONG" else B1_RSI_SHORT)
     if not (lo <= rsi <= hi):
         print(f"  {symbol}: RSI {rsi:.1f} not in range")
-        return None
+        return rej("16_rsi_15m")
 
     close = float(last["close"])
     if (atr_1h * B1_SL_ATR) / close < MIN_SL_PCT:
-        return None
+        return rej("17_min_sl_pct")
 
     trend1_score = (min(gap_1h / atr_1h, 1.5) / 1.5)
     trend4_score = (min(gap_4h / atr_4h, 1.5) / 1.5)
@@ -564,7 +591,7 @@ def analyze_cross(symbol, ctx):
 
     if score < B1_MIN_SCORE:
         print(f"  {symbol}: score too low ({score:.3f})")
-        return None
+        return rej("18_score")
 
     return {
         "symbol": symbol, "direction": direction, "close": close,
@@ -582,7 +609,7 @@ def analyze_breakout(symbol, ctx):
     df = get_data(ctx, symbol, "1h")
     lb = B2_LOOKBACK
     if len(df) < lb + 5:
-        return None
+        return rej("01_short_data")
 
     last = df.iloc[-1]
     prev = df.iloc[-2]
@@ -601,11 +628,11 @@ def analyze_breakout(symbol, ctx):
     body = abs(close - open_)
 
     if np.isnan(atr) or atr <= 0 or rng <= 0 or range_size <= 0:
-        return None
+        return rej("02_bad_values")
 
     if range_size > B2_MAX_RANGE_ATR * atr:
         print(f"  {symbol}: range too wide ({range_size / atr:.1f} ATR)")
-        return None
+        return rej("03_range_too_wide")
 
     direction = level = None
 
@@ -618,16 +645,16 @@ def analyze_breakout(symbol, ctx):
         direction, level = "SHORT", range_low
 
     if direction is None:
-        return None
+        return rej("04_no_breakout")
 
     if body < B2_MIN_BODY_ATR * atr:
         print(f"  {symbol}: {direction} breakout but body too weak ({body / atr:.2f} ATR)")
-        return None
+        return rej("05_body_weak")
 
     adx = float(last["adx"]) if not np.isnan(last["adx"]) else 0.0
     if adx < B2_MIN_ADX:
         print(f"  {symbol}: breakout ADX too weak ({adx:.1f})")
-        return None
+        return rej("06_adx_weak")
 
     volume = float(last["volume"])
     avg_volume = float(df["volume"].iloc[-21:-1].mean())
@@ -646,14 +673,21 @@ def analyze_breakout(symbol, ctx):
 
     if not (rsi_ok and vol_ok and trend_ok):
         reasons = []
-        if not rsi_ok: reasons.append(f"RSI {rsi:.1f} خارج {lo}-{hi}")
-        if not vol_ok: reasons.append(f"حجم {vol_ratio:.2f} < {B2_VOLUME_MULT}")
-        if not trend_ok: reasons.append(f"روند ۴ساعته {slow_trend} مخالف {direction}")
+        tags = []
+        if not rsi_ok:
+            reasons.append(f"RSI {rsi:.1f} خارج {lo}-{hi}")
+            tags.append("rsi")
+        if not vol_ok:
+            reasons.append(f"حجم {vol_ratio:.2f} < {B2_VOLUME_MULT}")
+            tags.append("vol")
+        if not trend_ok:
+            reasons.append(f"روند ۴ساعته {slow_trend} مخالف {direction}")
+            tags.append("trend4h")
         print(f"    -> rejected: " + " | ".join(reasons))
-        return None
+        return rej("07_filters_" + "+".join(tags))
 
     if (atr * B2_SL_ATR) / close < MIN_SL_PCT:
-        return None
+        return rej("08_min_sl_pct")
 
     strength = min(abs(close - level) / atr, 1.0)
     body_score = min(body / atr, 1.5) / 1.5
@@ -666,7 +700,7 @@ def analyze_breakout(symbol, ctx):
 
     if score < B2_MIN_SCORE:
         print(f"    -> rejected (score {score:.3f} < {B2_MIN_SCORE})")
-        return None
+        return rej("09_score")
 
     return {
         "symbol": symbol, "direction": direction, "close": close,
@@ -684,9 +718,9 @@ def analyze_mtf_pullback(symbol, ctx):
     try:
         df_1d = get_data(ctx, symbol, "1d")
     except Exception:
-        return None
+        return rej("01_no_1d_data")
     if len(df_1d) < 200:
-        return None
+        return rej("02_1d_lt_200_candles")
 
     ema50_d = df_1d["close"].ewm(span=50, adjust=False).mean()
     ema200_d = df_1d["close"].ewm(span=200, adjust=False).mean()
@@ -694,7 +728,7 @@ def analyze_mtf_pullback(symbol, ctx):
     e200 = float(ema200_d.iloc[-1])
     close_d = float(df_1d["close"].iloc[-1])
     if any(np.isnan(x) for x in (e50, e200)) or e200 <= 0:
-        return None
+        return rej("03_bad_daily_ema")
 
     sep = abs(e50 - e200) / e200
     if close_d > e200 and e50 > e200 and sep >= B3_MIN_SEP:
@@ -702,27 +736,27 @@ def analyze_mtf_pullback(symbol, ctx):
     elif close_d < e200 and e50 < e200 and sep >= B3_MIN_SEP:
         direction = "SHORT"
     else:
-        return None
+        return rej("04_no_daily_bias")
 
     try:
         df = get_data(ctx, symbol, "1h")
     except Exception:
-        return None
+        return rej("05_no_1h_data")
     if len(df) < 50:
-        return None
+        return rej("06_1h_short_data")
 
     last = df.iloc[-1]
     atr = float(last["atr"])
     rsi = float(last["rsi"])
     ema20 = float(last["ema21"])
     if np.isnan(atr) or np.isnan(rsi) or atr <= 0:
-        return None
+        return rej("07_bad_atr_rsi")
 
     c = float(last["close"]); o = float(last["open"])
     h = float(last["high"]); l = float(last["low"])
     rng = h - l
     if rng <= 0:
-        return None
+        return rej("08_zero_range")
     body_ratio = abs(c - o) / rng
     volume = float(last["volume"])
     avg_volume = float(df["volume"].iloc[-21:-1].mean()) if len(df) >= 21 else volume
@@ -742,16 +776,16 @@ def analyze_mtf_pullback(symbol, ctx):
         levels_list = ([swing_lows[-1]] if swing_lows else []) + [donch_low]
         level = min(levels_list)
         if float(look["high"].max()) < level * B3_MIN_PULLBACK:
-            return None
+            return rej("09_no_pullback_move")
         dist = abs(c - level) / level
         if dist > B3_NEAR_PCT:
-            return None
+            return rej("10_not_near_level")
         if not (B3_RSI_LONG[0] <= rsi <= B3_RSI_LONG[1]):
-            return None
+            return rej("11_rsi")
         if body_ratio < B3_BODY_MIN or c <= o:
-            return None
+            return rej("12_candle_body_dir")
         if c < ema20:
-            return None
+            return rej("13_vs_ema21")
         risk = max(c - level + atr * 0.1, atr * B3_ATR_MULT)
         if risk / c < MIN_SL_PCT:
             risk = c * MIN_SL_PCT * 1.15
@@ -768,16 +802,16 @@ def analyze_mtf_pullback(symbol, ctx):
         levels_list = ([swing_highs[-1]] if swing_highs else []) + [donch_high]
         level = max(levels_list)
         if float(look["low"].min()) > level * (2 - B3_MIN_PULLBACK):
-            return None
+            return rej("09_no_pullback_move")
         dist = abs(c - level) / level
         if dist > B3_NEAR_PCT:
-            return None
+            return rej("10_not_near_level")
         if not (B3_RSI_SHORT[0] <= rsi <= B3_RSI_SHORT[1]):
-            return None
+            return rej("11_rsi")
         if body_ratio < B3_BODY_MIN or c >= o:
-            return None
+            return rej("12_candle_body_dir")
         if c > ema20:
-            return None
+            return rej("13_vs_ema21")
         risk = max(level - c + atr * 0.1, atr * B3_ATR_MULT)
         if risk / c < MIN_SL_PCT:
             risk = c * MIN_SL_PCT * 1.15
@@ -793,7 +827,7 @@ def analyze_mtf_pullback(symbol, ctx):
 
     if score < B3_MIN_SCORE:
         print(f"  {symbol}: MTF score too low ({score:.3f})")
-        return None
+        return rej("14_score")
 
     print(f"  {symbol}: MTF {direction} | RSI {rsi:.1f} | body {body_ratio:.2f} | dist {dist*100:.2f}% | score {score:.3f}")
 
@@ -840,33 +874,33 @@ def _asia_range_1h(df1):
 
 def analyze_amd_session(symbol, ctx):
     if not _in_active_session():
-        return None
+        return rej("01_outside_active_session")
 
     df4 = get_data(ctx, symbol, "4h")
     l4 = df4.iloc[-1]
     bias_4h = trend_of(df4)
     atr4 = float(l4["atr"])
     if bias_4h not in ("LONG", "SHORT") or np.isnan(atr4) or atr4 <= 0:
-        return None
+        return rej("02_bad_4h_bias_atr")
     gap4 = abs(float(l4["ema9"]) - float(l4["ema21"]))
     if gap4 < B30_TREND_GAP_4H_ATR * atr4:
-        return None
+        return rej("03_gap_4h")
 
     df1 = get_data(ctx, symbol, "1h")
     if len(df1) < 30:
-        return None
+        return rej("04_1h_short_data")
     atr1 = float(df1["atr"].iloc[-1])
     if np.isnan(atr1) or atr1 <= 0:
-        return None
+        return rej("05_bad_atr_1h")
 
     asia = _asia_range_1h(df1)
     if asia is None:
-        return None
+        return rej("06_no_asia_range")
 
     rng_size = asia["high"] - asia["low"]
     if rng_size < B30_MIN_RANGE_ATR * atr1 or rng_size > B30_MAX_RANGE_ATR * atr1:
         print(f"  {symbol}: Asia range invalid ({rng_size / atr1:.1f} ATR)")
-        return None
+        return rej("07_asia_range_invalid")
 
     hi1 = df1["high"].values
     lo1 = df1["low"].values
@@ -886,11 +920,11 @@ def analyze_amd_session(symbol, ctx):
             break
 
     if sweep is None:
-        return None
+        return rej("08_no_sweep")
 
     if sweep["direction"] != bias_4h:
         print(f"  {symbol}: AMD sweep {sweep['direction']} مخالف 4H={bias_4h}")
-        return None
+        return rej("09_sweep_vs_4h_bias")
 
     direction = sweep["direction"]
 
@@ -922,7 +956,7 @@ def analyze_amd_session(symbol, ctx):
 
     if fvg is None:
         print(f"  {symbol}: AMD {direction} | sweep ok | FVG missing")
-        return None
+        return rej("10_no_fvg")
 
     if direction == "LONG":
         sl = sweep["extreme"] - B30_SL_BUFFER_ATR * atr1
@@ -944,11 +978,11 @@ def analyze_amd_session(symbol, ctx):
 
     if levels(price) is None:
         print(f"  {symbol}: AMD {direction} rejected (RR/levels)")
-        return None
+        return rej("11_levels_rr")
 
     risk = abs(price - sl)
     if risk / price < MIN_SL_PCT:
-        return None
+        return rej("12_min_sl_pct")
     rr = abs(tp - price) / risk
 
     depth = abs(sweep["level"] - sweep["extreme"]) / atr1
@@ -962,7 +996,7 @@ def analyze_amd_session(symbol, ctx):
 
     if score < B30_MIN_SCORE:
         print(f"  {symbol}: AMD score too low ({score:.3f})")
-        return None
+        return rej("13_score")
 
     print(f"  {symbol}: AMD {direction} | Asia sweep ok | FVG ok | RR {rr:.2f} | score {score:.3f}")
     return {
@@ -984,7 +1018,7 @@ def analyze_regime(symbol, ctx):
     rsi = float(last["rsi"])
     adx = float(last["adx"])
     if any(np.isnan(v) for v in (atr, rsi, adx)) or atr <= 0:
-        return None
+        return rej("01_bad_atr_rsi_adx")
 
     volume = float(last["volume"])
     avg_volume = float(df["volume"].iloc[-21:-1].mean())
@@ -994,7 +1028,7 @@ def analyze_regime(symbol, ctx):
     elif adx <= B4_ADX_RANGE: mode = "range"
     else:
         print(f"  {symbol}: ADX {adx:.1f} بین دو رژیم، بدون معامله")
-        return None
+        return rej("02_adx_between_regimes")
 
     if mode == "trend":
         df_4h = get_data(ctx, symbol, "4h")
@@ -1002,16 +1036,16 @@ def analyze_regime(symbol, ctx):
         direction = trend_of(df_4h)
         atr_4h = float(l4["atr"])
         if direction not in ("LONG", "SHORT") or np.isnan(atr_4h) or atr_4h <= 0:
-            return None
+            return rej("T1_bad_4h_dir_atr")
         gap_4h = abs(float(l4["ema9"]) - float(l4["ema21"]))
         if gap_4h < B4_TREND_GAP_4H_ATR * atr_4h:
-            return None
+            return rej("T2_gap_4h")
 
         try:
             btc_4h = trend_of(get_data(ctx, BTC_SYMBOL, "4h"))
             if btc_4h in ("LONG", "SHORT") and direction != btc_4h:
                 print(f"  {symbol}: TREND {direction} rejected (BTC 4H={btc_4h})")
-                return None
+                return rej("T3_btc_4h_mismatch")
         except Exception: pass
 
         ema21 = float(last["ema21"])
@@ -1026,14 +1060,18 @@ def analyze_regime(symbol, ctx):
 
         print(f"  {symbol}: ADX {adx:.1f} TREND {direction} | پولبک ok={touched} | RSI {rsi:.1f} ok={rsi_ok} | Vol x{vol_ratio:.2f} ok={vol_ok}")
         if not (touched and rsi_ok and vol_ok):
-            return None
+            tags = []
+            if not touched: tags.append("pullback")
+            if not rsi_ok: tags.append("rsi")
+            if not vol_ok: tags.append("vol")
+            return rej("T4_filters_" + "+".join(tags))
         if (atr * B4_TREND_SL_ATR) / close < MIN_SL_PCT:
-            return None
+            return rej("T5_min_sl_pct")
 
         score = (0.45 * min(adx / 40.0, 1.0) + 0.30 * min(gap_4h / atr_4h, 1.0) + 0.25 * min(vol_ratio / 2.0, 1.0))
         if score < B4_MIN_SCORE:
             print(f"  {symbol}: score too low ({score:.3f})")
-            return None
+            return rej("T6_score")
 
         return {
             "symbol": symbol, "direction": direction, "close": close, "atr": atr, "rsi": rsi,
@@ -1043,7 +1081,7 @@ def analyze_regime(symbol, ctx):
 
     bb_lo, bb_mid, bb_up = (float(last[k]) for k in ("bb_lo", "bb_mid", "bb_up"))
     if any(np.isnan(v) for v in (bb_lo, bb_mid, bb_up)):
-        return None
+        return rej("R1_bad_bollinger")
 
     if low <= bb_lo and close > bb_lo and rsi <= B4_RANGE_RSI_LONG_MAX:
         direction = "LONG"
@@ -1055,15 +1093,15 @@ def analyze_regime(symbol, ctx):
         tp = bb_mid
     else:
         print(f"  {symbol}: ADX {adx:.1f} RANGE | بدون بازگشت از باند (RSI {rsi:.1f})")
-        return None
+        return rej("R2_no_band_reversal")
 
     if (direction == "LONG" and not (sl < close < tp)) or (direction == "SHORT" and not (tp < close < sl)):
-        return None
+        return rej("R3_bad_levels_order")
     risk = abs(close - sl)
     rr = abs(tp - close) / risk
     if rr < B4_RANGE_MIN_RR or risk / close < MIN_SL_PCT:
         print(f"  {symbol}: RANGE {direction} rejected (RR {rr:.2f})")
-        return None
+        return rej("R4_rr_or_min_sl")
 
     def levels(entry):
         if direction == "LONG": return (sl, tp) if sl < entry < tp else None
@@ -1072,7 +1110,7 @@ def analyze_regime(symbol, ctx):
     score = (0.50 * min(rr / 3.0, 1.0) + 0.30 * min(abs(rsi - 50) / 25.0, 1.0) + 0.20 * min(vol_ratio / 2.0, 1.0))
     if score < B4_MIN_SCORE:
         print(f"  {symbol}: score too low ({score:.3f})")
-        return None
+        return rej("R5_score")
 
     print(f"  {symbol}: ADX {adx:.1f} RANGE {direction} | RSI {rsi:.1f} | RR {rr:.2f}")
     return {
@@ -1085,9 +1123,6 @@ def analyze_regime(symbol, ctx):
 # =====================================================================
 # استراتژی ۵: SMC/ICT
 # =====================================================================
-# =====================================================================
-# استراتژی ۵: SMC/ICT
-# =====================================================================
 def analyze_smc(symbol, ctx):
     df4 = get_data(ctx, symbol, "4h")
     l4 = df4.iloc[-1]
@@ -1095,21 +1130,21 @@ def analyze_smc(symbol, ctx):
     atr4 = float(l4["atr"])
     
     if direction not in ("LONG", "SHORT") or np.isnan(atr4) or atr4 <= 0:
-        return None
+        return rej("01_bad_4h_dir_atr")
         
     trend_gap = abs(float(l4["ema9"]) - float(l4["ema21"]))
     if trend_gap < B5_TREND_GAP_4H_ATR * atr4:
-        return None
+        return rej("02_gap_4h")
 
     df1 = get_data(ctx, symbol, "1h")
     n1 = len(df1)
     
     if n1 < B5_RANGE_BARS + B5_LOOKBACK_1H + 5:
-        return None
+        return rej("03_1h_short_data")
         
     atr1 = float(df1["atr"].iloc[-1])
     if np.isnan(atr1) or atr1 <= 0:
-        return None
+        return rej("04_bad_atr_1h")
 
     hi1 = df1["high"].values
     lo1 = df1["low"].values
@@ -1140,7 +1175,7 @@ def analyze_smc(symbol, ctx):
                 break
 
     if sweep is None:
-        return None
+        return rej("05_no_sweep")
 
     # BOS FILTER
     bos_ok = False
@@ -1155,7 +1190,7 @@ def analyze_smc(symbol, ctx):
 
     if not bos_ok:
         print(f"  {symbol}: BOS missing")
-        return None
+        return rej("06_no_bos")
 
     rng = slice(n1 - B5_RANGE_BARS, n1)
     rng_hi = float(hi1[rng].max())
@@ -1174,9 +1209,9 @@ def analyze_smc(symbol, ctx):
     price = float(c[last])
     
     if (direction == "LONG" and price > eq):
-        return None
+        return rej("07_price_vs_equilibrium")
     if (direction == "SHORT" and price < eq):
-        return None
+        return rej("07_price_vs_equilibrium")
 
     fvg = None
     fvg_size = 0
@@ -1211,7 +1246,7 @@ def analyze_smc(symbol, ctx):
 
     if fvg is None:
         print(f"  {symbol}: no quality FVG")
-        return None
+        return rej("08_no_quality_fvg")
 
     vol = float(v[last])
     avg_vol = float(df15["volume"].iloc[-21:-1].mean())
@@ -1219,7 +1254,7 @@ def analyze_smc(symbol, ctx):
     
     if vol_ratio < B5_MIN_VOLUME_RATIO:
         print(f"  {symbol}: weak volume")
-        return None
+        return rej("09_weak_volume")
 
     if direction == "LONG":
         sl = sweep["extreme"] - B5_SL_BUFFER_ATR * atr1
@@ -1244,11 +1279,11 @@ def analyze_smc(symbol, ctx):
         return sl, tp
 
     if levels(price) is None:
-        return None
+        return rej("10_levels_rr")
         
     risk = abs(price - sl)
     if risk / price < MIN_SL_PCT:
-        return None
+        return rej("11_min_sl_pct")
         
     rr = abs(tp - price) / risk
     depth = abs(sweep["level"] - sweep["extreme"]) / atr1
@@ -1262,7 +1297,7 @@ def analyze_smc(symbol, ctx):
     
     if score < B5_MIN_SCORE:
         print(f"  {symbol}: score too low ({score:.3f})")
-        return None
+        return rej("12_score")
         
     rsi = float(df15["rsi"].iloc[-1])
     if np.isnan(rsi):
@@ -1283,14 +1318,6 @@ def analyze_smc(symbol, ctx):
         "setup": "SMC PRO (Sweep+BOS+FVG)",
         "levels": levels,
     }
-    
-    
-        
-        
-        
-            
-        
-  
 
 
 # =====================================================================
@@ -1343,24 +1370,24 @@ def get_btc_filter(ctx):
 
 def analyze_btc_aligned(symbol, ctx):
     btc = getattr(ctx, "btc_filter", None)
-    if not btc: return None
+    if not btc: return rej("01_btc_filter_blocked")
     bias = btc["bias"]
 
     df_4h = get_data(ctx, symbol, "4h")
-    if trend_of(df_4h) != bias: return None
+    if trend_of(df_4h) != bias: return rej("02_symbol_4h_vs_btc_bias")
 
     l4 = df_4h.iloc[-1]
     atr_4h = float(l4["atr"])
-    if np.isnan(atr_4h) or atr_4h <= 0: return None
+    if np.isnan(atr_4h) or atr_4h <= 0: return rej("03_bad_atr_4h")
     gap_4h = abs(float(l4["ema9"]) - float(l4["ema21"]))
-    if gap_4h < B6_ALT_GAP_ATR * atr_4h: return None
+    if gap_4h < B6_ALT_GAP_ATR * atr_4h: return rej("04_gap_4h")
 
     df_1h = get_data(ctx, symbol, "1h")
     last = df_1h.iloc[-1]
     close, open_, high, low = (float(last[k]) for k in ("close", "open", "high", "low"))
     atr, rsi, ema21 = float(last["atr"]), float(last["rsi"]), float(last["ema21"])
 
-    if np.isnan(atr) or np.isnan(rsi) or atr <= 0: return None
+    if np.isnan(atr) or np.isnan(rsi) or atr <= 0: return rej("05_bad_atr_rsi_1h")
 
     if bias == "LONG":
         touched = (low <= ema21 + B6_TOUCH_ATR * atr and close > ema21 and close > open_ and close - ema21 <= B6_MAX_EXT_ALT_ATR * atr)
@@ -1376,8 +1403,13 @@ def analyze_btc_aligned(symbol, ctx):
 
     print(f"  {symbol}: BTC={bias} | pullback ok={touched} | RSI {rsi:.1f} ok={rsi_ok} | Vol x{vol_ratio:.2f} ok={vol_ok}")
 
-    if not (touched and rsi_ok and vol_ok): return None
-    if (atr * B6_SL_ATR) / close < MIN_SL_PCT: return None
+    if not (touched and rsi_ok and vol_ok):
+        tags = []
+        if not touched: tags.append("pullback")
+        if not rsi_ok: tags.append("rsi")
+        if not vol_ok: tags.append("vol")
+        return rej("06_filters_" + "+".join(tags))
+    if (atr * B6_SL_ATR) / close < MIN_SL_PCT: return rej("07_min_sl_pct")
 
     trend_score = min(gap_4h / atr_4h, 1.2) / 1.2
     vol_score = min(vol_ratio / 2.5, 1.0)
@@ -1387,7 +1419,7 @@ def analyze_btc_aligned(symbol, ctx):
 
     if score < B6_MIN_SCORE:
         print(f"  {symbol}: score too low ({score:.3f})")
-        return None
+        return rej("08_score")
 
     return {
         "symbol": symbol, "direction": bias, "close": close, "atr": atr, "rsi": rsi,
@@ -1404,21 +1436,21 @@ def analyze_smc_winner(symbol, ctx):
     try:
         df4 = get_data(ctx, symbol, "4h")
     except Exception:
-        return None
+        return rej("01_no_4h_data")
     if len(df4) < 60:
-        return None
+        return rej("02_4h_short_data")
 
     curr = df4.iloc[-1]
     atr = float(curr["atr"])
     if np.isnan(atr) or atr <= 0:
-        return None
+        return rej("03_bad_atr")
 
     close = float(curr["close"])
     open_ = float(curr["open"])
     low = float(curr["low"])
     high = float(curr["high"])
     if close <= 0:
-        return None
+        return rej("04_bad_price")
     rsi = float(curr["rsi"]) if not np.isnan(curr["rsi"]) else 50.0
     ema21 = float(curr["ema21"])
     ema50 = float(curr["ema50"])
@@ -1431,45 +1463,45 @@ def analyze_smc_winner(symbol, ctx):
     if low < prev_low and close > prev_low and close > open_:
         direction = "LONG"
         if not (ema21 > ema50 and close > ema50):
-            return None
+            return rej("06_trend_filter")
         wick = min(open_, close) - low
         sl_dist = close - (low - atr * B8_SL_BUFFER_ATR)
     elif high > prev_high and close < prev_high and close < open_:
         direction = "SHORT"
         if not (ema21 < ema50 and close < ema50):
-            return None
+            return rej("06_trend_filter")
         wick = high - max(open_, close)
         sl_dist = (high + atr * B8_SL_BUFFER_ATR) - close
     else:
-        return None
+        return rej("05_no_sweep")
 
     if sl_dist <= 0:
-        return None
+        return rej("07_sl_dist_invalid")
 
     # حداقل فاصله SL (جلوگیری از استاپ‌های نویزی) و سقف ریسک (رد سیگنال‌های SL دور)
     sl_dist = max(sl_dist, atr * B8_MIN_SL_ATR)
     if sl_dist > atr * B8_MAX_SL_ATR or sl_dist / close > B8_MAX_SL_PCT:
-        return None
+        return rej("08_sl_too_far")
     if sl_dist / close < MIN_SL_PCT:
-        return None
+        return rej("09_min_sl_pct")
 
     tp_dist = atr * B8_TP_ATR_MULT
     rr = tp_dist / sl_dist
     if rr < B8_MIN_RR:
-        return None
+        return rej("10_rr_low")
 
     # فیلتر حجم
     volume = float(curr["volume"])
     avg_volume = float(df4["volume"].iloc[-21:-1].mean())
     vol_ratio = ratio(volume, avg_volume)
     if vol_ratio < B8_MIN_VOL_RATIO:
-        return None
+        return rej("11_volume")
 
     # RSI نباید در جهت معامله اشباع شده باشد
     if direction == "LONG" and rsi > B8_RSI_MAX_LONG:
-        return None
+        return rej("12_rsi_extreme")
     if direction == "SHORT" and rsi < B8_RSI_MIN_SHORT:
-        return None
+        return rej("12_rsi_extreme")
 
     # امتیازدهی واقعی: قدرت روند، حجم، اندازه سایه سوییپ، کیفیت RR
     trend_score = min(abs(ema21 - ema50) / atr / 1.0, 1.0)
@@ -1478,7 +1510,7 @@ def analyze_smc_winner(symbol, ctx):
     rr_score = min(rr / 2.5, 1.0)
     score = 0.30 * trend_score + 0.25 * vol_score + 0.25 * wick_score + 0.20 * rr_score
     if score < B8_MIN_SCORE:
-        return None
+        return rej("13_score")
 
     def levels(entry):
         if direction == "LONG":
@@ -1710,6 +1742,7 @@ def build_signal_message(bot, c, entry, sl, tp, rr):
 # چرخه‌ی یک ربات
 # =====================================================================
 def run_bot(bot, ctx, btc_4h, btc_1h):
+    _CUR["bot"] = bot.name
     print("=" * 50)
     print(f"▶ {bot.name} {('(' + bot.label + ')') if bot.label else ''}")
 
@@ -1723,32 +1756,40 @@ def run_bot(bot, ctx, btc_4h, btc_1h):
             prev = signals.get(symbol)
             if prev and prev.get("status") == "OPEN":
                 print(f"⏳ {symbol} has an OPEN trade. Skipping.")
+                funnel_count("~skip_open_trade")
                 continue
             if (prev and bot.cooldown_ms and prev.get("closed_ms")
                     and t_now - prev["closed_ms"] < bot.cooldown_ms):
                 print(f"❄️ {symbol} in cooldown. Skipping.")
+                funnel_count("~skip_cooldown")
                 continue
 
+            funnel_count("0_analyzed")
             c = bot.analyze(symbol, ctx)
             if c is None:
                 continue
+            funnel_count("PASSED_analyze")
 
             prev_key = (prev.get("signal_key", prev.get("cross_ts")) if prev else None)
             if prev and prev_key == c["signal_key"] and prev.get("direction") == c["direction"]:
                 print(f"♻️ {symbol} {c['direction']}: this setup was already signaled. Skipping.")
+                funnel_count("~already_signaled")
                 continue
 
             if symbol != BTC_SYMBOL:
                 if bot.btc_filter_4h and btc_4h in ("LONG", "SHORT") and c["direction"] != btc_4h:
                     print(f"🚫 {symbol} {c['direction']} rejected. BTC 4H trend is {btc_4h}.")
+                    funnel_count("~btc_4h_filter")
                     continue
                 if bot.btc_filter_1h and btc_1h in ("LONG", "SHORT") and c["direction"] != btc_1h:
                     print(f"🚫 {symbol} {c['direction']} rejected. BTC 1H trend is {btc_1h}.")
+                    funnel_count("~btc_1h_filter")
                     continue
 
             candidates.append(c)
             print(f"✅ Candidate: {symbol} {c['direction']} score={c['score']:.3f}")
         except Exception as e:
+            funnel_count("EXCEPTION")
             print(f"⚠️ خطا در {symbol}: {e}")
             continue
 
@@ -1763,15 +1804,18 @@ def run_bot(bot, ctx, btc_4h, btc_1h):
             entry = get_price(ctx, symbol)
             if abs(entry - c["close"]) > c["atr"] * MAX_ENTRY_DRIFT_ATR:
                 print(f"⌛ {symbol}: price drifted too far from signal candle. Skipping.")
+                funnel_count("~send_price_drift")
                 continue
 
             lv = c["levels"](entry)
             if lv is None:
                 print(f"⚠️ {symbol}: price already beyond stop level. Skipping.")
+                funnel_count("~send_levels_none")
                 continue
             sl, tp = lv
             if sl <= 0 or tp <= 0:
                 print(f"⚠️ {symbol}: invalid SL/TP. Skipping.")
+                funnel_count("~send_invalid_sl_tp")
                 continue
             rr = abs(tp - entry) / abs(entry - sl)
 
@@ -1788,18 +1832,22 @@ def run_bot(bot, ctx, btc_4h, btc_1h):
                 record["status"] = "OPEN"
                 record["opened_ms"] = now_ms()
                 sent += 1
+                funnel_count("SENT_signal")
                 excel_log.log_signal(bot.name, symbol, c["direction"], entry, tp, sl)
                 print(f"✅ {c['direction']} signal for {symbol} sent! ({sent}/{bot.max_signals})")
             else:
                 record["status"] = "NOT_SENT"
+                funnel_count("~telegram_not_sent")
                 print(f"⚠️ {symbol}: پیام تلگرام ارسال نشد؛ معامله ثبت نشد (NOT_SENT).")
             signals[symbol] = record
             save_json(bot.signals_file, signals)
         except Exception as e:
+            funnel_count("EXCEPTION_send")
             print(f"⚠️ خطا در ارسال {symbol}: {e}")
             continue
 
     print(f"{bot.name}: analysis complete ({sent} signal(s) sent).")
+    print_funnel(bot.name)
     return sent
 
 
