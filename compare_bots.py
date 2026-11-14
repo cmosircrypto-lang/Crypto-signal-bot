@@ -36,6 +36,7 @@ BOT_FILES = [
     ("crypto-signal-bot-v40", "trades_bot-v40.csv", "Regime ADX"),
     ("crypto-signal-bot-v50", "trades_bot-v50.csv", "SMC"),
     ("crypto-signal-bot-v60", "trades_bot-v60.csv", "BTC Filter"),
+    ("crypto-signal-bot-v70", "trades_bot-v70.csv", "SMC Winner"),
 ]
 
 
