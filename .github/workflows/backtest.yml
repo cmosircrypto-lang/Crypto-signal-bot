@@ -19,7 +19,7 @@ jobs:
           cache: 'pip'
 
       - name: Install dependencies
-        run: pip install ccxt pandas pyarrow tqdm
+        run: pip install ccxt pandas pyarrow tqdm openpyxl jdatetime requests
 
       - name: Download data (20 symbols, 1 year)
         run: python download_data.py --subset --days 365
