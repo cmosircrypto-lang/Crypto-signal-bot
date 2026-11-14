@@ -72,6 +72,9 @@ BTC_SYMBOL = "BTC-SWAP-USDT"
 MAX_HEARTBEATS = 2
 MAX_SIGNALS_PER_RUN = 5
 MAX_OPEN_SAME_DIR = 3      # سقف معاملات باز هم‌جهت برای هر ربات
+# ستون‌های اختصاصی (فعلاً فقط v30 مقدار می‌دهد؛ برای بقیه‌ی ربات‌ها خالی می‌ماند)
+EXTRA_LOG_FIELDS = ["fvg_size_atr", "fvg_age_15m", "gap_pos", "last_candle_with_trade",
+                    "sweep_depth_atr", "sweep_age_h", "asia_range_atr", "gap4_atr", "risk_atr"]
 SUMMARY_FILE = "daily_summary.json"
 SUMMARY_HOUR = 8
 
@@ -303,8 +306,8 @@ def append_trade_csv(bot_name, record):
     fields = ["bot", "symbol", "direction", "entry", "sl", "tp", "exit",
               "result", "pnl_r", "setup", "score",
               "rsi", "vol_ratio", "atr_pct", "risk_pct", "rr", "drift_atr",
-              "btc_4h", "btc_1h", "open_same_dir", "hold_hours",
-              "opened_ms", "closed_ms"]
+              "btc_4h", "btc_1h", "open_same_dir"] + EXTRA_LOG_FIELDS + [
+              "hold_hours", "opened_ms", "closed_ms"]
     # اگر فایل قدیمی هدر متفاوت دارد، کنار گذاشته شود تا ستون‌ها جابه‌جا نشوند
     if file_exists:
         try:
@@ -353,6 +356,8 @@ def append_trade_csv(bot_name, record):
         "opened_ms": record.get("opened_ms", ""),
         "closed_ms": record.get("closed_ms", ""),
     }
+    for k in EXTRA_LOG_FIELDS:
+        row[k] = record.get(k, "")
     try:
         with open(fname, "a", newline="", encoding="utf-8") as f:
             w = csv.DictWriter(f, fieldnames=fields)
@@ -973,7 +978,7 @@ def analyze_amd_session(symbol, ctx):
                 continue
             mid = (bottom + top) / 2
             if l[last] <= top and c[last] >= mid * 0.98:
-                fvg = {"bottom": bottom, "top": top, "ts": int(ts15[i])}
+                fvg = {"bottom": bottom, "top": top, "ts": int(ts15[i]), "i": i}
                 break
         if direction == "SHORT" and l[i - 2] > h[i]:
             bottom, top = float(h[i]), float(l[i - 2])
@@ -981,7 +986,7 @@ def analyze_amd_session(symbol, ctx):
                 continue
             mid = (bottom + top) / 2
             if h[last] >= bottom and c[last] <= mid * 1.02:
-                fvg = {"bottom": bottom, "top": top, "ts": int(ts15[i])}
+                fvg = {"bottom": bottom, "top": top, "ts": int(ts15[i]), "i": i}
                 break
 
     if fvg is None:
@@ -1028,11 +1033,32 @@ def analyze_amd_session(symbol, ctx):
         print(f"  {symbol}: AMD score too low ({score:.3f})")
         return rej("13_score")
 
+    # ویژگی‌های ستاپ برای لاگ (روی تصمیم ربات اثری ندارد)
+    fvg_size = fvg["top"] - fvg["bottom"]
+    if direction == "LONG":
+        gap_pos = (float(c[last]) - fvg["bottom"]) / fvg_size if fvg_size > 0 else ""
+        with_trade = 1 if c[last] > o[last] else 0
+    else:
+        gap_pos = (fvg["top"] - float(c[last])) / fvg_size if fvg_size > 0 else ""
+        with_trade = 1 if c[last] < o[last] else 0
+    meta = {
+        "fvg_size_atr": round(fvg_size / atr1, 3),
+        "fvg_age_15m": int(last - fvg["i"]),
+        "gap_pos": round(gap_pos, 3) if gap_pos != "" else "",
+        "last_candle_with_trade": with_trade,
+        "sweep_depth_atr": round(depth, 3),
+        "sweep_age_h": round((int(ts1[-1]) - sweep["ts"]) / 3600000, 1),
+        "asia_range_atr": round(rng_size / atr1, 3),
+        "gap4_atr": round(gap4 / atr4, 3),
+        "risk_atr": round(risk / atr1, 3),
+    }
+
     print(f"  {symbol}: AMD {direction} | Asia sweep ok | FVG ok | RR {rr:.2f} | score {score:.3f}")
     return {
         "symbol": symbol, "direction": direction, "close": price, "atr": atr1, "rsi": rsi,
         "volume": vol, "avg_volume": avg_vol, "signal_key": fvg["ts"], "score": score,
         "setup": f"AMD: Asia sweep + FVG ({direction})", "levels": levels,
+        "meta": meta,
     }
 
 
@@ -1868,6 +1894,7 @@ def run_bot(bot, ctx, btc_4h, btc_1h):
                 "drift_atr": round(abs(entry - c["close"]) / c["atr"], 3),
                 "btc_4h": btc_4h, "btc_1h": btc_1h,
                 "open_same_dir": open_dir[c["direction"]],
+                **c.get("meta", {}),
                 "time": datetime.now(timezone.utc).isoformat(),
                 "telegram_sent": bool(msg_id), "telegram_message_id": msg_id,
             }
