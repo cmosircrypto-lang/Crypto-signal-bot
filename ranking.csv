@@ -1,5 +1,5 @@
 label,bot,trades,wins,losses,win_rate,total_r,avg_r,profit_factor,max_drawdown_r,max_win_streak,max_lose_streak,score,ready,file
-AMD Session,crypto-signal-bot-v30,20,10,10,50.0,28.74,1.437,3.87,-5.0,3,5,3.213,False,trades_bot-v30.csv
+AMD Session,crypto-signal-bot-v30,22,12,10,54.5,33.93,1.542,4.39,-5.0,4,5,4.076,False,trades_bot-v30.csv
 Regime ADX,crypto-signal-bot-v40,11,7,4,63.6,11.08,1.007,3.77,-2.0,6,2,0.88,False,trades_bot-v40.csv
 Breakout,crypto-signal-bot-v10,14,5,9,35.7,1.71,0.122,1.19,-6.0,4,6,0.188,False,trades_bot-v10.csv
 SMC,crypto-signal-bot-v50,3,1,2,33.3,0.7,0.232,1.35,-1.0,1,2,0.039,False,trades_bot-v50.csv
