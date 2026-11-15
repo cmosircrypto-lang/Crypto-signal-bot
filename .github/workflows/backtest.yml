@@ -26,7 +26,7 @@ jobs:
 
       - name: Install dependencies
         working-directory: repo
-        run: pip install ccxt pandas pyarrow tqdm
+        run: pip install ccxt pandas pyarrow tqdm jdatetime openpyxl requests
 
       - name: Run download_data
         working-directory: repo
