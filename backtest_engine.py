@@ -85,7 +85,7 @@ def run_backtest(bot):
     btc_df = load_df_with_indicators(main.BTC_SYMBOL, "1h")
     start_idx = 300
     
-    DAYS = 120  # ← تغییر
+    DAYS = 365  # ← تغییر
     end_idx = min(len(btc_df) - 100, start_idx + 24 * DAYS)
     
     trades = []
