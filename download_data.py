@@ -6,9 +6,7 @@ import ccxt
 import pandas as pd
 from tqdm import tqdm
 
-# ------------------- تنظیمات -------------------
 SYMBOLS_OKX = [
-    # تمام ۸۸ نماد (لیست کامل)
     "BTC/USDT:USDT", "ETH/USDT:USDT", "SOL/USDT:USDT", "XRP/USDT:USDT",
     "BNB/USDT:USDT", "DOGE/USDT:USDT", "ADA/USDT:USDT", "TRX/USDT:USDT",
     "AVAX/USDT:USDT", "LINK/USDT:USDT", "DOT/USDT:USDT", "LTC/USDT:USDT",
@@ -34,13 +32,12 @@ SYMBOLS_OKX = [
 ]
 
 TIMEFRAMES = ["5m", "15m", "1h", "4h", "1d"]
-DAYS_BACK = 365
+DAYS_BACK = 120  # ۱۲۰ روز
 OUTPUT_DIR = "data"
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 def setup_lfs():
-    """راه‌اندازی Git LFS برای فایل‌های parquet"""
     print("🔧 راه‌اندازی Git LFS...")
     subprocess.run(["git", "lfs", "install"], check=True)
     subprocess.run(["git", "lfs", "track", "*.parquet"], check=True)
@@ -57,7 +54,6 @@ def download_all():
         for tf in TIMEFRAMES:
             file_path = os.path.join(OUTPUT_DIR, f"{bot_name}_{tf}.parquet")
             
-            # اگر فایل از قبل وجود دارد، از دانلود صرف‌نظر کن
             if os.path.exists(file_path):
                 print(f"⏩ {bot_name} {tf} already exists, skipping...")
                 continue
@@ -69,9 +65,9 @@ def download_all():
             elif tf == "1h":
                 since = now_ms - (DAYS_BACK * 24 * 60 * 60 * 1000)
             elif tf == "15m":
-                since = now_ms - (120 * 24 * 60 * 60 * 1000)
+                since = now_ms - (DAYS_BACK * 24 * 60 * 60 * 1000)
             elif tf == "5m":
-                since = now_ms - (30 * 24 * 60 * 60 * 1000)
+                since = now_ms - (DAYS_BACK * 24 * 60 * 60 * 1000)
             
             all_candles = []
             current_since = since
