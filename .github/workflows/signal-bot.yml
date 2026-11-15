@@ -77,9 +77,13 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           mkdir -p state
+          
+          # کپی اجباری فایل‌ها با rm قبلی برای جلوگیری از خطای فایل موجود
           for f in server_messages*.json last_signals*.json trades_bot*.csv signals_bot*.xlsx daily_summary.json; do
             if [ -f "repo/$f" ]; then
-              cp -f "repo/$f" "state/$f"
+              rm -f "state/$f"
+              cp "repo/$f" "state/$f"
+              echo "Copied $f to state/"
             fi
           done
 
@@ -87,16 +91,11 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git"
-
           git add -A
-
+          
           if ! git diff --staged --quiet; then
             git commit -m "state update $(date -u +%Y-%m-%dT%H:%MZ)"
-            if ! git push origin state; then
-              echo "⚠️ First push failed, trying with rebase..."
-              git pull --rebase origin state
-              git push origin state
-            fi
+            git push origin state
           else
             echo "No state changes"
           fi
