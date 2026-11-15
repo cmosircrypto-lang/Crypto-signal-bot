@@ -1,2 +1,3 @@
 bot,symbol,direction,entry,sl,tp,exit,result,pnl_r,setup,score,rsi,vol_ratio,atr_pct,risk_pct,rr,drift_atr,btc_4h,btc_1h,open_same_dir,fvg_size_atr,fvg_age_15m,gap_pos,last_candle_with_trade,sweep_depth_atr,sweep_age_h,asia_range_atr,gap4_atr,risk_atr,hold_hours,opened_ms,closed_ms
 crypto-signal-bot-v10,STX-SWAP-USDT,SHORT,0.2673,0.27335255739136466,0.25433023416136136,0.25433023416136136,TP,2.143,Breakout 18x1H (low 0.270500),0.7349,,,,,,,,,,,,,,,,,,,4.49,1794675710247,1794691877632
+crypto-signal-bot-v10,IMX-SWAP-USDT,SHORT,0.0956,0.09903746179111125,0.08823401044761875,0.09903746179111125,SL,-1.0,Breakout 18x1H (low 0.096700),0.7114,,,,,,,,,,,,,,,,,,,5.5,1794690090506,1794709882565
