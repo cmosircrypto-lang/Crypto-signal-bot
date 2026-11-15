@@ -76,26 +76,40 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          echo "=== 1. Creating state directory ==="
           mkdir -p state
           
-          # کپی اجباری فایل‌ها با rm قبلی برای جلوگیری از خطای فایل موجود
+          echo "=== 2. Copying files from repo/ to state/ ==="
           for f in server_messages*.json last_signals*.json trades_bot*.csv signals_bot*.xlsx daily_summary.json; do
             if [ -f "repo/$f" ]; then
               rm -f "state/$f"
               cp "repo/$f" "state/$f"
-              echo "Copied $f to state/"
+              echo "✅ Copied $f to state/"
             fi
           done
-
+          
+          echo "=== 3. Content of state/server_messages.json AFTER copy ==="
+          cat state/server_messages.json || echo "File not found!"
+          
+          echo "=== 4. Changing directory to state ==="
           cd state
+          
+          echo "=== 5. Git config & remote ==="
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git"
+          
+          echo "=== 6. Git status & add ==="
+          git status
           git add -A
           
+          echo "=== 7. Git diff check ==="
           if ! git diff --staged --quiet; then
+            echo "Changes detected! Committing..."
             git commit -m "state update $(date -u +%Y-%m-%dT%H:%MZ)"
+            echo "=== 8. Pushing to origin state ==="
             git push origin state
+            echo "✅ Push successful!"
           else
-            echo "No state changes"
+            echo "❌ No state changes detected by git."
           fi
