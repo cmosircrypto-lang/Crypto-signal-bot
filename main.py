@@ -1581,19 +1581,18 @@ HEARTBEAT_FILE = "server_messages.json"
 def send_heartbeat_all(results, btc_4h, btc_1h, warning=None):
     date_gregorian, date_jalali, time_str = get_iran_time()
 
-    # ۱. پاک کردن پیام‌های زنده بودن قبلی برای همه ربات‌ها (به جز ربات اول)
+    # ۱. پاک کردن پیام‌های قبلی برای همه ربات‌ها
     for bot in LIVE_BOTS[1:]:
         old_ids = load_json(bot.heartbeat_file, {}).get("message_ids", [])
         for mid in old_ids: 
             delete_telegram(mid)
         save_json(bot.heartbeat_file, {"message_ids": []})
 
-    # ۲. پاک کردن پیام‌های زنده بودن قبلی برای ربات اول (main heartbeat)
+    # ۲. پاک کردن پیام‌های قبلی برای ربات اول
     old_main_ids = load_json(HEARTBEAT_FILE, {}).get("message_ids", [])
     for mid in old_main_ids:
         delete_telegram(mid)
-    save_json(HEARTBEAT_FILE, {"message_ids": []}) # لیست رو خالی می‌کنیم
-
+    
     # ۳. ساخت پیام جدید
     lines, ok = [], 0
     for bot in LIVE_BOTS:
@@ -1615,9 +1614,10 @@ def send_heartbeat_all(results, btc_4h, btc_1h, warning=None):
 ⏰ ساعت: {time_str}
 ━━━━━━━━━━━━━━━━━"""
 
-    # ۴. ارسال پیام جدید
+    # ۴. ارسال پیام جدید و ذخیره ID آن
     new_id = send_telegram(msg)
     if new_id:
+        # ذخیره فقط ID جدید (چون قبلی‌ها پاک شدند)
         save_json(HEARTBEAT_FILE, {"message_ids": [new_id]})
 
 
