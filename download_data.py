@@ -6,7 +6,7 @@ import ccxt
 import pandas as pd
 from tqdm import tqdm
 
-# لیست نمادها (TON حذف شد چون در OKX نیست)
+# لیست ۸۸ نماد (همان قبلی)
 SYMBOLS_OKX = [
     "BTC/USDT:USDT", "ETH/USDT:USDT", "SOL/USDT:USDT", "XRP/USDT:USDT",
     "BNB/USDT:USDT", "DOGE/USDT:USDT", "ADA/USDT:USDT", "TRX/USDT:USDT",
@@ -33,7 +33,8 @@ SYMBOLS_OKX = [
 ]
 
 TIMEFRAMES = ["5m", "15m", "1h", "4h", "1d"]
-DAYS_BACK = 120
+DAYS_120 = 120
+DAYS_365 = 365
 OUTPUT_DIR = "data"
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)
@@ -48,11 +49,10 @@ def download_all():
     exchange = ccxt.okx({"enableRateLimit": True})
     now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
     
-    # گرفتن لیست نمادهای موجود در OKX برای جلوگیری از خطای symbol
     try:
         markets = exchange.load_markets()
     except Exception as e:
-        print(f"⚠️ خطا در دریافت لیست بازارها: {e}")
+        print(f"⚠️ خطا در دریافت بازارها: {e}")
         markets = {}
 
     for symbol in tqdm(SYMBOLS_OKX, desc="Symbols"):
@@ -70,10 +70,15 @@ def download_all():
                 print(f"⏩ {bot_name} {tf} already exists, skipping...")
                 continue
             
-            since = now_ms - (DAYS_BACK * 24 * 60 * 60 * 1000)
+            # تعیین تعداد روزها: ۱ روزه = ۳۶۵، بقیه = ۱۲۰
+            if tf == "1d":
+                days = DAYS_365
+            else:
+                days = DAYS_120
+                
+            since = now_ms - (days * 24 * 60 * 60 * 1000)
             all_candles = []
             current_since = since
-            
             retries = 0
             max_retries = 3
             
@@ -91,7 +96,7 @@ def download_all():
                         
                     current_since = last_ts + 1
                     time.sleep(exchange.rateLimit / 1000)
-                    retries = 0 # ریست کردن شمارنده خطا در صورت موفقیت
+                    retries = 0
                     
                 except Exception as e:
                     retries += 1
@@ -106,6 +111,6 @@ def download_all():
 
 if __name__ == "__main__":
     setup_lfs()
-    print(f"🚀 شروع دانلود {DAYS_BACK} روز داده از OKX برای {len(SYMBOLS_OKX)} نماد...")
+    print(f"🚀 شروع دانلود داده‌ها...")
     download_all()
     print("🎉 دانلود کامل شد!")
