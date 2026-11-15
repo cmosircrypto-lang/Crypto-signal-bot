@@ -156,7 +156,9 @@ def run_backtest(bot):
     
     print(f"  ✅ {len(trades)} trades | analyzed={analyzed} | signal_attempts={signal_attempts}")
     print(f"  📊 Funnel for {bot.name}:")
-    for k, v in FUNNEL[bot.name].most_common(10):
+    print(f"\n🔍 Full funnel for {bot.name}:")
+for k in sorted(FUNNEL[bot.name].keys()):
+    print(f"   {k}: {FUNNEL[bot.name][k]}")
         print(f"     {k}: {v}")
     
     return trades
