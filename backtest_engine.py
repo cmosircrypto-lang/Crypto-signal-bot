@@ -67,7 +67,7 @@ def run_backtest(bot):
     
     btc_df = load_df_with_indicators(main.BTC_SYMBOL, "1h")
     start_idx = 300
-    end_idx = len(btc_df) - 100
+    end_idx = min(len(btc_df) - 100, start_idx + 24 * 30)   # فقط ۳۰ روز
     
     trades = []
     open_trade = None
