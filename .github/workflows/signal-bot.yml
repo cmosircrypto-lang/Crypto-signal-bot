@@ -64,12 +64,14 @@ jobs:
           TOOBIT_SECRET: ${{ secrets.TOOBIT_SECRET }}
         run: python main.py
 
-      - name: Commit state to state branch
+       - name: Commit state to state branch
         if: always()
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           mkdir -p state
 
-          # کپی اجباری فایل‌های آپدیت شده به پوشه state
+          # کپی اجباری فایل‌ها
           for f in server_messages*.json last_signals*.json trades_bot*.csv signals_bot*.xlsx daily_summary.json; do
             if [ -f "repo/$f" ]; then
               cp -f "repo/$f" "state/$f"
@@ -80,19 +82,21 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          if ! git remote | grep -q origin; then
-            git remote add origin "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git"
-          fi
+          # ست کردن ریموت با توکن
+          git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git"
 
           git add -A
 
           if ! git diff --staged --quiet; then
             git commit -m "state update $(date -u +%Y-%m-%dT%H:%MZ)"
-            git push origin state --force-with-lease || {
-              echo "⚠️ Push conflict, retrying with rebase..."
+            
+            # تلاش برای پوش
+            if ! git push origin state; then
+              echo "⚠️ First push failed, trying with rebase..."
               git pull --rebase origin state
-              git push origin state --force-with-lease
-            }
+              git push origin state
+            fi
           else
             echo "No state changes"
           fi
+      
