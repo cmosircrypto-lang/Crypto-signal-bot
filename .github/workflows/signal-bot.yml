@@ -64,6 +64,26 @@ jobs:
           TOOBIT_SECRET: ${{ secrets.TOOBIT_SECRET }}
         run: python main.py
 
+      - name: Debug - where are state files?
+        run: |
+          echo "=== Files in workspace root ==="
+          ls -la
+          
+          echo "=== Files in repo/ ==="
+          ls -la repo/
+          
+          echo "=== Files in state/ ==="
+          ls -la state/
+          
+          echo "=== Find server_messages*.json anywhere ==="
+          find . -name "server_messages*.json" 2>/dev/null
+          
+          echo "=== Find last_signals*.json anywhere ==="
+          find . -name "last_signals*.json" 2>/dev/null
+          
+          echo "=== Find trades_bot*.csv anywhere ==="
+          find . -name "trades_bot*.csv" 2>/dev/null
+
       - name: Debug state files
         run: |
           echo "--- Checking server_messages.json in repo ---"
