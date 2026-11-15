@@ -1572,7 +1572,7 @@ BOTS = [
 
     Bot("crypto-signal-bot-v60", "BTC Filter", analyze_btc_aligned,
         "server_messages_v60.json", "last_signals_v60.json",
-        cooldown_hours=B6_COOLDOWN_HOURS, btc_filter_4h=False, live=False), # ← غیرفعال
+        cooldown_hours=B6_COOLDOWN_HOURS, btc_filter_4h=False, live=True), # ← غیرفعال
 
     Bot("crypto-signal-bot-v70", "SMC Winner", analyze_smc_winner,
         "server_messages_v70.json", "last_signals_v70.json",
