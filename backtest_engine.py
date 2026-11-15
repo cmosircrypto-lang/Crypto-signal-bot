@@ -5,7 +5,8 @@ from datetime import datetime, timezone
 import importlib.util
 import sys
 import warnings
-from collections import defaultdict, Counter   # ← این خط مهمه
+from collections import defaultdict, Counter
+
 warnings.filterwarnings("ignore")
 
 spec = importlib.util.spec_from_file_location("main", "main.py")
@@ -17,6 +18,7 @@ DATA_DIR = "data"
 RESULTS_FILE = "backtest_results.csv"
 IND_CACHE = {}
 CURRENT_TS = 0
+FUNNEL = defaultdict(Counter)
 
 def load_df_with_indicators(symbol, tf):
     key = (symbol, tf)
@@ -40,7 +42,8 @@ def mock_get_data(ctx, symbol, timeframe):
 main.get_data = mock_get_data
 
 class MockExchange:
-    def fetch_ticker(self, symbol): return {"last": 0.0}
+    def fetch_ticker(self, symbol): 
+        return {"last": 0.0}
     def fetch_ohlcv(self, symbol, timeframe, since=None, limit=1000):
         df = load_df_with_indicators(symbol, timeframe)
         if since is not None:
@@ -48,11 +51,7 @@ class MockExchange:
         df = df[df["timestamp"] <= CURRENT_TS]
         return df.head(limit)[["timestamp", "open", "high", "low", "close", "volume"]].values.tolist()
 
-# Funnel collector
-FUNNEL = defaultdict(Counter)
-
 def rej_collector(bot_name):
-    """جایگزین main.rej برای backtest"""
     def _rej(label="unlabeled"):
         FUNNEL[bot_name][label] += 1
         return None
@@ -62,12 +61,11 @@ def run_backtest(bot):
     global CURRENT_TS
     print(f"\n▶ Backtesting {bot.name} ({bot.label})...")
     
-    # جایگزینی rej برای این ربات
     main.rej = rej_collector(bot.name)
     
     btc_df = load_df_with_indicators(main.BTC_SYMBOL, "1h")
     start_idx = 300
-    end_idx = min(len(btc_df) - 100, start_idx + 24 * 30)   # فقط ۳۰ روز
+    end_idx = min(len(btc_df) - 100, start_idx + 24 * 30) # فعلا ۳۰ روز
     
     trades = []
     open_trade = None
@@ -78,9 +76,8 @@ def run_backtest(bot):
     for i in range(start_idx, end_idx):
         CURRENT_TS = int(btc_df["timestamp"].iloc[i])
         
-        if (i - start_idx) % 1000 == 0 and (i - start_idx) > 0:
-            progress = (i - start_idx) / (end_idx - start_idx) * 100
-            print(f"  📊 {progress:.0f}% | Trades: {len(trades)}")
+        if (i - start_idx) % 100 == 0 and (i - start_idx) > 0:
+            print(f"  📊 Progress: {((i - start_idx) / (end_idx - start_idx) * 100):.0f}%")
         
         ctx = main.Ctx(MockExchange(), ref_time_ms=CURRENT_TS)
         
@@ -96,14 +93,18 @@ def run_backtest(bot):
                 high, low, close = cd["high"], cd["low"], cd["close"]
                 direction, tp, sl = open_trade["direction"], open_trade["tp"], open_trade["sl"]
                 
-                if direction == "LONG": hit_sl, hit_tp = low <= sl, high >= tp
-                else: hit_sl, hit_tp = high >= sl, low <= tp
+                if direction == "LONG": 
+                    hit_sl, hit_tp = low <= sl, high >= tp
+                else: 
+                    hit_sl, hit_tp = high >= sl, low <= tp
                     
                 if hit_sl and hit_tp:
                     res = "TP" if abs(close - tp) < abs(close - sl) else "SL"
                     closed = True
-                elif hit_sl: res, closed = "SL", True
-                elif hit_tp: res, closed = "TP", True
+                elif hit_sl: 
+                    res, closed = "SL", True
+                elif hit_tp: 
+                    res, closed = "TP", True
                     
                 if closed:
                     open_trade["result"] = res
@@ -115,16 +116,19 @@ def run_backtest(bot):
                     cooldown_until = CURRENT_TS + (bot.cooldown_ms or 0)
                     break
         
-        if open_trade or CURRENT_TS < cooldown_until: continue
+        if open_trade or CURRENT_TS < cooldown_until: 
+            continue
             
         best_signal = None
         for symbol in main.SYMBOLS:
-            if not os.path.exists(os.path.join(DATA_DIR, f"{symbol}_1h.parquet")): continue
+            if not os.path.exists(os.path.join(DATA_DIR, f"{symbol}_1h.parquet")): 
+                continue
             
             try:
                 analyzed += 1
                 c = bot.analyze(symbol, ctx)
-                if c is None: continue
+                if c is None: 
+                    continue
                 
                 if symbol != main.BTC_SYMBOL and bot.btc_filter_4h:
                     btc_4h_df = load_df_with_indicators(main.BTC_SYMBOL, "4h")
@@ -155,11 +159,10 @@ def run_backtest(bot):
                 }
     
     print(f"  ✅ {len(trades)} trades | analyzed={analyzed} | signal_attempts={signal_attempts}")
-    print(f"  📊 Funnel for {bot.name}:")
-    print(f"\n🔍 Full funnel for {bot.name}:")
-for k in sorted(FUNNEL[bot.name].keys()):
-    print(f"   {k}: {FUNNEL[bot.name][k]}")
-        print(f"     {k}: {v}")
+    
+    print(f"  📊 Full funnel for {bot.name}:")
+    for k in sorted(FUNNEL[bot.name].keys()):
+        print(f"     {k}: {FUNNEL[bot.name][k]}")
     
     return trades
 
@@ -169,7 +172,8 @@ def main_run():
         global IND_CACHE
         IND_CACHE = {}
         trades = run_backtest(bot)
-        for t in trades: t["bot"] = bot.name
+        for t in trades: 
+            t["bot"] = bot.name
         all_results.extend(trades)
         
     if all_results:
