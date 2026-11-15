@@ -88,7 +88,7 @@ def run_backtest(bot):
     start_idx = 300
     
     # محاسبه تعداد روزها (پیش‌فرض ۳۰ روز)
-    DAYS = 30
+    DAYS = 365
     end_idx = min(len(btc_df) - 100, start_idx + 24 * DAYS)
     
     trades = []
