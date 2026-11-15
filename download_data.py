@@ -6,11 +6,12 @@ import ccxt
 import pandas as pd
 from tqdm import tqdm
 
+# لیست نمادها (TON حذف شد چون در OKX نیست)
 SYMBOLS_OKX = [
     "BTC/USDT:USDT", "ETH/USDT:USDT", "SOL/USDT:USDT", "XRP/USDT:USDT",
     "BNB/USDT:USDT", "DOGE/USDT:USDT", "ADA/USDT:USDT", "TRX/USDT:USDT",
     "AVAX/USDT:USDT", "LINK/USDT:USDT", "DOT/USDT:USDT", "LTC/USDT:USDT",
-    "BCH/USDT:USDT", "TON/USDT:USDT", "SUI/USDT:USDT", "NEAR/USDT:USDT",
+    "BCH/USDT:USDT", "SUI/USDT:USDT", "NEAR/USDT:USDT",
     "APT/USDT:USDT", "ARB/USDT:USDT", "OP/USDT:USDT", "ATOM/USDT:USDT",
     "UNI/USDT:USDT", "AAVE/USDT:USDT", "FIL/USDT:USDT", "INJ/USDT:USDT",
     "TIA/USDT:USDT", "JUP/USDT:USDT", "ENA/USDT:USDT", "WIF/USDT:USDT",
@@ -32,7 +33,7 @@ SYMBOLS_OKX = [
 ]
 
 TIMEFRAMES = ["5m", "15m", "1h", "4h", "1d"]
-DAYS_BACK = 120  # ۱۲۰ روز
+DAYS_BACK = 120
 OUTPUT_DIR = "data"
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)
@@ -47,7 +48,18 @@ def download_all():
     exchange = ccxt.okx({"enableRateLimit": True})
     now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
     
+    # گرفتن لیست نمادهای موجود در OKX برای جلوگیری از خطای symbol
+    try:
+        markets = exchange.load_markets()
+    except Exception as e:
+        print(f"⚠️ خطا در دریافت لیست بازارها: {e}")
+        markets = {}
+
     for symbol in tqdm(SYMBOLS_OKX, desc="Symbols"):
+        if symbol not in markets:
+            print(f"⚠️ نماد {symbol} در OKX موجود نیست. رد می‌شود.")
+            continue
+            
         base_name = symbol.split("/")[0]
         bot_name = f"{base_name}-SWAP-USDT"
         
@@ -58,21 +70,14 @@ def download_all():
                 print(f"⏩ {bot_name} {tf} already exists, skipping...")
                 continue
             
-            if tf == "1d":
-                since = now_ms - (DAYS_BACK * 24 * 60 * 60 * 1000)
-            elif tf == "4h":
-                since = now_ms - (DAYS_BACK * 24 * 60 * 60 * 1000)
-            elif tf == "1h":
-                since = now_ms - (DAYS_BACK * 24 * 60 * 60 * 1000)
-            elif tf == "15m":
-                since = now_ms - (DAYS_BACK * 24 * 60 * 60 * 1000)
-            elif tf == "5m":
-                since = now_ms - (DAYS_BACK * 24 * 60 * 60 * 1000)
-            
+            since = now_ms - (DAYS_BACK * 24 * 60 * 60 * 1000)
             all_candles = []
             current_since = since
             
-            while True:
+            retries = 0
+            max_retries = 3
+            
+            while retries < max_retries:
                 try:
                     candles = exchange.fetch_ohlcv(symbol, timeframe=tf, since=current_since, limit=100)
                     if not candles:
@@ -86,11 +91,12 @@ def download_all():
                         
                     current_since = last_ts + 1
                     time.sleep(exchange.rateLimit / 1000)
+                    retries = 0 # ریست کردن شمارنده خطا در صورت موفقیت
                     
                 except Exception as e:
-                    print(f"⚠️ خطا در {symbol} {tf}: {e}")
+                    retries += 1
+                    print(f"⚠️ خطا در {symbol} {tf} (تلاش {retries}/{max_retries}): {e}")
                     time.sleep(5)
-                    continue
             
             if all_candles:
                 df = pd.DataFrame(all_candles, columns=["timestamp", "open", "high", "low", "close", "volume"])
