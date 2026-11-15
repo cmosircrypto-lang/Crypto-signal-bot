@@ -17,7 +17,7 @@ SYMBOLS_OKX = [
 ]
 
 TIMEFRAMES = ["5m", "15m", "1h", "4h", "1d"]
-DAYS_BACK = 365
+DAYS_BACK = 30
 OUTPUT_DIR = "data"
 
 # پاک کردن کامل پوشه data برای شروع تمیز
