@@ -65,7 +65,10 @@ def run_backtest(bot):
     
     btc_df = load_df_with_indicators(main.BTC_SYMBOL, "1h")
     start_idx = 300
-    end_idx = min(len(btc_df) - 100, start_idx + 24 * 30) # فعلا ۳۰ روز
+    
+    # محاسبه تعداد روزها (پیش‌فرض ۳۰ روز)
+    DAYS = 30
+    end_idx = min(len(btc_df) - 100, start_idx + 24 * DAYS)
     
     trades = []
     open_trade = None
@@ -144,6 +147,9 @@ def run_backtest(bot):
                     signal_attempts += 1
             except Exception as e:
                 FUNNEL[bot.name]["EXCEPTION"] += 1
+                # برای دیباگ، خطا رو چاپ می‌کنیم
+                if FUNNEL[bot.name]["EXCEPTION"] <= 3:
+                    print(f"  ⚠️ Exception in {bot.name} on {symbol}: {e}")
                 continue
                 
         if best_signal:
@@ -160,6 +166,7 @@ def run_backtest(bot):
     
     print(f"  ✅ {len(trades)} trades | analyzed={analyzed} | signal_attempts={signal_attempts}")
     
+    # چاپ Funnel کامل (نه فقط ۱۰ تای اول)
     print(f"  📊 Full funnel for {bot.name}:")
     for k in sorted(FUNNEL[bot.name].keys()):
         print(f"     {k}: {FUNNEL[bot.name][k]}")
