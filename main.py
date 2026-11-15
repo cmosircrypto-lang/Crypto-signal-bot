@@ -82,7 +82,7 @@ TF_MS = {
     "1d": 24 * 60 * 60 * 1000,
 }
 
-# --- ربات ۱: EMA Cross ---
+# --- ربات ۱: EMA Cross (بدون تغییر) ---
 B1_CROSS_LOOKBACK = 3
 B1_RSI_LONG = (45, 68)
 B1_RSI_SHORT = (32, 55)
@@ -94,11 +94,11 @@ B1_MIN_ADX_4H = 18
 B1_MIN_ADX_1H = 16
 B1_MIN_SLOPE_ATR = 0.08
 
-# --- ربات ۲: Breakout ---
+# --- ربات ۲: Breakout (تغییرات بنیادی) ---
 B2_LOOKBACK = 18
 B2_VOLUME_MULT = 1.8
-B2_CLOSE_POS = 0.72
-B2_MAX_EXTENSION_ATR = 0.85
+B2_CLOSE_POS = 0.65        # ← کاهش از 0.72
+B2_MAX_EXTENSION_ATR = 1.2 # ← افزایش از 0.85
 B2_RSI_LONG = (52, 72)
 B2_RSI_SHORT = (28, 48)
 B2_SL_ATR, B2_TP_ATR = 1.4, 3.0
@@ -107,7 +107,7 @@ B2_MIN_BODY_ATR = 0.45
 B2_MIN_SCORE = 0.62
 B2_MIN_ADX = 18
 
-# --- ربات ۳: MTF Pullback ---
+# --- ربات ۳: MTF Pullback (بدون تغییر) ---
 B3_RSI_LONG = (31, 45)
 B3_RSI_SHORT = (55, 69)
 B3_NEAR_PCT = 0.015
@@ -119,11 +119,11 @@ B3_MIN_PULLBACK = 1.005
 B3_COOLDOWN_HOURS = 3
 B3_MIN_SCORE = 0.55
 
-# --- ربات v30: AMD (اصلاح‌شده) ---
+# --- ربات v30: AMD (فقط سشن نیویورک) ---
 B30_ASIA_START_H = 0
 B30_ASIA_END_H = 8
-B30_ACTIVE_START_H = 8
-B30_ACTIVE_END_H = 22      # ← تغییر (بود: 20)
+B30_ACTIVE_START_H = 12    # ← شروع ۱۲ UTC (سشن نیویورک)
+B30_ACTIVE_END_H = 21      # ← پایان ۲۱ UTC
 B30_SWEEP_MAX_AGE_1H = 4
 B30_FVG_RECENT = 8
 B30_SL_BUFFER_ATR = 0.15
@@ -135,7 +135,7 @@ B30_MIN_SCORE = 0.60
 B30_COOLDOWN_HOURS = 4
 B30_TREND_GAP_4H_ATR = 0.30
 
-# --- ربات ۴: Regime ADX ---
+# --- ربات ۴: Regime (تغییر جزئی) ---
 B4_ADX_TREND = 24
 B4_ADX_RANGE = 18
 B4_TREND_GAP_4H_ATR = 0.30
@@ -149,12 +149,12 @@ B4_RANGE_RSI_LONG_MAX = 28
 B4_RANGE_RSI_SHORT_MIN = 72
 B4_RANGE_SL_BUFFER_ATR = 0.45
 B4_RANGE_MIN_RR = 2.1
-B4_MIN_SCORE = 0.64
+B4_MIN_SCORE = 0.55        # ← کاهش از 0.64
 B4_COOLDOWN_HOURS = 3
 
-# --- ربات ۵: SMC ---
+# --- ربات ۵: SMC (شل‌تر) ---
 B5_LOOKBACK_1H = 24
-B5_SWEEP_RECENT = 2
+B5_SWEEP_RECENT = 4        # ← افزایش از 2
 B5_RANGE_BARS = 40
 B5_FVG_RECENT = 8
 B5_TREND_GAP_4H_ATR = 0.25
@@ -166,10 +166,10 @@ B5_COOLDOWN_HOURS = 4
 B5_MIN_FVG_ATR = 0.25
 B5_MIN_VOLUME_RATIO = 0.90
 
-# --- ربات ۶: BTC Filter ---
+# --- ربات ۶: BTC Filter (شل‌تر) ---
 B6_MIN_GAP_ATR = 0.28
 B6_MIN_ADX = 20
-B6_MAX_EXT_ATR = 2.8
+B6_MAX_EXT_ATR = 4.5       # ← افزایش از 2.8
 B6_1H_ALIGN_BONUS = 0.12
 B6_ALT_GAP_ATR = 0.22
 B6_TOUCH_ATR = 0.22
@@ -181,20 +181,20 @@ B6_SL_ATR, B6_TP_ATR = 1.4, 2.95
 B6_MIN_SCORE = 0.60
 B6_COOLDOWN_HOURS = 3
 
-# --- ربات ۸: SMC Winner (اصلاح‌شده - شل‌تر) ---
+# --- ربات ۸: SMC Winner (دست نزنید، فقط Max Signals) ---
 B8_SWEEP_LOOKBACK = 10
 B8_TP_ATR_MULT = 2.0
 B8_COOLDOWN_HOURS = 4
 B8_SL_BUFFER_ATR = 0.2
-B8_MIN_SL_ATR = 0.6        # ← (بود: 1.0)
-B8_MAX_SL_ATR = 3.0        # ← (بود: 1.6)
-B8_MAX_SL_PCT = 0.07       # ← (بود: 0.04)
-B8_MIN_RR = 1.2            # ← (بود: 1.3)
-B8_MIN_VOL_RATIO = 0.9     # ← (بود: 1.0)
-B8_RSI_MAX_LONG = 72       # ← (بود: 70)
-B8_RSI_MIN_SHORT = 28      # ← (بود: 30)
-B8_MIN_SCORE = 0.35        # ← (بود: 0.45)
-B8_MAX_SIGNALS_PER_RUN = 3 # ← (بود: 2)
+B8_MIN_SL_ATR = 0.6
+B8_MAX_SL_ATR = 3.0
+B8_MAX_SL_PCT = 0.07
+B8_MIN_RR = 1.2
+B8_MIN_VOL_RATIO = 0.9
+B8_RSI_MAX_LONG = 72
+B8_RSI_MIN_SHORT = 28
+B8_MIN_SCORE = 0.35
+B8_MAX_SIGNALS_PER_RUN = 2 # ← کاهش از 3 برای جلوگیری از ریسک
 
 
 # =====================================================================
