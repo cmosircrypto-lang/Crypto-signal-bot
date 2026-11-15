@@ -1549,7 +1549,8 @@ BOTS = [
     Bot("crypto-signal-bot", "", analyze_cross,
         "server_messages.json", "last_signals.json"),
     Bot("crypto-signal-bot-v10", "Breakout", analyze_breakout,
-        "server_messages_v10.json", "last_signals_v10.json"),
+        "server_messages_v10.json", "last_signals_v10.json",
+        live=False),  # ← این را اضافه کنید
     Bot("crypto-signal-bot-v20", "MTF Pullback", analyze_mtf_pullback,
         "server_messages_v20.json", "last_signals_v20.json",
         cooldown_hours=B3_COOLDOWN_HOURS),
