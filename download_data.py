@@ -67,8 +67,13 @@ def download_all():
             file_path = os.path.join(OUTPUT_DIR, f"{bot_name}_{tf}.parquet")
             
             if os.path.exists(file_path):
-                print(f"⏩ {bot_name} {tf} already exists, skipping...")
-                continue
+                df_check = pd.read_parquet(file_path)
+                if tf == "1d" and len(df_check) < 300:
+                    print(f"🔄 {bot_name} {tf} has only {len(df_check)} candles, re-downloading...")
+                    os.remove(file_path)
+                else:
+                    print(f"⏩ {bot_name} {tf} already exists, skipping...")
+                    continue
             
             # تعیین تعداد روزها: ۱ روزه = ۳۶۵، بقیه = ۱۲۰
             if tf == "1d":
