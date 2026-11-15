@@ -2,7 +2,6 @@ name: Crypto Signal Bot
 
 on:
   workflow_dispatch:
-  # schedule غیرفعال شد (cron-job.org مدیریت می‌کند)
 
 concurrency:
   group: signal-bot
@@ -11,7 +10,7 @@ concurrency:
 jobs:
   analyze:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     permissions:
       contents: write
 
@@ -64,72 +63,36 @@ jobs:
           TOOBIT_SECRET: ${{ secrets.TOOBIT_SECRET }}
         run: python main.py
 
-      - name: Debug - where are state files?
+      # مرحله دیباگ برای دیدن فایل‌ها (این مرحله رو بعداً می‌تونید حذف کنید)
+      - name: Debug - state files after run
         run: |
-          echo "=== Files in workspace root ==="
-          ls -la
-          
-          echo "=== Files in repo/ ==="
-          ls -la repo/
-          
-          echo "=== Files in state/ ==="
-          ls -la state/
-          
-          echo "=== Find server_messages*.json anywhere ==="
-          find . -name "server_messages*.json" 2>/dev/null
-          
-          echo "=== Find last_signals*.json anywhere ==="
-          find . -name "last_signals*.json" 2>/dev/null
-          
-          echo "=== Find trades_bot*.csv anywhere ==="
-          find . -name "trades_bot*.csv" 2>/dev/null
-
-      - name: Debug state files
-        run: |
-          echo "--- Checking server_messages.json in repo ---"
-          cat repo/server_messages.json || echo "File not found in repo/"
-          echo "--- Checking server_messages.json in state ---"
-          cat state/server_messages.json || echo "File not found in state/"
+          echo "=== server_messages.json in repo ==="
+          cat repo/server_messages.json || echo "not found"
+          echo "=== server_messages.json in state ==="
+          cat state/server_messages.json || echo "not found"
 
       - name: Commit state to state branch
         if: always()
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          echo "=== 1. Creating state directory ==="
-          mkdir -p state
-          
-          echo "=== 2. Copying files from repo/ to state/ ==="
-          for f in server_messages*.json last_signals*.json trades_bot*.csv signals_bot*.xlsx daily_summary.json; do
-            if [ -f "repo/$f" ]; then
-              rm -f "state/$f"
-              cp "repo/$f" "state/$f"
-              echo "✅ Copied $f to state/"
-            fi
-          done
-          
-          echo "=== 3. Content of state/server_messages.json AFTER copy ==="
-          cat state/server_messages.json || echo "File not found!"
-          
-          echo "=== 4. Changing directory to state ==="
           cd state
-          
-          echo "=== 5. Git config & remote ==="
+          # کپی اجباری همه فایل‌های state از repo به state
+          cp -f ../repo/server_messages*.json . 2>/dev/null || true
+          cp -f ../repo/last_signals*.json . 2>/dev/null || true
+          cp -f ../repo/trades_bot*.csv . 2>/dev/null || true
+          cp -f ../repo/signals_bot*.xlsx . 2>/dev/null || true
+          cp -f ../repo/daily_summary.json . 2>/dev/null || true
+
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git"
-          
-          echo "=== 6. Git status & add ==="
-          git status
+
           git add -A
-          
-          echo "=== 7. Git diff check ==="
           if ! git diff --staged --quiet; then
-            echo "Changes detected! Committing..."
             git commit -m "state update $(date -u +%Y-%m-%dT%H:%MZ)"
-            echo "=== 8. Pushing to origin state ==="
             git push origin state
             echo "✅ Push successful!"
           else
-            echo "❌ No state changes detected by git."
+            echo "No state changes"
           fi
