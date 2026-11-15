@@ -35,7 +35,6 @@ def load_df_with_indicators(symbol, tf):
 def mock_get_data(ctx, symbol, timeframe):
     df_full = load_df_with_indicators(symbol, timeframe)
     
-    # همگام‌سازی تایم‌فریم‌ها: کندل‌های بالاتر باید حتماً بسته شده باشند تا دیتا لیک نداشته باشیم
     if timeframe == "4h":
         current_ts_rounded = (CURRENT_TS // (4 * 60 * 60 * 1000)) * (4 * 60 * 60 * 1000)
     elif timeframe == "1d":
@@ -63,7 +62,6 @@ class MockExchange:
         if since is not None:
             df = df[df["timestamp"] >= since]
         
-        # برای فایل‌های 5m و بالاتر در بک‌تست، باید تا زمان بسته شده جلو برویم
         if timeframe == "5m":
             current_ts_rounded = (CURRENT_TS // (5 * 60 * 1000)) * (5 * 60 * 1000)
         else:
@@ -87,8 +85,7 @@ def run_backtest(bot):
     btc_df = load_df_with_indicators(main.BTC_SYMBOL, "1h")
     start_idx = 300
     
-    # محاسبه تعداد روزها (پیش‌فرض ۳۰ روز)
-    DAYS = 365
+    DAYS = 120  # ← تغییر
     end_idx = min(len(btc_df) - 100, start_idx + 24 * DAYS)
     
     trades = []
@@ -156,7 +153,6 @@ def run_backtest(bot):
                 
                 if symbol != main.BTC_SYMBOL and bot.btc_filter_4h:
                     btc_4h_df = load_df_with_indicators(main.BTC_SYMBOL, "4h")
-                    # همگام‌سازی روند BTC
                     btc_4h_ts = (CURRENT_TS // (4 * 60 * 60 * 1000)) * (4 * 60 * 60 * 1000)
                     btc_4h_df = btc_4h_df[btc_4h_df["timestamp"] <= btc_4h_ts]
                     if len(btc_4h_df) > 20:
