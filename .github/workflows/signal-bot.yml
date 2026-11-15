@@ -64,6 +64,13 @@ jobs:
           TOOBIT_SECRET: ${{ secrets.TOOBIT_SECRET }}
         run: python main.py
 
+      - name: Debug state files
+        run: |
+          echo "--- Checking server_messages.json in repo ---"
+          cat repo/server_messages.json || echo "File not found in repo/"
+          echo "--- Checking server_messages.json in state ---"
+          cat state/server_messages.json || echo "File not found in state/"
+
       - name: Commit state to state branch
         if: always()
         env:
