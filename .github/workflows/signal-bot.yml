@@ -69,9 +69,10 @@ jobs:
         run: |
           mkdir -p state
 
+          # کپی اجباری فایل‌های آپدیت شده به پوشه state
           for f in server_messages*.json last_signals*.json trades_bot*.csv signals_bot*.xlsx daily_summary.json; do
             if [ -f "repo/$f" ]; then
-              cp "repo/$f" "state/$f"
+              cp -f "repo/$f" "state/$f"
             fi
           done
 
@@ -79,7 +80,6 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          # ست کردن remote با توکن (برای branch orphan جدید)
           if ! git remote | grep -q origin; then
             git remote add origin "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git"
           fi
@@ -88,15 +88,11 @@ jobs:
 
           if ! git diff --staged --quiet; then
             git commit -m "state update $(date -u +%Y-%m-%dT%H:%MZ)"
-
-            # تلاش اول: push عادی
-            if git push origin state --force-with-lease 2>/dev/null; then
-              echo "✅ State pushed"
-            else
+            git push origin state --force-with-lease || {
               echo "⚠️ Push conflict, retrying with rebase..."
-              git pull --rebase origin state || true
+              git pull --rebase origin state
               git push origin state --force-with-lease
-            fi
+            }
           else
             echo "No state changes"
           fi
