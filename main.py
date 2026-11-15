@@ -111,7 +111,7 @@ B2_MIN_ADX = 18
 # --- ربات ۳: MTF Pullback (بدون تغییر) ---
 B3_RSI_LONG = (31, 45)
 B3_RSI_SHORT = (55, 69)
-B3_NEAR_PCT = 0.015
+B3_NEAR_PCT = 0.03
 B3_BODY_MIN = 0.42
 B3_ATR_MULT = 0.85
 B3_RR = 2.1
@@ -155,7 +155,7 @@ B4_COOLDOWN_HOURS = 3
 
 # --- ربات ۵: SMC (تغییر) ---
 B5_LOOKBACK_1H = 24
-B5_SWEEP_RECENT = 12        # ← افزایش از 4
+B5_SWEEP_RECENT = 24        # ← افزایش از 4
 B5_RANGE_BARS = 40
 B5_FVG_RECENT = 8
 B5_TREND_GAP_4H_ATR = 0.15
@@ -1363,24 +1363,37 @@ def get_btc_filter(ctx):
 
 def analyze_btc_aligned(symbol, ctx):
     btc = getattr(ctx, "btc_filter", None)
-    if not btc: return rej("01_btc_filter_blocked")
-    bias = btc["bias"]
+    if not btc:
+        # اگر فیلتر BTC موجود نبود، از روند ۴ ساعته خود نماد استفاده کن
+        try:
+            df_4h = get_data(ctx, symbol, "4h")
+            bias = trend_of(df_4h)
+            if bias not in ("LONG", "SHORT"):
+                return rej("01_no_bias")
+        except Exception:
+            return rej("01_btc_filter_blocked")
+    else:
+        bias = btc["bias"]
 
     df_4h = get_data(ctx, symbol, "4h")
-    if trend_of(df_4h) != bias: return rej("02_symbol_4h_vs_btc_bias")
+    if trend_of(df_4h) != bias: 
+        return rej("02_symbol_4h_vs_btc_bias")
 
     l4 = df_4h.iloc[-1]
     atr_4h = float(l4["atr"])
-    if np.isnan(atr_4h) or atr_4h <= 0: return rej("03_bad_atr_4h")
+    if np.isnan(atr_4h) or atr_4h <= 0: 
+        return rej("03_bad_atr_4h")
     gap_4h = abs(float(l4["ema9"]) - float(l4["ema21"]))
-    if gap_4h < B6_ALT_GAP_ATR * atr_4h: return rej("04_gap_4h")
+    if gap_4h < B6_ALT_GAP_ATR * atr_4h: 
+        return rej("04_gap_4h")
 
     df_1h = get_data(ctx, symbol, "1h")
     last = df_1h.iloc[-1]
     close, open_, high, low = (float(last[k]) for k in ("close", "open", "high", "low"))
     atr, rsi, ema21 = float(last["atr"]), float(last["rsi"]), float(last["ema21"])
 
-    if np.isnan(atr) or np.isnan(rsi) or atr <= 0: return rej("05_bad_atr_rsi_1h")
+    if np.isnan(atr) or np.isnan(rsi) or atr <= 0: 
+        return rej("05_bad_atr_rsi_1h")
 
     if bias == "LONG":
         touched = (low <= ema21 + B6_TOUCH_ATR * atr and close > ema21 and close > open_ and close - ema21 <= B6_MAX_EXT_ALT_ATR * atr)
@@ -1400,12 +1413,14 @@ def analyze_btc_aligned(symbol, ctx):
         if not rsi_ok: tags.append("rsi")
         if not vol_ok: tags.append("vol")
         return rej("06_filters_" + "+".join(tags))
-    if (atr * B6_SL_ATR) / close < MIN_SL_PCT: return rej("07_min_sl_pct")
+    if (atr * B6_SL_ATR) / close < MIN_SL_PCT: 
+        return rej("07_min_sl_pct")
 
     trend_score = min(gap_4h / atr_4h, 1.2) / 1.2
     vol_score = min(vol_ratio / 2.5, 1.0)
-    btc_score = 0.55 + (B6_1H_ALIGN_BONUS if btc["align_1h"] else 0.0)
-    btc_score += 0.15 * min(btc["gap_atr"] / 0.6, 1.0)
+    btc_score = 0.55 + (B6_1H_ALIGN_BONUS if btc and btc.get("align_1h") else 0.0)
+    if btc:
+        btc_score += 0.15 * min(btc["gap_atr"] / 0.6, 1.0)
     score = (0.35 * btc_score + 0.30 * trend_score + 0.20 * vol_score + 0.15 * min(abs(rsi - 50) / 20.0, 1.0))
 
     if score < B6_MIN_SCORE:
@@ -1548,36 +1563,29 @@ class Bot:
 BOTS = [
     Bot("crypto-signal-bot", "", analyze_cross,
         "server_messages.json", "last_signals.json",
-        live=True),  # ← v0 فعال
-
+        live=True),
     Bot("crypto-signal-bot-v10", "Breakout", analyze_breakout,
         "server_messages_v10.json", "last_signals_v10.json",
-        live=False), # ← غیرفعال
-
+        live=False),
     Bot("crypto-signal-bot-v20", "MTF Pullback", analyze_mtf_pullback,
         "server_messages_v20.json", "last_signals_v20.json",
-        cooldown_hours=B3_COOLDOWN_HOURS, live=True), # ← غیرفعال
-
+        cooldown_hours=B3_COOLDOWN_HOURS, live=True),  # ← فعال شد
     Bot("crypto-signal-bot-v30", "AMD Session", analyze_amd_session,
         "server_messages_v30.json", "last_signals_v30.json",
-        cooldown_hours=B30_COOLDOWN_HOURS, btc_filter_4h=True, live=False), # ← غیرفعال
-
+        cooldown_hours=B30_COOLDOWN_HOURS, btc_filter_4h=True, live=False),
     Bot("crypto-signal-bot-v40", "Regime", analyze_regime,
         "server_messages_v40.json", "last_signals_v40.json",
-        cooldown_hours=B4_COOLDOWN_HOURS, btc_filter_4h=False, live=False), # ← غیرفعال
-
+        cooldown_hours=B4_COOLDOWN_HOURS, btc_filter_4h=False, live=False),
     Bot("crypto-signal-bot-v50", "SMC", analyze_smc,
         "server_messages_v50.json", "last_signals_v50.json",
-        cooldown_hours=B5_COOLDOWN_HOURS, live=True), # ← غیرفعال (فعلاً برای دیباگ)
-
+        cooldown_hours=B5_COOLDOWN_HOURS, live=True),
     Bot("crypto-signal-bot-v60", "BTC Filter", analyze_btc_aligned,
         "server_messages_v60.json", "last_signals_v60.json",
-        cooldown_hours=B6_COOLDOWN_HOURS, btc_filter_4h=False, live=True), # ← غیرفعال
-
+        cooldown_hours=B6_COOLDOWN_HOURS, btc_filter_4h=False, live=True),  # ← فعال شد
     Bot("crypto-signal-bot-v70", "SMC Winner", analyze_smc_winner,
         "server_messages_v70.json", "last_signals_v70.json",
         cooldown_hours=B8_COOLDOWN_HOURS, max_signals=B8_MAX_SIGNALS_PER_RUN,
-        btc_filter_4h=True, live=True), # ← v70 فعال
+        btc_filter_4h=True, live=True),
 ]
 LIVE_BOTS = [b for b in BOTS if b.live]
 
