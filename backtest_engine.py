@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 import importlib.util
 import sys
 import warnings
-from collections import Counter
+from collections import defaultdict, Counter   # ← این خط مهمه
 warnings.filterwarnings("ignore")
 
 spec = importlib.util.spec_from_file_location("main", "main.py")
