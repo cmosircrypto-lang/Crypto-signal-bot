@@ -1,3 +1,7 @@
+- name: Check Data Integrity
+        working-directory: repo
+        run: python check_data.py
+
 name: Backtest Engine
 
 on:
