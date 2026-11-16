@@ -1561,15 +1561,31 @@ class Bot:
 
 
 BOTS = [
+    # ۱. ربات EMA Cross (سودده: +15.38R)
     Bot("crypto-signal-bot", "", analyze_cross,
         "server_messages.json", "last_signals.json",
         live=True),
+
+    # ۲. ربات BTC Filter (سودده: +14.03R)
+    Bot("crypto-signal-bot-v60", "BTC Filter", analyze_btc_aligned,
+        "server_messages_v60.json", "last_signals_v60.json",
+        cooldown_hours=B6_COOLDOWN_HOURS, btc_filter_4h=False, live=True),
+
+    # ۳. ربات SMC Winner (سودده: +4.74R)
+    Bot("crypto-signal-bot-v70", "SMC Winner", analyze_smc_winner,
+        "server_messages_v70.json", "last_signals_v70.json",
+        cooldown_hours=B8_COOLDOWN_HOURS, max_signals=B8_MAX_SIGNALS_PER_RUN,
+        btc_filter_4h=True, live=True),
+
+    # ---------------------------------------------------------
+    # بقیه ربات‌ها غیرفعال شدند (live=False)
+    # ---------------------------------------------------------
     Bot("crypto-signal-bot-v10", "Breakout", analyze_breakout,
         "server_messages_v10.json", "last_signals_v10.json",
         live=False),
     Bot("crypto-signal-bot-v20", "MTF Pullback", analyze_mtf_pullback,
         "server_messages_v20.json", "last_signals_v20.json",
-        cooldown_hours=B3_COOLDOWN_HOURS, live=True),  # ← فعال شد
+        cooldown_hours=B3_COOLDOWN_HOURS, live=False),
     Bot("crypto-signal-bot-v30", "AMD Session", analyze_amd_session,
         "server_messages_v30.json", "last_signals_v30.json",
         cooldown_hours=B30_COOLDOWN_HOURS, btc_filter_4h=True, live=False),
@@ -1578,14 +1594,7 @@ BOTS = [
         cooldown_hours=B4_COOLDOWN_HOURS, btc_filter_4h=False, live=False),
     Bot("crypto-signal-bot-v50", "SMC", analyze_smc,
         "server_messages_v50.json", "last_signals_v50.json",
-        cooldown_hours=B5_COOLDOWN_HOURS, live=True),
-    Bot("crypto-signal-bot-v60", "BTC Filter", analyze_btc_aligned,
-        "server_messages_v60.json", "last_signals_v60.json",
-        cooldown_hours=B6_COOLDOWN_HOURS, btc_filter_4h=False, live=True),  # ← فعال شد
-    Bot("crypto-signal-bot-v70", "SMC Winner", analyze_smc_winner,
-        "server_messages_v70.json", "last_signals_v70.json",
-        cooldown_hours=B8_COOLDOWN_HOURS, max_signals=B8_MAX_SIGNALS_PER_RUN,
-        btc_filter_4h=True, live=True),
+        cooldown_hours=B5_COOLDOWN_HOURS, live=False),
 ]
 LIVE_BOTS = [b for b in BOTS if b.live]
 
