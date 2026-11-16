@@ -1,0 +1,37 @@
+name: Migrate Open Trades
+
+on:
+  workflow_dispatch:
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout state branch
+        uses: actions/checkout@v4
+        with:
+          ref: state
+          fetch-depth: 1
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Run migration
+        run: python migrate_open_trades.py
+
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add last_signals*.json
+          if ! git diff --staged --quiet; then
+            git commit -m "migrate: copy open trades to managed bots"
+            git push origin state
+            echo "✅ Migration committed"
+          else
+            echo "⏩ No changes"
+          fi
