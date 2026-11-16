@@ -1,0 +1,37 @@
+name: Cleanup Managed Bots
+
+on:
+  workflow_dispatch:
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout state branch
+        uses: actions/checkout@v4
+        with:
+          ref: state
+          fetch-depth: 1
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Run cleanup
+        run: python cleanup_managed.py
+
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add last_signals*.json
+          if ! git diff --staged --quiet; then
+            git commit -m "cleanup: keep only first open trade in managed bots"
+            git push origin state
+            echo "✅ Cleanup committed"
+          else
+            echo "⏩ No changes"
+          fi
