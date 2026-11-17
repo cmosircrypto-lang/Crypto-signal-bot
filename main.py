@@ -871,15 +871,18 @@ def run_bot(bot, ctx, btc_4h, btc_1h):
     print("=" * 50)
     print(f"▶ {bot.name} {('(' + bot.label + ')') if bot.label else ''}")
     signals = load_json(bot.signals_file, {})
+    # ابتدا وضعیت معاملات باز بررسی شود (قبل از چک تک‌معامله)
+    if bot.has_sizing:
+        if update_open_trades_with_sizing(bot, ctx.exchange, signals):
+            save_json(bot.signals_file, signals)
+    else:
+        update_open_trades(bot, ctx.exchange)
+        signals = load_json(bot.signals_file, {})
     if bot.single_trade:
         open_trades = [s for k, s in signals.items() if not k.startswith("__") and s.get("status") == "OPEN"]
         if open_trades:
             print(f"⏳ {bot.name} has an OPEN trade. Skipping this cycle.")
             return 0
-    if bot.has_sizing:
-        update_open_trades_with_sizing(bot, ctx.exchange, signals)
-    else:
-        update_open_trades(bot, ctx.exchange)
     candidates = []
     t_now = now_ms()
     for symbol in SYMBOLS:
