@@ -1,4 +1,5 @@
 import os
+import sys  # ← این خط را اضافه کنید
 import pandas as pd
 from datetime import datetime, timezone
 
@@ -50,3 +51,4 @@ def check_data_integrity():
 
 if __name__ == "__main__":
     check_data_integrity()
+    sys.exit(0)  # ← این خط را اضافه کنید
