@@ -22,7 +22,7 @@ jobs:
     timeout-minutes: 350
     defaults:
       run:
-        working-directory: backtest
+        working-directory: Backtest
     steps:
       - uses: actions/checkout@v4
 
@@ -36,7 +36,7 @@ jobs:
       - name: Restore cached OKX data
         uses: actions/cache@v4
         with:
-          path: backtest/data/okx
+          path: Backtest/data/okx
           key: okx-data-${{ inputs.end_date }}-${{ github.run_id }}
           restore-keys: |
             okx-data-${{ inputs.end_date }}-
