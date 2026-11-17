@@ -1,73 +1,60 @@
-name: Backtest Engine
+name: Backtest
 
 on:
   workflow_dispatch:
+    inputs:
+      end_date:
+        description: "تاریخ پایان بک‌تست (UTC، مثل 2026-11-17)"
+        required: true
+        default: "2026-11-17"
+      days:
+        description: "طول بک‌تست (روز)"
+        required: true
+        default: "365"
+      step_minutes:
+        description: "فاصله اجرای ربات‌ها (دقیقه، مضرب ۱۵)"
+        required: true
+        default: "60"
 
 jobs:
   backtest:
     runs-on: ubuntu-latest
     timeout-minutes: 350
-
+    defaults:
+      run:
+        working-directory: backtest
     steps:
-      - name: Checkout main (code)
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
         with:
-          path: repo
-          ref: main
-          fetch-depth: 1
-          lfs: true
+          python-version: "3.11"
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - run: pip install pandas numpy requests
+
+      # داده‌ی دانلودشده‌ی قبلی (اگر باشد) برگردانده می‌شود تا دانلود مجدد لازم نباشد
+      - name: Restore cached OKX data
+        uses: actions/cache@v4
         with:
-          python-version: '3.10'
-          cache: 'pip'
-          cache-dependency-path: repo/requirements.txt
+          path: backtest/data/okx
+          key: okx-data-${{ inputs.end_date }}-${{ github.run_id }}
+          restore-keys: |
+            okx-data-${{ inputs.end_date }}-
+            okx-data-
 
-      - name: Install dependencies
-        working-directory: repo
-        run: pip install ccxt pandas pyarrow tqdm jdatetime openpyxl requests
+      - name: Download OKX data (فقط بخش‌های ناقص)
+        run: python download_okx_data.py --end "${{ inputs.end_date }}" --days "${{ inputs.days }}"
 
-      - name: Run download_data
-        working-directory: repo
-        run: python download_data.py
-
-      - name: Commit data to repo
-        working-directory: repo
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Run backtest
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git"
-          
-          git lfs install
-          
-          git add data/
-          if ! git diff --staged --quiet; then
-            git commit -m "chore: add historical data ($(date -u +%Y-%m-%d))"
-            git push origin main
-            echo "✅ Data committed to repo"
-          else
-            echo "⏩ No new data to commit"
-          fi
+          python backtest_bots.py --days "${{ inputs.days }}" --end "${{ inputs.end_date }}" \
+            --step-minutes "${{ inputs.step_minutes }}" | tee report_full.txt
+          sed -n '/نتایج بک‌تست/,$p' report_full.txt > report.txt
+          { echo '```'; cat report.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
 
-      # 👇 مرحله جدید برای بررسی صحت داده‌ها
-      - name: Check Data Integrity
-        working-directory: repo
-        run: python check_data.py
-      
-      - name: Check BTC data
-        working-directory: repo
-        run: python check_btc_data.py
-
-      - name: Run backtest_engine
-        working-directory: repo
-        run: python backtest_engine.py
-
-      - name: Upload results
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: backtest-results
-          path: repo/backtest_results.csv
-          retention-days: 7
+          path: |
+            backtest/backtest_results/
+            backtest/report.txt
