@@ -14,7 +14,7 @@ on:
       step_minutes:
         description: "فاصله اجرای ربات‌ها (دقیقه، مضرب ۱۵)"
         required: true
-        default: "60"
+        default: "15"
 
 jobs:
   backtest:
@@ -32,18 +32,23 @@ jobs:
 
       - run: pip install pandas numpy requests
 
-      # داده‌ی دانلودشده‌ی قبلی (اگر باشد) برگردانده می‌شود تا دانلود مجدد لازم نباشد
       - name: Restore cached OKX data
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: Backtest/data/okx
-          key: okx-data-${{ inputs.end_date }}-${{ github.run_id }}
-          restore-keys: |
-            okx-data-${{ inputs.end_date }}-
-            okx-data-
+          key: okx-data-${{ github.run_id }}
+          restore-keys: okx-data-
 
       - name: Download OKX data (فقط بخش‌های ناقص)
         run: python download_okx_data.py --end "${{ inputs.end_date }}" --days "${{ inputs.days }}"
+
+      # بلافاصله بعد از دانلود ذخیره می‌شود، حتی اگر بک‌تست خطا بدهد
+      - name: Save OKX data cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: Backtest/data/okx
+          key: okx-data-${{ github.run_id }}
 
       - name: Run backtest
         run: |
@@ -52,9 +57,12 @@ jobs:
           sed -n '/نتایج بک‌تست/,$p' report_full.txt > report.txt
           { echo '```'; cat report.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
 
-      - uses: actions/upload-artifact@v4
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
         with:
           name: backtest-results
           path: |
-            backtest/backtest_results/
-            backtest/report.txt
+            Backtest/backtest_results/
+            Backtest/report.txt
+          if-no-files-found: error
