@@ -116,7 +116,7 @@ B8_MIN_VOL_RATIO = 0.9
 B8_RSI_MAX_LONG = 72
 B8_RSI_MIN_SHORT = 28
 B8_MIN_SCORE = 0.35
-B8_MAX_SIGNALS_PER_RUN = 2
+B8_MAX_SIGNALS_PER_RUN = 5
 
 # =====================================================================
 # Funnel
@@ -756,7 +756,8 @@ class Bot:
         self.heartbeat_file = heartbeat_file
         self.signals_file = signals_file
         self.cooldown_ms = int(cooldown_hours * 3600 * 1000)
-        self.max_signals = max_signals
+        # ربات‌های تک‌معامله هیچ‌وقت نباید در یک اجرا بیش از یک سیگنال بدهند
+        self.max_signals = 1 if single_trade else max_signals
         self.btc_filter_4h = btc_filter_4h
         self.btc_filter_1h = btc_filter_1h
         self.live = live
