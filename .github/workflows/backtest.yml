@@ -56,6 +56,10 @@ jobs:
       - name: Check Data Integrity
         working-directory: repo
         run: python check_data.py
+      
+      - name: Check BTC data
+        working-directory: repo
+        run: python check_btc_data.py
 
       - name: Run backtest_engine
         working-directory: repo
