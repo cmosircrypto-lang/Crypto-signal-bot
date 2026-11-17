@@ -1,0 +1,52 @@
+name: Sync Excel for Managed Bots
+
+on:
+  workflow_dispatch:
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout state branch
+        uses: actions/checkout@v4
+        with:
+          ref: state
+          fetch-depth: 1
+
+      - name: Checkout main for scripts
+        uses: actions/checkout@v4
+        with:
+          path: repo
+          ref: main
+          fetch-depth: 1
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: pip install openpyxl jdatetime
+
+      - name: Copy scripts to state
+        run: |
+          cp repo/excel_log.py .
+          cp repo/sync_excel_for_managed.py .
+
+      - name: Run sync
+        run: python sync_excel_for_managed.py
+
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add *.xlsx
+          if ! git diff --staged --quiet; then
+            git commit -m "sync: add open trades to managed bots excel"
+            git push origin state
+            echo "✅ Sync committed"
+          else
+            echo "⏩ No changes"
+          fi
