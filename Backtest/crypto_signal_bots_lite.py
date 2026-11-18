@@ -112,6 +112,9 @@ B6_COOLDOWN_HOURS = 3
 # اگر فیلتر BTC مسدود باشد (روند ضعیف/متناقض): False = ربات با روند ۴ساعته‌ی خود نماد ادامه می‌دهد (رفتار فعلی)
 # True = ربات در آن چرخه هیچ سیگنالی نمی‌دهد (مطابق پیام لاگ «v60 will skip all symbols»)
 B6_REQUIRE_BTC_FILTER = False
+# فیلترهای آزمایشی (صفر = خاموش). SL بر حسب کسری از قیمت ورود، مثل 0.013 = ۱٫۳٪
+B6_MAX_SL_PCT = 0.0      # رد سیگنال‌هایی که SL آن‌ها از این بیشتر است (نمادهای پرنوسان)
+B6_MAX_VOL_RATIO = 0.0   # رد سیگنال‌هایی که حجم/میانگین آن‌ها از این بیشتر است (اسپایک حجم)
 
 B8_SWEEP_LOOKBACK = 10
 B8_TP_ATR_MULT = 2.0
@@ -120,6 +123,7 @@ B8_SL_BUFFER_ATR = 0.2
 B8_MIN_SL_ATR = 0.6
 B8_MAX_SL_ATR = 3.0
 B8_MAX_SL_PCT = 0.07
+B8_MIN_SL_PCT = 0.0      # (آزمایشی، صفر = خاموش) رد سیگنال‌هایی که SL آن‌ها از این کمتر است، مثل 0.025
 B8_MIN_RR = 1.2
 B8_MIN_VOL_RATIO = 0.9
 B8_RSI_MAX_LONG = 72
@@ -504,6 +508,8 @@ def analyze_btc_aligned(symbol, ctx):
         if not vol_ok: tags.append("vol")
         return rej("06_filters_" + "+".join(tags))
     if (atr * B6_SL_ATR) / close < MIN_SL_PCT: return rej("07_min_sl_pct")
+    if B6_MAX_SL_PCT and (atr * B6_SL_ATR) / close > B6_MAX_SL_PCT: return rej("07b_max_sl_pct")
+    if B6_MAX_VOL_RATIO and vol_ratio > B6_MAX_VOL_RATIO: return rej("07c_vol_spike")
     trend_score = min(gap_4h/atr_4h, 1.2)/1.2
     vol_score = min(vol_ratio/2.5, 1.0)
     btc_score = 0.55 + (B6_1H_ALIGN_BONUS if btc and btc.get("align_1h") else 0.0)
@@ -543,6 +549,7 @@ def analyze_smc_winner(symbol, ctx):
     sl_dist = max(sl_dist, atr * B8_MIN_SL_ATR)
     if sl_dist > atr * B8_MAX_SL_ATR or sl_dist / close > B8_MAX_SL_PCT: return rej("08_sl_too_far")
     if sl_dist / close < MIN_SL_PCT: return rej("09_min_sl_pct")
+    if B8_MIN_SL_PCT and sl_dist / close < B8_MIN_SL_PCT: return rej("09b_sl_too_tight")
     tp_dist = atr * B8_TP_ATR_MULT
     rr = tp_dist / sl_dist
     if rr < B8_MIN_RR: return rej("10_rr_low")
