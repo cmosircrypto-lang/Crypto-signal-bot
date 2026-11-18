@@ -24,6 +24,13 @@ on:
         required: false
         default: ""
 
+permissions:
+  contents: write   # برای ذخیره‌ی دائمی داده‌ی OKX در Releases
+
+env:
+  DATA_RELEASE: okx-data          # نام Release (و تگ) نگهدارنده‌ی داده
+  DATA_ASSET: okx_data.tar        # نام فایل داخل Release
+
 jobs:
   backtest:
     runs-on: ubuntu-latest
@@ -40,23 +47,40 @@ jobs:
 
       - run: pip install pandas numpy requests
 
-      - name: Restore cached OKX data
-        uses: actions/cache/restore@v4
-        with:
-          path: Backtest/data/okx
-          key: okx-data-${{ github.run_id }}
-          restore-keys: okx-data-
+      # ۱) داده‌ی ذخیره‌شده‌ی قبلی را از Release برمی‌گرداند (اگر باشد)
+      - name: Restore OKX data from Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p data/okx
+          if gh release view "$DATA_RELEASE" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            gh release download "$DATA_RELEASE" --repo "${{ github.repository }}" \
+              --pattern "$DATA_ASSET" --dir /tmp --clobber || echo "asset not found"
+            if [ -f "/tmp/$DATA_ASSET" ]; then
+              tar -xf "/tmp/$DATA_ASSET" -C data/okx
+              echo "Restored cached data:"; du -sh data/okx
+            fi
+          else
+            echo "No cached data yet — first run will download everything."
+          fi
 
+      # ۲) فقط بخش‌های ناقص (جدیدتر/قدیمی‌تر از داده‌ی موجود) دانلود می‌شود
       - name: Download OKX data (فقط بخش‌های ناقص)
         run: python download_okx_data.py --end "${{ inputs.end_date }}" --days "${{ inputs.days }}"
 
-      # بلافاصله بعد از دانلود ذخیره می‌شود، حتی اگر بک‌تست خطا بدهد
-      - name: Save OKX data cache
-        if: always()
-        uses: actions/cache/save@v4
-        with:
-          path: Backtest/data/okx
-          key: okx-data-${{ github.run_id }}
+      # ۳) بلافاصله بعد از دانلود در Release ذخیره می‌شود، حتی اگر بک‌تست خطا بدهد
+      - name: Save OKX data to Release
+        if: always() && hashFiles('Backtest/data/okx/**') != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tar -cf "/tmp/$DATA_ASSET" -C data/okx .
+          ls -lh "/tmp/$DATA_ASSET"
+          gh release view "$DATA_RELEASE" --repo "${{ github.repository }}" >/dev/null 2>&1 || \
+            gh release create "$DATA_RELEASE" --repo "${{ github.repository }}" \
+              --title "OKX data cache" --notes "کش داده‌ی کندل OKX برای بک‌تست. حذف نکن." \
+              --prerelease --latest=false
+          gh release upload "$DATA_RELEASE" "/tmp/$DATA_ASSET" --repo "${{ github.repository }}" --clobber
 
       - name: Run backtest
         env:
