@@ -90,7 +90,7 @@ jobs:
           EXTRA=""
           [ -n "$OVERRIDES" ] && EXTRA="$EXTRA --set $OVERRIDES"
           [ -n "$BOTS" ] && EXTRA="$EXTRA --bots $BOTS"
-          python backtest_bots.py --days "${{ inputs.days }}" --end "${{ inputs.end_date }}" \
+          python -u backtest_bots.py --days "${{ inputs.days }}" --end "${{ inputs.end_date }}" \
             --step-minutes "${{ inputs.step_minutes }}" $EXTRA | tee report_full.txt
           sed -n '/نتایج بک‌تست/,$p' report_full.txt > report.txt
           { echo "overrides: ${OVERRIDES:-none} | bots: ${BOTS:-all}"; echo '```'; cat report.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
