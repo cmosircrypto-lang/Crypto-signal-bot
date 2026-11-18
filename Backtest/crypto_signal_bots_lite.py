@@ -67,8 +67,14 @@ MAX_ENTRY_DRIFT_ATR = 0.45
 # تنظیمات مدیریت سرمایه (برای ربات‌های v0a, v60a, v70a)
 # =====================================================================
 INITIAL_BALANCE = 100.0   # بالانس اولیه هر ربات (دلار)
-RISK_PERCENT = 3.0        # ریسک هر معامله (۳٪)
-SL_PERCENT = 2.0          # حد ضرر (۲٪ از قیمت ورود)
+RISK_PERCENT = 1.0        # ریسک پایه‌ی هر معامله (٪ از بالانس) — ضرر هر معامله‌ی عادی دقیقاً همین است
+SL_PERCENT = 2.0          # (بدون استفاده) حد ضرر واقعی از ATR هر استراتژی می‌آید، نه از این عدد
+
+# --- سقف‌های ایمنی ---
+MAX_LEVERAGE = 10.0            # سقف اهرم (ارزش پوزیشن ÷ بالانس). بیشتر از این پوزیشن کوچک می‌شود
+MAX_RISK_PER_TRADE_PCT = 3.0   # سقف ضرر هر معامله (٪ از بالانس)، حتی در چرخه‌ی جبران
+RECOVERY_ENABLED = True        # چرخه‌ی جبران (بعد از ضرر، ریسک بزرگ‌تر تا جبران ضررها)
+MAX_RECOVERY_LOSSES = 4        # بعد از این تعداد ضرر پشت‌سرهم چرخه بسته می‌شود (ضرر پذیرفته و ریسک به پایه برمی‌گردد)
 
 TF_MS = {
     "5m": 5 * 60 * 1000,
@@ -103,6 +109,9 @@ B6_VOLUME_MULT = 1.4
 B6_SL_ATR, B6_TP_ATR = 1.4, 2.95
 B6_MIN_SCORE = 0.65
 B6_COOLDOWN_HOURS = 3
+# اگر فیلتر BTC مسدود باشد (روند ضعیف/متناقض): False = ربات با روند ۴ساعته‌ی خود نماد ادامه می‌دهد (رفتار فعلی)
+# True = ربات در آن چرخه هیچ سیگنالی نمی‌دهد (مطابق پیام لاگ «v60 will skip all symbols»)
+B6_REQUIRE_BTC_FILTER = False
 
 B8_SWEEP_LOOKBACK = 10
 B8_TP_ATR_MULT = 2.0
@@ -459,6 +468,7 @@ def get_btc_filter(ctx):
 def analyze_btc_aligned(symbol, ctx):
     btc = getattr(ctx, "btc_filter", None)
     if not btc:
+        if B6_REQUIRE_BTC_FILTER: return rej("01_btc_filter_blocked")
         try:
             df_4h = get_data(ctx, symbol, "4h")
             bias = trend_of(df_4h)
@@ -566,12 +576,19 @@ def analyze_smc_winner(symbol, ctx):
 def calculate_position_sizing(bot, entry, sl, tp, balance, in_recovery, recovery_losses):
     sl_dist_pct = abs(entry - sl) / entry if entry > 0 else 0
     rr_ratio = abs(tp - entry) / abs(entry - sl) if abs(entry - sl) > 0 else 2.0
-    if not in_recovery:
+    if not in_recovery or not RECOVERY_ENABLED:
         risk_amount = balance * (bot.risk_percent / 100.0)
     else:
         total_loss = sum(recovery_losses)
         risk_amount = total_loss / rr_ratio if rr_ratio > 0 else 0
+    # سقف ضرر هر معامله
+    risk_amount = min(risk_amount, balance * (MAX_RISK_PER_TRADE_PCT / 100.0))
     position_value = risk_amount / sl_dist_pct if sl_dist_pct > 0 else 0
+    # سقف اهرم: اگر لازم بود پوزیشن کوچک‌تر می‌شود (ضرر واقعی هم کمتر می‌شود)
+    max_position_value = balance * MAX_LEVERAGE
+    if position_value > max_position_value:
+        position_value = max_position_value
+        risk_amount = position_value * sl_dist_pct
     leverage_needed = position_value / balance if balance > 0 else 1.0
     position_size = position_value / entry if entry > 0 else 0
     return {"position_size": round(position_size, 6), "position_value": round(position_value, 2),
@@ -608,9 +625,19 @@ def update_open_trades_with_sizing(bot, exchange, signals):
                     signals["__balance__"] = new_balance
                     losses = signals.get("__recovery_losses__", [])
                     losses.append(loss_usd)
-                    signals["__recovery_losses__"] = losses
-                    signals["__in_recovery__"] = True
-                    data["cycle_status"] = f"IN RECOVERY (Loss #{len(losses)})"
+                    if not RECOVERY_ENABLED:
+                        signals["__recovery_losses__"] = []
+                        signals["__in_recovery__"] = False
+                        data["cycle_status"] = "LOSS (no recovery)"
+                    elif len(losses) >= MAX_RECOVERY_LOSSES:
+                        # سقف چرخه‌ی جبران: ضررها پذیرفته می‌شود و ریسک به پایه برمی‌گردد
+                        signals["__recovery_losses__"] = []
+                        signals["__in_recovery__"] = False
+                        data["cycle_status"] = f"ENDED (Recovery aborted after {len(losses)} losses)"
+                    else:
+                        signals["__recovery_losses__"] = losses
+                        signals["__in_recovery__"] = True
+                        data["cycle_status"] = f"IN RECOVERY (Loss #{len(losses)})"
                 data["profit_usd"] = round(profit_usd if result == "TP" else -loss_usd, 2)
                 data["balance_after"] = round(new_balance, 2)
                 updated = True
@@ -788,17 +815,17 @@ BOTS = [
     Bot("crypto-signal-bot-v0a", "EMA Cross (Managed)", analyze_cross,
         "server_messages_v0a.json", "last_signals_v0a.json",
         live=True, single_trade=True, has_sizing=True,
-        initial_balance=100.0, risk_percent=3.0, sl_percent=2.0),
+        initial_balance=INITIAL_BALANCE, risk_percent=RISK_PERCENT, sl_percent=SL_PERCENT),
     Bot("crypto-signal-bot-v60a", "BTC Filter (Managed)", analyze_btc_aligned,
         "server_messages_v60a.json", "last_signals_v60a.json",
         cooldown_hours=B6_COOLDOWN_HOURS, btc_filter_4h=False,
         live=True, single_trade=True, has_sizing=True,
-        initial_balance=100.0, risk_percent=3.0, sl_percent=2.0),
+        initial_balance=INITIAL_BALANCE, risk_percent=RISK_PERCENT, sl_percent=SL_PERCENT),
     Bot("crypto-signal-bot-v70a", "SMC Winner (Managed)", analyze_smc_winner,
         "server_messages_v70a.json", "last_signals_v70a.json",
         cooldown_hours=B8_COOLDOWN_HOURS, max_signals=1,
         btc_filter_4h=True, live=True, single_trade=True, has_sizing=True,
-        initial_balance=100.0, risk_percent=3.0, sl_percent=2.0),
+        initial_balance=INITIAL_BALANCE, risk_percent=RISK_PERCENT, sl_percent=SL_PERCENT),
 ]
 LIVE_BOTS = [b for b in BOTS if b.live]
 
@@ -879,6 +906,9 @@ def run_bot(bot, ctx, btc_4h, btc_1h):
     else:
         update_open_trades(bot, ctx.exchange)
         signals = load_json(bot.signals_file, {})
+    if bot.has_sizing and signals.get("__balance__", bot.initial_balance) <= 0:
+        print(f"💀 {bot.name}: balance <= 0 — no new signals.")
+        return 0
     if bot.single_trade:
         open_trades = [s for k, s in signals.items() if not k.startswith("__") and s.get("status") == "OPEN"]
         if open_trades:
