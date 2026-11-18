@@ -160,7 +160,7 @@ def resample_df(df15, rule):
     v = df["volume"].resample(rule, label="left", closed="left").sum()
     out = pd.DataFrame({"open":o,"high":h,"low":l,"close":c,"volume":v}).dropna()
     out = out.reset_index()
-    out["timestamp"] = (out["dt"].astype("int64") // 1_000_000).astype("int64")
+    out["timestamp"] = ((out["dt"] - pd.Timestamp("1970-01-01", tz="UTC")) // pd.Timedelta(milliseconds=1)).astype("int64")
     return out[["timestamp","open","high","low","close","volume"]]
 
 def get_df(data_dir, symbol, tf):
