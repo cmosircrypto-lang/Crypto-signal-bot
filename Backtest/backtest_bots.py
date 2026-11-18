@@ -160,9 +160,7 @@ def resample_df(df15, rule):
     v = df["volume"].resample(rule, label="left", closed="left").sum()
     out = pd.DataFrame({"open":o,"high":h,"low":l,"close":c,"volume":v}).dropna()
     out = out.reset_index()
-    # تبدیل ۱۰۰٪ امن به epoch میلی‌ثانیه (مستقل از ns/us/ms بودن dtype)
-    epoch = pd.Timestamp("1970-01-01", tz="UTC")
-    out["timestamp"] = ((out["dt"] - epoch) // pd.Timedelta(milliseconds=1)).astype("int64")
+    out["timestamp"] = (out["dt"].astype("int64") // 1_000_000).astype("int64")
     return out[["timestamp","open","high","low","close","volume"]]
 
 def get_df(data_dir, symbol, tf):
@@ -568,33 +566,6 @@ def run_backtest(data_dir, start_ms, end_ms, step_ms, bots, out_dir):
     def loader(symbol, tf): return get_df(data_dir, symbol, tf)
     t = start_ms; cycle = 0; t0 = datetime.now(timezone.utc)
     total_cycles = (end_ms-start_ms)//step_ms + 1
-    # --- DEBUG: check data coverage once ---
-    print("DATA CHECK:", flush=True)
-    print(f"  backtest window: {datetime.fromtimestamp(start_ms/1000, tz=timezone.utc):%Y-%m-%d} → "
-          f"{datetime.fromtimestamp(end_ms/1000, tz=timezone.utc):%Y-%m-%d}", flush=True)
-    print(f"  start_ms={start_ms}  end_ms={end_ms}", flush=True)
-    for sym in [BTC_SYMBOL] + SYMBOLS[:5]:
-        df = get_df(data_dir, sym, "15m")
-        if df is None or len(df) == 0:
-            print(f"  {sym} 15m: NO DATA", flush=True)
-            continue
-        lo = int(df["timestamp"].iloc[0]); hi = int(df["timestamp"].iloc[-1])
-        d0 = datetime.fromtimestamp(lo/1000, tz=timezone.utc).strftime("%Y-%m-%d %H:%M")
-        d1 = datetime.fromtimestamp(hi/1000, tz=timezone.utc).strftime("%Y-%m-%d %H:%M")
-        print(f"  {sym} 15m: n={len(df)} | {d0} → {d1} | ts=[{lo} .. {hi}]", flush=True)
-        # also try 4h resample once
-        df4 = get_df(data_dir, sym, "4h")
-        if df4 is None or len(df4) == 0:
-            print(f"    -> 4h resample: EMPTY/FAIL", flush=True)
-        else:
-            lo4 = int(df4["timestamp"].iloc[0]); hi4 = int(df4["timestamp"].iloc[-1])
-            def _safe_dt(ms):
-                try:
-                    return datetime.fromtimestamp(ms/1000, tz=timezone.utc).strftime("%Y-%m-%d %H:%M")
-                except (ValueError, OSError, OverflowError):
-                    return f"BAD_TS({ms})"
-            print(f"    -> 4h resample: n={len(df4)} | {_safe_dt(lo4)} → {_safe_dt(hi4)} | ts=[{lo4} .. {hi4}]", flush=True)
-    print("-" * 40, flush=True)
     while t <= end_ms:
         cycle += 1
         ctx = type("C", (), {})()
@@ -606,46 +577,13 @@ def run_backtest(data_dir, start_ms, end_ms, step_ms, bots, out_dir):
         try: ctx.btc_filter = get_btc_filter(ctx)
         except Exception: ctx.btc_filter = None
         for bot in bots:
-            try:
-                run_bot(bot, ctx, btc_4h, btc_1h, trades)
-            except Exception as e:
-                if cycle == 1 or cycle % 500 == 0:
-                    print(f"⚠️ {bot.name} error @cycle {cycle}: {type(e).__name__}: {e}", flush=True)
-        # --- DEBUG: data health check ---
-        if cycle == 1 or cycle % 1000 == 0:
-            try:
-                # raw (unfiltered) frames from loader
-                raw15 = ctx.data_loader(BTC_SYMBOL, "15m")
-                raw4  = ctx.data_loader(BTC_SYMBOL, "4h")
-                def _rng(df, name):
-                    if df is None or len(df) == 0:
-                        return f"{name}: EMPTY"
-                    lo = int(df["timestamp"].iloc[0]); hi = int(df["timestamp"].iloc[-1])
-                    d0 = datetime.fromtimestamp(lo/1000, tz=timezone.utc).strftime("%Y-%m-%d %H:%M")
-                    d1 = datetime.fromtimestamp(hi/1000, tz=timezone.utc).strftime("%Y-%m-%d %H:%M")
-                    return f"{name}: n={len(df)} | {d0} → {d1} | ts=[{lo} .. {hi}]"
-                ref_d = datetime.fromtimestamp(ctx.ref_time_ms/1000, tz=timezone.utc).strftime("%Y-%m-%d %H:%M")
-                print(f"DEBUG c={cycle} ref={ctx.ref_time_ms} ({ref_d})", flush=True)
-                print(f"  {_rng(raw15, 'raw15')}", flush=True)
-                print(f"  {_rng(raw4,  'raw4 ')}", flush=True)
-                if raw4 is not None and len(raw4):
-                    n_le = int((raw4["timestamp"] <= ctx.ref_time_ms).sum())
-                    print(f"  4h rows with ts<=ref: {n_le}", flush=True)
-                # now try filtered get_data
-                df4 = get_data(ctx, BTC_SYMBOL, "4h")
-                print(f"  get_data 4h OK, rows={len(df4)}", flush=True)
-            except Exception as e:
-                print(f"DEBUG c={cycle} BTC FAILED: {type(e).__name__}: {e}", flush=True)
+            try: run_bot(bot, ctx, btc_4h, btc_1h, trades)
+            except Exception: pass
         if cycle % 200 == 0:
             el = (datetime.now(timezone.utc)-t0).total_seconds()
-            eta = el/cycle*(total_cycles-cycle) if cycle < total_cycles else 0
+            eta = el/cycle*(total_cycles-cycle)
             print(f"⏱ cycle {cycle}/{total_cycles} | trades={len(trades)} | ETA {eta/60:.1f}m", flush=True)
-    # --- DEBUG: print funnels ---
-    print("=" * 50, flush=True)
-    print("FUNNEL SUMMARY (why signals were rejected):", flush=True)
-    for bot in bots:
-        print_funnel(bot.name, top=15)
-    print("=" * 50, flush=True)
+        t += step_ms
     # ذخیره
     if trades:
         pd.DataFrame(trades).to_csv(os.path.join(out_dir, "trades.csv"), index=False)
