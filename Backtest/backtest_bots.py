@@ -214,8 +214,8 @@ def get_data(ctx, symbol, tf):
     df = ctx.data_loader(symbol, tf)
     if df is None or len(df) < 60:
         raise ValueError(f"داده کافی نیست: {symbol} {tf}")
-    # فقط کندل‌های قبل یا مساوی ref_time
-    df = df[df["timestamp"] <= ctx.ref_time_ms].reset_index(drop=True)
+    # فقط کندل‌های کاملاً بسته‌شده تا ref_time (ts + طول کندل <= ref) — بدون look-ahead
+    df = df[df["timestamp"] + TF_MS[tf] <= ctx.ref_time_ms].reset_index(drop=True)
     if len(df) < 60: raise ValueError(f"داده کافی نیست بعد از فیلتر: {symbol} {tf}")
     ctx.cache[key] = calculate_indicators(df)
     return ctx.cache[key]
@@ -427,7 +427,7 @@ def check_trade_result(ctx, symbol, data):
     opened_ms = data["opened_ms"]
     df = ctx.data_loader(symbol, "15m")
     if df is None: return None, None
-    df = df[(df["timestamp"] >= opened_ms) & (df["timestamp"] <= ctx.ref_time_ms)]
+    df = df[(df["timestamp"] >= opened_ms) & (df["timestamp"] + TF_MS["15m"] <= ctx.ref_time_ms)]
     for _, cd in df.iterrows():
         high, low, close = cd["high"], cd["low"], cd["close"]
         if direction=="LONG": hit_sl, hit_tp = low<=sl, high>=tp
