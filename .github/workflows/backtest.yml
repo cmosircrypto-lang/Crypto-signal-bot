@@ -15,6 +15,14 @@ on:
         description: "فاصله اجرای ربات‌ها (دقیقه، مضرب ۱۵)"
         required: true
         default: "15"
+      overrides:
+        description: "تغییر پارامترها (اختیاری)، مثل: RISK_PERCENT=1 MAX_LEVERAGE=10 B1_MIN_SCORE=0.75"
+        required: false
+        default: ""
+      bots:
+        description: "فقط این ربات‌ها (اختیاری، با فاصله)، مثل: crypto-signal-bot-v60 crypto-signal-bot-v60a"
+        required: false
+        default: ""
 
 jobs:
   backtest:
@@ -51,11 +59,17 @@ jobs:
           key: okx-data-${{ github.run_id }}
 
       - name: Run backtest
+        env:
+          OVERRIDES: ${{ inputs.overrides }}
+          BOTS: ${{ inputs.bots }}
         run: |
+          EXTRA=""
+          [ -n "$OVERRIDES" ] && EXTRA="$EXTRA --set $OVERRIDES"
+          [ -n "$BOTS" ] && EXTRA="$EXTRA --bots $BOTS"
           python backtest_bots.py --days "${{ inputs.days }}" --end "${{ inputs.end_date }}" \
-            --step-minutes "${{ inputs.step_minutes }}" | tee report_full.txt
+            --step-minutes "${{ inputs.step_minutes }}" $EXTRA | tee report_full.txt
           sed -n '/نتایج بک‌تست/,$p' report_full.txt > report.txt
-          { echo '```'; cat report.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          { echo "overrides: ${OVERRIDES:-none} | bots: ${BOTS:-all}"; echo '```'; cat report.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload results
         if: always()
