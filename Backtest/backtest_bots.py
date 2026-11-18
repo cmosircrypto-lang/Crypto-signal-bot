@@ -22,6 +22,7 @@
     python backtest_bots.py --bots crypto-signal-bot-v70 crypto-signal-bot-v70a
 """
 import argparse
+import ast
 import contextlib
 import csv
 import importlib.util
@@ -273,6 +274,7 @@ def bot_stats(bot, trades, fee_pct, blown_at):
             "return_pct": round((bal[-1] / bot.initial_balance - 1) * 100, 1),
             "min_balance": round(min(bal), 2), "max_dd_pct": round(dd, 1),
             "max_leverage": max([float(t.get("leverage", 1) or 1) for t in tr]),
+            "recovery_aborts": sum(1 for t in tr if "aborted" in str(t.get("cycle_status", "")).lower()),
             "blown": blown_at is not None, "blown_date": ms_to_date(blown_at) if blown_at else None,
         })
     # ماهانه
@@ -299,13 +301,13 @@ def print_report(stats, funnels):
               f"{str(s['longs']) + '/' + str(s['shorts']):>9}")
     man = [s for s in stats if "final_balance" in s]
     if man:
-        print("\nربات‌های مدیریت سرمایه (بالانس اولیه و ریسک ۳٪ + چرخه‌ی جبران، بدون کارمزد):")
-        h2 = f"{'bot':<26}{'start$':>8}{'final$':>10}{'ret%':>9}{'min$':>9}{'maxDD%':>8}{'maxLev':>8}{'lossStreak':>11}  blown"
+        print("\nربات‌های مدیریت سرمایه (ریسک پایه + چرخه‌ی جبران طبق تنظیمات فایل ربات‌ها، بدون کارمزد):")
+        h2 = f"{'bot':<26}{'start$':>8}{'final$':>10}{'ret%':>9}{'min$':>9}{'maxDD%':>8}{'maxLev':>8}{'lossStreak':>11}{'aborts':>8}  blown"
         print(h2)
         print("-" * len(h2))
         for s in man:
             print(f"{s['bot']:<26}{s['initial_balance']:>8}{s['final_balance']:>10}{s['return_pct']:>9}"
-                  f"{s['min_balance']:>9}{s['max_dd_pct']:>8}{s['max_leverage']:>8}{s['max_loss_streak']:>11}  "
+                  f"{s['min_balance']:>9}{s['max_dd_pct']:>8}{s['max_leverage']:>8}{s['max_loss_streak']:>11}{s['recovery_aborts']:>8}  "
                   f"{'YES ' + s['blown_date'] if s['blown'] else 'no'}")
     print("\nR ماهانه:")
     months = sorted({m for s in stats for m in s.get("monthly_R", {})})
@@ -317,6 +319,33 @@ def print_report(stats, funnels):
     for name, c in funnels.items():
         top = [(k, v) for k, v in c.most_common() if not k.startswith(("0_", "~skip"))][:5]
         print(f"  {name}: " + " | ".join(f"{k}={v}" for k, v in top))
+
+
+def apply_overrides(B, items):
+    """--set NAME=VALUE : جایگزینی ثابت‌های فایل ربات‌ها (استراتژی، مدیریت سرمایه، کولدان) بدون ویرایش کد."""
+    applied = {}
+    for it in items or []:
+        if "=" not in it:
+            sys.exit(f"فرمت --set باید NAME=VALUE باشد: {it}")
+        k, v = it.split("=", 1)
+        if not hasattr(B, k):
+            sys.exit(f"پارامتر ناشناخته در فایل ربات‌ها: {k}")
+        try:
+            val = ast.literal_eval(v)
+        except Exception:
+            val = v
+        setattr(B, k, val)
+        applied[k] = val
+    for b in B.BOTS:
+        if b.has_sizing and "RISK_PERCENT" in applied:
+            b.risk_percent = float(applied["RISK_PERCENT"])
+        if b.has_sizing and "INITIAL_BALANCE" in applied:
+            b.initial_balance = float(applied["INITIAL_BALANCE"])
+        if b.analyze is B.analyze_btc_aligned and "B6_COOLDOWN_HOURS" in applied:
+            b.cooldown_ms = int(float(applied["B6_COOLDOWN_HOURS"]) * 3600 * 1000)
+        if b.analyze is B.analyze_smc_winner and "B8_COOLDOWN_HOURS" in applied:
+            b.cooldown_ms = int(float(applied["B8_COOLDOWN_HOURS"]) * 3600 * 1000)
+    return applied
 
 
 # ----------------------------------------------------------------------------
@@ -331,6 +360,8 @@ def main():
     ap.add_argument("--bots", nargs="*", default=None, help="فقط این ربات‌ها (نام کامل)")
     ap.add_argument("--fee-pct", type=float, default=0.05, help="کارمزد هر طرف به درصد (فقط برای ستون R(fee))")
     ap.add_argument("--ambiguous", default="live", choices=["live", "sl"])
+    ap.add_argument("--set", nargs="*", default=None, metavar="NAME=VALUE",
+                    help="تغییر پارامترها، مثل: --set RISK_PERCENT=1 MAX_LEVERAGE=10 B1_MIN_SCORE=0.75")
     ap.add_argument("--out", default=os.path.join(HERE, "backtest_results"))
     args = ap.parse_args()
     CFG["ambiguous"] = args.ambiguous
@@ -359,6 +390,9 @@ def main():
     print(f"بازه‌ی بک‌تست: {ms_to_date(start_ms)} → {ms_to_date(end_ms)} | گام: {args.step_minutes} دقیقه")
 
     patch_bots(B, ok)
+    overrides = apply_overrides(B, args.set)
+    if overrides:
+        print(f"پارامترهای تغییرداده‌شده: {overrides}")
     bots = [b for b in B.LIVE_BOTS if not args.bots or b.name in args.bots]
     if not bots:
         sys.exit("ربات مطابق --bots پیدا نشد")
@@ -417,7 +451,7 @@ def main():
     with open(os.path.join(args.out, "summary.json"), "w", encoding="utf-8") as f:
         json.dump({"period": [ms_to_date(start_ms), ms_to_date(end_ms)], "step_minutes": args.step_minutes,
                    "symbols_used": len(ok), "symbols_missing": missing, "ambiguous_mode": args.ambiguous,
-                   "fee_pct_per_side": args.fee_pct, "bots": stats,
+                   "fee_pct_per_side": args.fee_pct, "overrides": overrides, "bots": stats,
                    "funnel": {k: dict(v) for k, v in FUN.items()}}, f, ensure_ascii=False, indent=2)
     print(f"\nذخیره شد: {os.path.join(args.out, 'trades.csv')} و summary.json")
 
