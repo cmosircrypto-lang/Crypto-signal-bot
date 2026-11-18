@@ -582,8 +582,7 @@ def run_backtest(data_dir, start_ms, end_ms, step_ms, bots, out_dir):
         if cycle % 200 == 0:
             el = (datetime.now(timezone.utc)-t0).total_seconds()
             eta = el/cycle*(total_cycles-cycle)
-            print(f"⏱ cycle {cycle}/{total_cycles} | trades={len(trades)} | ETA {eta/60:.1f}m")
-        t += step_ms
+            print(f"⏱ cycle {cycle}/{total_cycles} | trades={len(trades)} | ETA {eta/60:.1f}m", flush=True)
     # ذخیره
     if trades:
         pd.DataFrame(trades).to_csv(os.path.join(out_dir, "trades.csv"), index=False)
