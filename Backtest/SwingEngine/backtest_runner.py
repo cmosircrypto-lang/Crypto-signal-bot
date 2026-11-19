@@ -415,36 +415,60 @@ def main():
     )
     args = parser.parse_args()
 
-    data = load_okx_data(args.data_root, expected_symbols=args.expected_symbols)
-    print(f"Validated {len(data)} symbols.")
-    print(dataset_report(data).groupby("timeframe")["candles"].sum().to_string())
+    monitor = ProgressMonitor(interval_seconds=30)
+    monitor.start()
+    try:
+        monitor.set_stage("dataset_validation", f"reading and validating files from {args.data_root}")
 
-    contract_specs = None
-    if not args.legacy_sizing:
-        contract_specs = OKXContractSpecs()
-        contract_specs.load()
-        print(f"Loaded {len(contract_specs.get_all())} live OKX USDT linear SWAP specifications.")
+        def load_progress(timeframe, symbol, index, total):
+            if timeframe == "4h":
+                monitor.progress("dataset_loading", index, total, f"loaded 15m/1h/4h for {symbol}")
 
-    signals, obs = prepare_signals(
-        data,
-        require_4h_alignment=args.require_4h_alignment,
-    )
-    total_signals = sum(len(frame) for frame in signals.values())
-    print(f"Prepared {total_signals} unique-OB entry signals.")
+        data = load_okx_data(
+            args.data_root,
+            expected_symbols=args.expected_symbols,
+            progress_callback=load_progress,
+        )
+        monitor.set_stage("dataset_validation_complete", f"validated {len(data)} symbols across three timeframes")
+        print(f"Validated {len(data)} symbols.", flush=True)
+        print(dataset_report(data).groupby("timeframe")["candles"].sum().to_string(), flush=True)
 
-    summary, trades = run_matrix(data, signals, obs, contract_specs=contract_specs)
-    output = Path(args.output_dir)
-    output.mkdir(parents=True, exist_ok=True)
-    summary_path = output / "summary_9_combinations.csv"
-    summary.to_csv(summary_path, index=False)
-    for name, frame in trades.items():
-        frame.to_csv(output / f"trades_{name}.csv", index=False)
-    (output / "summary_9_combinations.json").write_text(
-        json.dumps(summary.to_dict("records"), indent=2, allow_nan=True),
-        encoding="utf-8",
-    )
-    print("\n" + summary.to_string(index=False))
-    print(f"\nSaved summary and 9 trade ledgers to {output}")
+        contract_specs = None
+        if not args.legacy_sizing:
+            monitor.set_stage("contract_specs", "requesting public OKX instrument specifications")
+            contract_specs = OKXContractSpecs()
+            contract_specs.load()
+            print(f"Loaded {len(contract_specs.get_all())} live OKX USDT linear SWAP specifications.", flush=True)
+
+        monitor.set_stage("signal_preparation", f"starting OB and signal preparation for {len(data)} symbols")
+        signals, obs = prepare_signals(
+            data,
+            require_4h_alignment=args.require_4h_alignment,
+            progress_monitor=monitor,
+        )
+        total_signals = sum(len(frame) for frame in signals.values())
+        monitor.set_stage("signal_preparation_complete", f"prepared {total_signals} unique-OB entry signals")
+        print(f"Prepared {total_signals} unique-OB entry signals.", flush=True)
+
+        monitor.set_stage("backtest_matrix", "starting nine chronological risk/RR combinations")
+        summary, trades = run_matrix(data, signals, obs, contract_specs=contract_specs)
+        monitor.set_stage("saving_results", f"writing summary and nine trade ledgers to {args.output_dir}")
+        output = Path(args.output_dir)
+        output.mkdir(parents=True, exist_ok=True)
+        summary_path = output / "summary_9_combinations.csv"
+        summary.to_csv(summary_path, index=False)
+        for index, (name, frame) in enumerate(trades.items(), start=1):
+            frame.to_csv(output / f"trades_{name}.csv", index=False)
+            monitor.progress("saving_trade_ledgers", index, len(trades), name)
+        (output / "summary_9_combinations.json").write_text(
+            json.dumps(summary.to_dict("records"), indent=2, allow_nan=True),
+            encoding="utf-8",
+        )
+        print("\\n" + summary.to_string(index=False), flush=True)
+        print(f"\\nSaved summary and 9 trade ledgers to {output}", flush=True)
+        monitor.set_stage("complete", "all nine scenarios and output files completed")
+    finally:
+        monitor.stop()
 
 
 if __name__ == "__main__":
