@@ -1,4 +1,6 @@
 from decimal import Decimal
+from io import BytesIO
+from unittest.mock import patch
 
 from okx_contract_specs import (
     ContractSpec,
@@ -114,13 +116,6 @@ def test_minimum_order_size():
 def test_risk_based_contract_calculation():
     spec = make_spec()
 
-    # Contract value = 0.01 BTC
-    # Entry = 50000 USDT
-    # Stop = 49000 USDT
-    # Risk per contract = 1000 * 0.01 = 10 USDT
-    # Risk budget = 10 USDT
-    # Expected quantity = 1 contract
-
     contracts = spec.contracts_for_risk(
         entry_price="50000",
         stop_loss="49000",
@@ -140,9 +135,6 @@ def test_risk_rounding_down():
         stop_loss="49000",
         risk_amount="15"
     )
-
-    # Raw size = 1.5 contracts.
-    # Lot size = 0.1, so 1.5 remains valid.
 
     assert contracts == Decimal("1.5")
 
@@ -207,34 +199,36 @@ def test_mocked_api_loading():
         "state": "live"
     }
 
-    class FakeResponse:
-        def raise_for_status(self):
-            pass
+    payload = {
+        "code": "0",
+        "data": [valid_item]
+    }
 
-        def json(self):
-            return {
-                "code": "0",
-                "data": [valid_item]
-            }
+    class FakeResponse(BytesIO):
 
-    def fake_get(*args, **kwargs):
-        return FakeResponse()
+        def __enter__(self):
+            return self
 
-    loader_module = __import__(
-        "okx_contract_specs"
-    )
+        def __exit__(self, exc_type, exc_value, traceback):
+            self.close()
+            return False
 
-    original_get = loader_module.requests.get
-    loader_module.requests.get = fake_get
+    def fake_urlopen(url, timeout):
+        assert "instType=SWAP" in url
+        assert timeout == 20
 
-    try:
+        return FakeResponse(
+            __import__("json").dumps(payload).encode("utf-8")
+        )
+
+    with patch(
+        "okx_contract_specs.urlopen",
+        side_effect=fake_urlopen
+    ):
         contracts = loader.load()
 
-        assert "BTC-USDT-SWAP" in contracts
-        assert loader.get("BTC-USDT-SWAP").base_ccy == "BTC"
-
-    finally:
-        loader_module.requests.get = original_get
+    assert "BTC-USDT-SWAP" in contracts
+    assert loader.get("BTC-USDT-SWAP").base_ccy == "BTC"
 
     print("PASS: mocked OKX API loading")
 
