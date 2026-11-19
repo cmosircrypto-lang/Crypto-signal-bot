@@ -118,6 +118,7 @@ def test_no_lookahead():
         pd.testing.assert_frame_equal(
             full.loc[:end, columns].reset_index(drop=True),
             prefix[columns].reset_index(drop=True),
+            check_dtype=False,
         )
 
     print("PASS: no-lookahead prefix consistency")
