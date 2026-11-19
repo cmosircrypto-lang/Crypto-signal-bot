@@ -325,6 +325,10 @@ def generate_entry_signals(
             candles_4h,
             left=5,
             right=5,
+            progress_callback=(
+                (lambda done, total: progress_callback("4h_structure", done, total))
+                if progress_callback else None
+            ),
         )
     else:
         structure_4h = None
@@ -335,6 +339,10 @@ def generate_entry_signals(
         candles,
         left=5,
         right=5,
+        progress_callback=(
+            (lambda done, total: progress_callback("15m_structure", done, total))
+            if progress_callback else None
+        ),
     )
 
     results = []
