@@ -40,8 +40,8 @@ def analyze_market_structure(
     if missing:
         raise ValueError(f"Missing columns: {missing}")
 
-    if len(df) < left + right + 1:
-        raise ValueError("Not enough candles for swing detection")
+    if len(df) == 0:
+    raise ValueError("DataFrame is empty")
 
     data = df.copy().reset_index(drop=True)
 
