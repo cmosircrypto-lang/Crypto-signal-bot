@@ -83,11 +83,9 @@ def test_base_quantity_conversion():
     spec = make_spec()
 
     contracts = spec.base_quantity_to_contracts("0.05")
-
     assert contracts == Decimal("5")
 
     quantity = spec.contracts_to_base_quantity("5")
-
     assert quantity == Decimal("0.05")
 
     print("PASS: base quantity and contract conversion")
@@ -111,6 +109,72 @@ def test_minimum_order_size():
     assert not spec.validate_order_size("0.15")
 
     print("PASS: minimum and lot-size validation")
+
+
+def test_price_rounding_down():
+    spec = make_spec()
+
+    assert spec.round_price_down("50000.04") == Decimal("50000.0")
+    assert spec.round_price_down("50000.10") == Decimal("50000.1")
+
+    print("PASS: price rounded down to tickSz")
+
+
+def test_price_rounding_up():
+    spec = make_spec()
+
+    assert spec.round_price_up("50000.04") == Decimal("50000.1")
+    assert spec.round_price_up("50000.10") == Decimal("50000.1")
+
+    print("PASS: price rounded up to tickSz")
+
+
+def test_buy_exit_price_rounding():
+    spec = make_spec()
+
+    stop_loss, take_profit = spec.round_exit_prices(
+        "BUY",
+        "49000.04",
+        "52000.04",
+    )
+
+    assert stop_loss == Decimal("49000.0")
+    assert take_profit == Decimal("52000.1")
+
+    print("PASS: BUY SL down and TP up")
+
+
+def test_sell_exit_price_rounding():
+    spec = make_spec()
+
+    stop_loss, take_profit = spec.round_exit_prices(
+        "SELL",
+        "51000.04",
+        "48000.04",
+    )
+
+    assert stop_loss == Decimal("51000.1")
+    assert take_profit == Decimal("48000.0")
+
+    print("PASS: SELL SL up and TP down")
+
+
+def test_invalid_rounding_direction():
+    spec = make_spec()
+
+    try:
+        spec.round_exit_prices(
+            "SIDEWAYS",
+            "49000",
+            "52000",
+        )
+        raise AssertionError(
+            "Invalid direction was accepted"
+        )
+    except ValueError:
+        pass
+
+    print("PASS: invalid rounding direction rejected")
 
 
 def test_risk_based_contract_calculation():
@@ -164,7 +228,7 @@ def test_invalid_risk_inputs():
             stop_loss="50000",
             risk_amount="10"
         )
-        assert False
+        raise AssertionError("Equal prices were accepted")
     except ValueError:
         pass
 
@@ -174,7 +238,7 @@ def test_invalid_risk_inputs():
             stop_loss="49000",
             risk_amount="0"
         )
-        assert False
+        raise AssertionError("Zero risk was accepted")
     except ValueError:
         pass
 
@@ -239,6 +303,13 @@ if __name__ == "__main__":
     test_base_quantity_conversion()
     test_contract_rounding()
     test_minimum_order_size()
+
+    test_price_rounding_down()
+    test_price_rounding_up()
+    test_buy_exit_price_rounding()
+    test_sell_exit_price_rounding()
+    test_invalid_rounding_direction()
+
     test_risk_based_contract_calculation()
     test_risk_rounding_down()
     test_below_minimum_returns_zero()
