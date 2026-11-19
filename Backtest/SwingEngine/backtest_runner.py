@@ -218,12 +218,22 @@ def simulate_scenario(symbol_data, signals_by_symbol, order_blocks_by_symbol,
     )
 
     candles_at_time = {}
-    for symbol, item in symbol_data.items():
+    monitor = progress_context.get("monitor") if progress_context else None
+    if monitor:
+        monitor.set_stage(
+            "scenario_timeline",
+            f"scenario {progress_context['scenario_index']}/{progress_context['scenario_total']}: indexing 15m candles",
+        )
+    for symbol_index, (symbol, item) in enumerate(sorted(symbol_data.items()), start=1):
+        if monitor:
+            monitor.progress("scenario_timeline", symbol_index, len(symbol_data), f"indexing candles for {symbol}")
         frame = item.frames["15m"]
         for row in frame.to_dict("records"):
             close_time = int(row["ts"]) + TIMEFRAME_MS["15m"]
             candles_at_time.setdefault(close_time, {})[symbol] = row
 
+    if monitor:
+        monitor.set_stage("scenario_signals", f"scenario {progress_context['scenario_index']}/{progress_context['scenario_total']}: indexing entry signals")
     signals_at_time = {}
     for symbol, frame in signals_by_symbol.items():
         if frame is None or frame.empty:
@@ -390,6 +400,7 @@ def run_matrix(symbol_data, signals_by_symbol, order_blocks_by_symbol,
                     "scenario_total": scenario_total,
                     "total_events": len(timeline) * scenario_total,
                     "started": matrix_started,
+                    "monitor": progress_monitor,
                 },
             )
             summaries.append(summary)
