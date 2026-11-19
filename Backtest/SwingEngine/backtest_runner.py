@@ -90,12 +90,14 @@ def _equity_metrics(trades, initial_capital):
     gross_profit = 0.0
     gross_loss = 0.0
     r_values = []
-    for trade in sorted(trades, key=lambda row: (row["closed_at"], row["symbol"])):
+    # Aggregate simultaneous exits before measuring drawdown so arbitrary
+    # symbol ordering cannot create a false intratimestamp equity dip.
+    pnl_by_time = {}
+    for trade in trades:
         pnl = float(trade["pnl"])
-        equity += pnl
-        peak = max(peak, equity)
-        if peak > 0:
-            max_drawdown = max(max_drawdown, (peak - equity) / peak * 100)
+        pnl_by_time[int(trade["closed_at"])] = (
+            pnl_by_time.get(int(trade["closed_at"]), 0.0) + pnl
+        )
         if pnl > 0:
             gross_profit += pnl
         elif pnl < 0:
@@ -103,6 +105,11 @@ def _equity_metrics(trades, initial_capital):
         risk = float(trade["risk_amount"])
         if risk > 0:
             r_values.append(pnl / risk)
+    for timestamp in sorted(pnl_by_time):
+        equity += pnl_by_time[timestamp]
+        peak = max(peak, equity)
+        if peak > 0:
+            max_drawdown = max(max_drawdown, (peak - equity) / peak * 100)
     count = len(trades)
     wins = sum(float(row["pnl"]) > 0 for row in trades)
     losses = sum(float(row["pnl"]) < 0 for row in trades)
