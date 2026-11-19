@@ -84,11 +84,24 @@ A candle is available to a decision only when its close time has passed:
 `candle_open_timestamp + timeframe_duration <= decision_timestamp`.
 
 
-## Live progress reporting
+## Live progress and stall diagnosis
 
-During each scenario, the runner prints progress approximately every 5%,
-including processed timeline events, the active UTC month and its event
-progress, elapsed time, and estimated remaining time. After each of the nine
-risk/RR scenarios it prints per-symbol signal counts, closed trades, and open
-positions. These are observational messages only and do not alter the
-backtest calculations.
+The runner reports progress from the beginning of the job, not only during
+the nine portfolio simulations:
+
+- Dataset validation/loading: completed symbols out of 76, with a 30-second
+  heartbeat while a compressed file is being read.
+- Order Block detection: current symbol and scanned 1h candle count.
+- Signal preparation: current symbol, Order Block scan count, and 15m candle
+  scan count. Long inner scans emit progress callbacks every 50,000 candles.
+- Timeline construction: symbols indexed for the global 15m close timeline.
+- Each of the nine scenarios: progress approximately every 5%, active UTC
+  month, elapsed time, and estimated remaining time.
+- Saving: completed trade ledgers out of nine.
+
+A `[HEARTBEAT]` line is emitted every 30 seconds and identifies the exact
+stage and current symbol/operation. If the same operation remains active for
+a long time, the heartbeat continues to show that it is alive but not
+advancing its sub-step counter; this helps distinguish a slow nested scan
+from a silent or stalled process. The heartbeat is diagnostic and does not
+change signal rules, event ordering, position sizing, or calculated results.
