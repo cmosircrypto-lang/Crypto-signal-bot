@@ -175,9 +175,9 @@ jobs:
               "reports/okx_timeframe_validation.csv",
               index=False
           )
-          report.to_markdown(
-              "reports/okx_timeframe_validation.md",
-              index=False
+          Path("reports/okx_timeframe_validation.md").write_text(
+               report.to_string(index=False),
+               encoding="utf-8"
           )
           print(report.to_string(index=False))
 
