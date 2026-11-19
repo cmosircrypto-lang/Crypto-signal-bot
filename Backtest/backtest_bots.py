@@ -182,6 +182,30 @@ def get_df(data_dir, symbol, tf):
     return df
 
 # =====================================================================
+# رتبه‌بندی نقدینگی (بدون look-ahead: فقط ۳۰ روز قبل از شروع بک‌تست)
+# =====================================================================
+LIQ_INFO = {"line": ""}
+
+def rank_by_liquidity(data_dir, start_ms, top_n, window_days=30):
+    """میانه‌ی حجم دلاری روزانه (close*volume) در window_days روز قبل از start_ms."""
+    lo = start_ms - window_days*24*3600*1000
+    rows = []
+    for sym in SYMBOLS:
+        df = get_df(data_dir, sym, "15m")
+        if df is None: continue
+        w = df[(df["timestamp"] >= lo) & (df["timestamp"] < start_ms)]
+        if len(w) < 96*7: continue          # حداقل ۷ روز داده
+        usd = (w["close"]*w["volume"]).groupby(w["timestamp"]//(24*3600*1000)).sum()
+        rows.append((sym, float(usd.median())))
+    rows.sort(key=lambda x: -x[1])
+    top = [r[0] for r in rows[:top_n]]
+    print(f"📊 رتبه‌بندی نقدینگی ({window_days} روز قبل از شروع، {len(rows)} نماد دارای داده):")
+    for i, (sym, v) in enumerate(rows[:max(top_n, 20)], 1):
+        print(f"   {i:>2}. {sym.replace('-SWAP-USDT',''):<10} ${v/1e6:,.1f}M/روز" + ("  ✅" if i <= top_n else ""))
+    LIQ_INFO["line"] = f"فقط {top_n} نماد پرنقدینگی: " + ", ".join(t.replace("-SWAP-USDT","") for t in top)
+    return top
+
+# =====================================================================
 # اندیکاتورها
 # =====================================================================
 def calculate_indicators(df):
@@ -603,6 +627,7 @@ def build_report(bots, trades, start_ms, end_ms, step_min):
     d0 = datetime.fromtimestamp(start_ms/1000, tz=timezone.utc).strftime("%Y-%m-%d")
     d1 = datetime.fromtimestamp(end_ms/1000, tz=timezone.utc).strftime("%Y-%m-%d")
     lines.append(f"بازه: {d0} → {d1} | گام: {step_min} دقیقه")
+    if LIQ_INFO["line"]: lines.append(LIQ_INFO["line"])
     lines.append(f"ریسک پایه: {C('RISK_PERCENT')}% | اهرم سقف: {C('MAX_LEVERAGE')}x | Recovery: {C('RECOVERY_ENABLED')}")
     lines.append("")
     df = pd.DataFrame(trades) if trades else pd.DataFrame()
@@ -647,6 +672,7 @@ def main():
     ap.add_argument("--days", type=int, default=365)
     ap.add_argument("--end", default=None)
     ap.add_argument("--step-minutes", type=int, default=15)
+    ap.add_argument("--top-liquid", type=int, default=0, help="فقط N نماد پرنقدینگی (۰ = همه)")
     ap.add_argument("--exchange", default="okx", choices=["okx", "toobit"])
     ap.add_argument("--data-dir", default=None)
     ap.add_argument("--out-dir", default="backtest_results")
@@ -663,6 +689,11 @@ def main():
     end_ms = int(end_dt.timestamp()*1000)
     start_ms = end_ms - args.days*24*3600*1000
     step_ms = args.step_minutes*60*1000
+    if args.top_liquid > 0:
+        top = rank_by_liquidity(args.data_dir, start_ms, args.top_liquid)
+        if not top:
+            print("⚠️ داده‌ی کافی برای رتبه‌بندی نقدینگی نیست"); sys.exit(1)
+        SYMBOLS[:] = top
 
     bots = ALL_BOTS
     if args.bots:
