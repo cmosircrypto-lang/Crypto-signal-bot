@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 
 from dataclasses import dataclass, asdict
@@ -46,13 +45,15 @@ class ExecutionEngine:
     Simulation-only execution engine.
 
     Supports:
-    - Legacy base-quantity sizing when contract_specs is None.
-    - OKX linear USDT SWAP contract sizing when specs are provided.
+    - Legacy base-quantity sizing.
+    - OKX linear USDT SWAP contract sizing.
     - Risk calculated from current equity.
     - Contract quantities rounded down to lotSz.
+    - SL and TP rounded outward using tickSz.
+    - Position size recalculated after SL rounding.
     - Orders below minSz rejected.
-    - PnL calculated using the actual base-asset quantity.
-    - SL has priority when SL and TP are touched in one candle.
+    - PnL calculated using actual base quantity.
+    - SL priority when SL and TP are touched in one candle.
 
     No real orders are submitted.
     """
@@ -291,6 +292,7 @@ class ExecutionEngine:
                 "Prices must be finite and positive"
             )
 
+        # Validate original price structure.
         if direction == "BUY":
             if not stop_loss < entry_price < take_profit:
                 raise ValueError(
@@ -304,7 +306,48 @@ class ExecutionEngine:
 
         contract_count = None
 
+        final_stop_loss = float(stop_loss)
+        final_take_profit = float(take_profit)
+
         if self.contract_specs is not None:
+
+            if symbol not in self.contract_specs:
+                raise KeyError(
+                    f"Contract specification not found: {symbol}"
+                )
+
+            spec = self.contract_specs[symbol]
+
+            rounded_sl, rounded_tp = spec.round_exit_prices(
+                direction=direction,
+                stop_loss=stop_loss,
+                take_profit=take_profit,
+            )
+
+            final_stop_loss = float(rounded_sl)
+            final_take_profit = float(rounded_tp)
+
+            # Validate price structure again after tick rounding.
+            if direction == "BUY":
+                if not (
+                    final_stop_loss
+                    < entry_price
+                    < final_take_profit
+                ):
+                    raise ValueError(
+                        "Invalid BUY price structure after tick rounding"
+                    )
+            else:
+                if not (
+                    final_take_profit
+                    < entry_price
+                    < final_stop_loss
+                ):
+                    raise ValueError(
+                        "Invalid SELL price structure after tick rounding"
+                    )
+
+            # Position size is calculated using the rounded SL.
             (
                 contract_count,
                 quantity,
@@ -312,7 +355,7 @@ class ExecutionEngine:
             ) = self.calculate_contract_position_size(
                 symbol=symbol,
                 entry_price=entry_price,
-                stop_loss=stop_loss,
+                stop_loss=final_stop_loss,
                 risk_percent=risk_percent,
             )
 
@@ -320,7 +363,7 @@ class ExecutionEngine:
             quantity, risk_amount = (
                 self.calculate_position_size(
                     entry_price,
-                    stop_loss,
+                    final_stop_loss,
                     risk_percent,
                 )
             )
@@ -329,8 +372,8 @@ class ExecutionEngine:
             symbol=symbol,
             direction=direction,
             entry_price=float(entry_price),
-            stop_loss=float(stop_loss),
-            take_profit=float(take_profit),
+            stop_loss=final_stop_loss,
+            take_profit=final_take_profit,
             quantity=quantity,
             risk_percent=float(risk_percent),
             risk_amount=risk_amount,
