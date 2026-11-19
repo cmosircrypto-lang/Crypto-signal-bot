@@ -97,32 +97,53 @@ def test_no_lookahead():
 
     # Results available up to each decision point must
     # match the same prefix processed independently.
+    columns = [
+        "pivot_high_confirmed",
+        "pivot_low_confirmed",
+        "pivot_high_price",
+        "pivot_low_price",
+        "high_label",
+        "low_label",
+        "structure_event",
+        "structure_trend",
+    ]
+
     for end in [9, 10, 11, 19, 20, 21, 25]:
+
         prefix = analyze_market_structure(
             df.iloc[:end + 1].copy(),
             left=5,
             right=5,
         )
 
-        columns = [
-            "pivot_high_confirmed",
-            "pivot_low_confirmed",
-            "pivot_high_price",
-            "pivot_low_price",
-            "high_label",
-            "low_label",
-            "structure_event",
-            "structure_trend",
-        ]
         expected = full.loc[:end, columns].reset_index(drop=True)
         actual = prefix[columns].reset_index(drop=True)
-       pd.testing.assert_frame_equal(
-           expected,
-           actual,
-           check_dtype=False,
-           check_exact=True,
-           check_names=True,
-       )
+
+        # Compare numeric columns separately so NaN values
+        # are treated as equal, without hiding real differences.
+        numeric_columns = [
+            "pivot_high_price",
+            "pivot_low_price",
+        ]
+
+        other_columns = [
+            col for col in columns
+            if col not in numeric_columns
+        ]
+
+        pd.testing.assert_frame_equal(
+            expected[other_columns],
+            actual[other_columns],
+            check_dtype=False,
+        )
+
+        for col in numeric_columns:
+            pd.testing.assert_series_equal(
+                expected[col],
+                actual[col],
+                check_dtype=False,
+                check_exact=True,
+            )
 
     print("PASS: no-lookahead prefix consistency")
 
