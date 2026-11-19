@@ -37,3 +37,6 @@ jobs:
       - name: Run Order Block Zone Tests
         run: |
           python Backtest/SwingEngine/test_ob_zone_rules.py
+     
+      - name: Test execution engine
+        run: python Backtest/SwingEngine/test_execution_engine.py
