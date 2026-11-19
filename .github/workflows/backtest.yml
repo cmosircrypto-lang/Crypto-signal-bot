@@ -31,6 +31,10 @@ on:
         description: "فقط N نماد پرنقدینگی (بر اساس ۳۰ روز قبل از شروع)، مثل 10. خالی = همه"
         required: false
         default: ""
+      random_baseline:
+        description: "آزمون ورود تصادفی بعد از بک‌تست؟ (yes = اجرا شود، خالی = نه)"
+        required: false
+        default: ""
       bots:
         description: "فقط این ربات‌ها (اختیاری، با فاصله)، مثل: crypto-signal-bot-v70a"
         required: false
@@ -112,6 +116,16 @@ jobs:
             --step-minutes "${{ inputs.step_minutes }}" $EXTRA | tee report_full.txt
           sed -n '/نتایج بک‌تست/,$p' report_full.txt > report.txt
           { echo "exchange: $EXCHANGE | overrides: ${OVERRIDES:-none} | bots: ${BOTS:-all} | top_liquid: ${TOP_LIQUID:-all}"; echo '```'; cat report.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Random-entry baseline (Monte Carlo)
+        if: ${{ inputs.random_baseline != '' }}
+        run: |
+          python -u random_baseline.py --trades backtest_results/trades.csv \
+            --exchange "$EXCHANGE" --data-dir "data/$EXCHANGE" \
+            --end "${{ inputs.end_date }}" --days "${{ inputs.days }}" \
+            --sims 500 --out report_random.txt
+          cat report_random.txt >> report.txt
+          { echo '```'; cat report_random.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload results
         if: always()
