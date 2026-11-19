@@ -53,7 +53,11 @@ OKX_BASE_ALIASES = {
     "1000000MOG": "MOG",
 }
 
+EXCHANGE = {"name": "okx"}   # okx | toobit  (با --exchange عوض می‌شود)
+
 def to_okx_inst(symbol):
+    if EXCHANGE["name"] == "toobit":
+        return symbol            # فرمت Toobit همان فرمت ربات‌هاست (BTC-SWAP-USDT)
     base = symbol.split("-")[0]
     base = OKX_BASE_ALIASES.get(base, base)
     return f"{base}-USDT-SWAP"
@@ -643,13 +647,16 @@ def main():
     ap.add_argument("--days", type=int, default=365)
     ap.add_argument("--end", default=None)
     ap.add_argument("--step-minutes", type=int, default=15)
-    ap.add_argument("--data-dir", default="data/okx")
+    ap.add_argument("--exchange", default="okx", choices=["okx", "toobit"])
+    ap.add_argument("--data-dir", default=None)
     ap.add_argument("--out-dir", default="backtest_results")
     ap.add_argument("--set", nargs="*", default=[])
     ap.add_argument("--bots", nargs="*", default=None)
     args = ap.parse_args()
 
     if args.set: parse_overrides(args.set)
+    EXCHANGE["name"] = args.exchange
+    if not args.data_dir: args.data_dir = f"data/{args.exchange}"
 
     if args.end: end_dt = datetime.strptime(args.end,"%Y-%m-%d").replace(tzinfo=timezone.utc)
     else: end_dt = datetime.now(timezone.utc).replace(hour=0,minute=0,second=0,microsecond=0)
@@ -666,6 +673,7 @@ def main():
             sys.exit(1)
         print(f"🎯 ربات‌های انتخابی: {[b.name for b in bots]}")
 
+    print(f"صرافی: {args.exchange} | داده: {args.data_dir}")
     print(f"بک‌تست: {datetime.fromtimestamp(start_ms/1000,tz=timezone.utc):%Y-%m-%d} → "
           f"{end_dt:%Y-%m-%d} | گام {args.step_minutes}m | {len(bots)} ربات")
     trades = run_backtest(args.data_dir, start_ms, end_ms, step_ms, bots, args.out_dir)
