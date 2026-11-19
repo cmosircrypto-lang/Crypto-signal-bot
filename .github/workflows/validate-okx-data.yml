@@ -10,7 +10,6 @@ permissions:
 jobs:
   validate:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
 
     steps:
       - name: Checkout repository
@@ -29,167 +28,190 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release download okx-data \
-            --repo "${{ github.repository }}" \
+            --repo "${GITHUB_REPOSITORY}" \
             --pattern "okx_data.tar" \
-            --dir /tmp \
-            --clobber
+            --dir /tmp
 
           mkdir -p Backtest/data/okx
           tar -xf /tmp/okx_data.tar -C Backtest/data/okx
 
-          echo "Archive extracted successfully"
-          find Backtest/data/okx -type f | head -20
-
-      - name: Validate candle data
+      - name: Validate dataset
         run: |
-          cd Backtest
           python - <<'PY'
-          import os, glob
+          import gzip
+          import glob
+          import os
           import pandas as pd
           from datetime import datetime, timezone
 
-          root = "data/okx/15m"
-          files = sorted(glob.glob(root + "/*.csv.gz"))
-          bar = 15 * 60 * 1000
-          rows = []
+          BAR_MS = 15 * 60 * 1000
+          EXPECTED_START = int(datetime(2024, 9, 18, tzinfo=timezone.utc).timestamp() * 1000)
+          EXPECTED_END = int(datetime(2026, 11, 17, tzinfo=timezone.utc).timestamp() * 1000)
+          EXPECTED_SLOTS = (EXPECTED_END - EXPECTED_START) // BAR_MS
+
+          files = sorted(glob.glob("Backtest/data/okx/15m/*.csv.gz"))
+
+          if not files:
+              raise SystemExit("ERROR: No dataset files found")
+
+          results = []
 
           for path in files:
               symbol = os.path.basename(path).replace(".csv.gz", "")
-              result = {
-                  "symbol": symbol,
-                  "rows": 0,
-                  "unique": 0,
-                  "start": "",
-                  "end": "",
-                  "duplicates": 0,
-                  "missing": 0,
-                  "gaps": 0,
-                  "invalid_ohlc": 0,
-                  "invalid_volume": 0,
-                  "invalid_values": 0,
-                  "out_of_order": 0,
-                  "status": "OK",
-                  "notes": ""
-              }
 
               try:
-                  df = pd.read_csv(path)
-                  required = ["ts", "open", "high", "low", "close", "volume"]
+                  df = pd.read_csv(path, compression="gzip")
 
-                  if not set(required).issubset(df.columns):
-                      raise ValueError("Missing required columns")
+                  required = ["ts", "open", "high", "low", "close", "vol"]
+                  missing_columns = [c for c in required if c not in df.columns]
 
-                  result["rows"] = len(df)
+                  if missing_columns:
+                      raise ValueError(f"Missing columns: {missing_columns}")
 
-                  ts = pd.to_numeric(df["ts"], errors="coerce")
-                  prices = df[["open", "high", "low", "close", "volume"]].apply(
-                      pd.to_numeric, errors="coerce"
+                  for col in required:
+                      df[col] = pd.to_numeric(df[col], errors="coerce")
+
+                  ts = df["ts"].dropna().astype("int64")
+                  duplicates = int(ts.duplicated().sum())
+                  out_of_order = int((ts.diff().dropna() < 0).sum())
+
+                  misaligned = int((ts % BAR_MS != 0).sum())
+
+                  out_of_range = int(
+                      ((ts < EXPECTED_START) | (ts >= EXPECTED_END)).sum()
                   )
 
-                  result["invalid_values"] = int(
-                      ts.isna().sum() + prices.isna().sum().sum()
-                  )
-
-                  valid_ts = ts.dropna().astype("int64")
-                  result["out_of_order"] = int(
-                      (valid_ts.diff().dropna() < 0).sum()
-                  )
-                  result["duplicates"] = int(valid_ts.duplicated().sum())
-
-                  unique_ts = sorted(set(valid_ts.tolist()))
-                  result["unique"] = len(unique_ts)
-
-                  if unique_ts:
-                      first, last = unique_ts[0], unique_ts[-1]
-
-                      result["start"] = datetime.fromtimestamp(
-                          first / 1000, timezone.utc
-                      ).strftime("%Y-%m-%d %H:%M")
-
-                      result["end"] = datetime.fromtimestamp(
-                          last / 1000, timezone.utc
-                      ).strftime("%Y-%m-%d %H:%M")
-
-                      expected = (last - first) // bar + 1
-                      result["missing"] = max(0, expected - len(unique_ts))
-
-                      result["gaps"] = sum(
-                          1 for a, b in zip(unique_ts, unique_ts[1:])
-                          if b - a > bar
-                      )
-
-                  o, h, l, c, v = (
-                      prices[x] for x in
-                      ["open", "high", "low", "close", "volume"]
-                  )
-
-                  valid = prices.notna().all(axis=1)
-
-                  bad_ohlc = valid & (
-                      (l <= 0) | (h < l) | (h < o) |
-                      (h < c) | (l > o) | (l > c)
-                  )
-
-                  result["invalid_ohlc"] = int(bad_ohlc.sum())
-                  result["invalid_volume"] = int(
-                      (valid & (v < 0)).sum()
-                  )
-
-                  problems = [
-                      f"{k}={result[k]}"
-                      for k in [
-                          "duplicates", "missing", "gaps",
-                          "invalid_ohlc", "invalid_volume",
-                          "invalid_values", "out_of_order"
-                      ]
-                      if result[k] > 0
+                  in_range = ts[
+                      (ts >= EXPECTED_START) &
+                      (ts < EXPECTED_END) &
+                      (ts % BAR_MS == 0)
                   ]
 
-                  if not unique_ts:
-                      problems.append("no valid timestamps")
+                  unique_ts = sorted(set(in_range.tolist()))
 
-                  if problems:
-                      result["status"] = "CHECK"
-                      result["notes"] = "; ".join(problems)
+                  if unique_ts:
+                      first_ts = unique_ts[0]
+                      last_ts = unique_ts[-1]
 
-              except Exception as exc:
-                  result["status"] = "ERROR"
-                  result["notes"] = str(exc)
+                      leading_missing = max(
+                          0, (first_ts - EXPECTED_START) // BAR_MS
+                      )
 
-              rows.append(result)
+                      trailing_missing = max(
+                          0, (EXPECTED_END - BAR_MS - last_ts) // BAR_MS
+                      )
 
-          report = pd.DataFrame(rows)
-          report.to_csv("data_quality_report.csv", index=False)
+                      internal_missing = (
+                          (last_ts - first_ts) // BAR_MS + 1 - len(unique_ts)
+                      )
 
-          ok = sum(x["status"] == "OK" for x in rows)
-          check = sum(x["status"] == "CHECK" for x in rows)
-          error = sum(x["status"] == "ERROR" for x in rows)
+                      internal_gaps = sum(
+                          1 for a, b in zip(unique_ts, unique_ts[1:])
+                          if b - a > BAR_MS
+                      )
 
-          with open("data_quality_report.md", "w", encoding="utf-8") as f:
+                      coverage = 100 * len(unique_ts) / EXPECTED_SLOTS
+
+                      start = datetime.fromtimestamp(
+                          first_ts / 1000, timezone.utc
+                      ).strftime("%Y-%m-%d")
+
+                      end = datetime.fromtimestamp(
+                          last_ts / 1000, timezone.utc
+                      ).strftime("%Y-%m-%d")
+                  else:
+                      leading_missing = EXPECTED_SLOTS
+                      trailing_missing = EXPECTED_SLOTS
+                      internal_missing = 0
+                      internal_gaps = 0
+                      coverage = 0.0
+                      start = "NONE"
+                      end = "NONE"
+
+                  ohlc = df[["open", "high", "low", "close"]]
+                  invalid_values = int(df[required].isna().any(axis=1).sum())
+
+                  invalid_ohlc = int(
+                      (
+                          (df["high"] < df[["open", "close", "low"]].max(axis=1)) |
+                          (df["low"] > df[["open", "close", "high"]].min(axis=1)) |
+                          (df["high"] < df["low"]) |
+                          (df[["open", "high", "low", "close"]] <= 0).any(axis=1)
+                      ).sum()
+                  )
+
+                  invalid_volume = int((df["vol"] < 0).sum())
+
+                  errors = (
+                      duplicates + out_of_order + misaligned +
+                      out_of_range + internal_missing +
+                      invalid_values + invalid_ohlc + invalid_volume
+                  )
+
+                  status = "OK" if errors == 0 else "CHECK"
+
+                  results.append({
+                      "symbol": symbol,
+                      "status": status,
+                      "rows": len(df),
+                      "start_utc": start,
+                      "end_utc": end,
+                      "coverage_pct": round(coverage, 2),
+                      "leading_missing": leading_missing,
+                      "trailing_missing": trailing_missing,
+                      "internal_missing": internal_missing,
+                      "internal_gaps": internal_gaps,
+                      "duplicates": duplicates,
+                      "misaligned": misaligned,
+                      "out_of_range": out_of_range,
+                      "out_of_order": out_of_order,
+                      "invalid_ohlc": invalid_ohlc,
+                      "invalid_volume": invalid_volume,
+                      "invalid_values": invalid_values,
+                  })
+
+              except Exception as e:
+                  results.append({
+                      "symbol": symbol,
+                      "status": "ERROR",
+                      "error": str(e)
+                  })
+
+          report = pd.DataFrame(results)
+
+          os.makedirs("reports", exist_ok=True)
+          report.to_csv("reports/okx_quality_report.csv", index=False)
+
+          with open("reports/okx_quality_report.md", "w") as f:
               f.write("# OKX Dataset Quality Report\n\n")
-              f.write(f"- Files: {len(rows)}\n")
-              f.write(f"- OK: {ok}\n")
-              f.write(f"- CHECK: {check}\n")
-              f.write(f"- ERROR: {error}\n\n")
+              f.write(f"- Expected start: 2024-09-18 00:00 UTC\n")
+              f.write(f"- Expected end (exclusive): 2026-11-17 00:00 UTC\n")
+              f.write(f"- Expected 15m candles per full-history symbol: {EXPECTED_SLOTS:,}\n\n")
+              f.write("Leading/trailing missing candles and coverage are informational. ")
+              f.write("They may reflect a contract listed after the dataset start. ")
+              f.write("Internal gaps and invalid data are quality checks.\n\n")
               f.write(report.to_markdown(index=False))
 
-          print(f"Files: {len(rows)} | OK: {ok} | CHECK: {check} | ERROR: {error}")
           print(report.to_string(index=False))
+
+          ok = int((report["status"] == "OK").sum())
+          check = int((report["status"] == "CHECK").sum())
+          error = int((report["status"] == "ERROR").sum())
+
+          print(f"\nOK: {ok} | CHECK: {check} | ERROR: {error}")
+
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "w") as f:
+              f.write("# OKX Dataset Quality Report\n\n")
+              f.write(f"- OK: {ok}\n- CHECK: {check}\n- ERROR: {error}\n\n")
+              f.write(report.to_markdown(index=False))
+
+          if check or error:
+              raise SystemExit("Dataset validation failed")
           PY
 
-      - name: Add report to summary
-        if: always()
-        run: |
-          if [ -f Backtest/data_quality_report.md ]; then
-            cat Backtest/data_quality_report.md >> "$GITHUB_STEP_SUMMARY"
-          fi
-
-      - name: Upload quality reports
-        if: always()
+      - name: Upload quality report
         uses: actions/upload-artifact@v4
         with:
           name: okx-data-quality-report
-          path: |
-            Backtest/data_quality_report.md
-            Backtest/data_quality_report.csv
-          if-no-files-found: warn
+          path: reports/
+          retention-days: 30
