@@ -39,6 +39,7 @@ class ProgressMonitor:
         self.stage = "initializing"
         self.detail = "starting runner"
         self.last_emit = 0.0
+        self.last_activity = self.started
         self._lock = threading.Lock()
         self._stop = threading.Event()
         self._thread = None
@@ -56,6 +57,7 @@ class ProgressMonitor:
                 self.stage_started = now
             self.stage = stage
             self.detail = detail
+            self.last_activity = now
             should_emit = changed or now - self.last_emit >= 15
             if should_emit:
                 self.last_emit = now
@@ -71,12 +73,20 @@ class ProgressMonitor:
             with self._lock:
                 stage, detail = self.stage, self.detail
                 stage_elapsed = time.monotonic() - self.stage_started
+                idle_elapsed = time.monotonic() - self.last_activity
             total_elapsed = time.monotonic() - self.started
             print(
                 f"[HEARTBEAT] alive | stage={stage} | {detail} | "
-                f"stage_elapsed={stage_elapsed / 60:.1f}m | total_elapsed={total_elapsed / 60:.1f}m",
+                f"stage_elapsed={stage_elapsed / 60:.1f}m | "
+                f"no_substep_update={idle_elapsed / 60:.1f}m | total_elapsed={total_elapsed / 60:.1f}m",
                 flush=True,
             )
+            if idle_elapsed >= 120:
+                print(
+                    f"[STALL WARNING] no progress callback for {idle_elapsed / 60:.1f}m "
+                    f"| stage={stage} | {detail}",
+                    flush=True,
+                )
 
     def stop(self):
         self._stop.set()
