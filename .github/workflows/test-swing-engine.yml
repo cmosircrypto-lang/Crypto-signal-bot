@@ -1,5 +1,5 @@
 
-name: Swing Engine Market Structure Test
+name: Swing Engine Tests
 
 on:
   workflow_dispatch:
@@ -25,3 +25,7 @@ jobs:
       - name: Run Market Structure Tests
         run: |
           python Backtest/SwingEngine/test_market_structure.py
+
+      - name: Run Order Block Tests
+        run: |
+          python Backtest/SwingEngine/test_order_block.py
