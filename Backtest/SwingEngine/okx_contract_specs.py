@@ -6,11 +6,11 @@ from decimal import (
     ROUND_CEILING,
 )
 from urllib.parse import urlencode
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
 import json
 
 
-OKX_PUBLIC_URL = "https://www.okx.com/api/v5/public/instruments"
+OKX_PUBLIC_URL = "https://openapi.okx.com/api/v5/public/instruments"
 
 
 def to_decimal(value, field_name):
@@ -301,8 +301,15 @@ class OKXContractSpecs:
         url = f"{OKX_PUBLIC_URL}?{params}"
 
         try:
-            with urlopen(
+            request = Request(
                 url,
+                headers={
+                    "User-Agent": "SwingEngineBacktest/1.0",
+                    "Accept": "application/json",
+                },
+            )
+            with urlopen(
+                request,
                 timeout=self.timeout
             ) as response:
 
