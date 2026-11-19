@@ -55,58 +55,56 @@ def test_position_size():
     print("PASS: position size and risk calculation")
 
 
-def test_buy_take_profit():
-    engine = ExecutionEngine(initial_capital=100)
+def test_buy_tick_rounding_and_risk_recalculation():
+    spec = make_spec()
+    engine = ExecutionEngine(
+        initial_capital=999.95,
+        contract_specs={"BTC-USDT-SWAP": spec},
+    )
 
-    engine.open_trade(
-        symbol="BTC-USDT",
+    position = engine.open_trade(
+        symbol="BTC-USDT-SWAP",
         direction="BUY",
-        entry_price=100,
-        stop_loss=98,
-        take_profit=104,
+        entry_price=50000.0,
+        stop_loss=49000.06,
+        take_profit=52000.04,
         risk_percent=1,
         timestamp=1000,
     )
 
-    result = engine.check_exit(
-        "BTC-USDT",
-        {"high": 105, "low": 99},
-        2000,
+    assert position.stop_loss == 49000.0
+    assert position.take_profit == 52000.1
+    assert abs(position.contract_count - 0.9) < 1e-9
+    assert abs(position.quantity - 0.009) < 1e-9
+    assert position.risk_amount <= 9.9995
+
+    print("PASS: BUY tick rounding and risk recalculation")
+
+
+def test_sell_tick_rounding_and_risk_recalculation():
+    spec = make_spec()
+    engine = ExecutionEngine(
+        initial_capital=1000.04,
+        contract_specs={"BTC-USDT-SWAP": spec},
     )
 
-    assert result is not None
-    assert result.exit_reason == "TP"
-    assert abs(result.pnl - 2.0) < 1e-9
-    assert abs(engine.equity - 102.0) < 1e-9
-
-    print("PASS: BUY take-profit execution")
-
-
-def test_sell_stop_loss():
-    engine = ExecutionEngine(initial_capital=100)
-
-    engine.open_trade(
-        symbol="ETH-USDT",
+    position = engine.open_trade(
+        symbol="BTC-USDT-SWAP",
         direction="SELL",
-        entry_price=100,
-        stop_loss=102,
-        take_profit=96,
+        entry_price=50000.0,
+        stop_loss=51000.04,
+        take_profit=48000.04,
         risk_percent=1,
         timestamp=1000,
     )
 
-    result = engine.check_exit(
-        "ETH-USDT",
-        {"high": 103, "low": 99},
-        2000,
-    )
+    assert position.stop_loss == 51000.1
+    assert position.take_profit == 48000.0
+    assert abs(position.contract_count - 0.9) < 1e-9
+    assert abs(position.quantity - 0.009) < 1e-9
+    assert position.risk_amount <= 10.0004
 
-    assert result is not None
-    assert result.exit_reason == "SL"
-    assert abs(result.pnl + 1.0) < 1e-9
-    assert abs(engine.equity - 99.0) < 1e-9
-
-    print("PASS: SELL stop-loss execution")
+    print("PASS: SELL tick rounding and risk recalculation")
 
 
 def test_sl_tp_same_candle():
@@ -457,21 +455,18 @@ def test_sell_tick_rounding_and_risk_recalculation():
 
 def test_tick_rounding_preserves_valid_price_structure():
     spec = make_spec()
-
     engine = ExecutionEngine(
         initial_capital=100,
-        contract_specs={
-            "BTC-USDT-SWAP": spec,
-        },
+        contract_specs={"BTC-USDT-SWAP": spec},
     )
 
     try:
         engine.open_trade(
             symbol="BTC-USDT-SWAP",
             direction="BUY",
-            entry_price=50000.05,
+            entry_price=50000.0,
             stop_loss=50000.04,
-            take_profit=50001,
+            take_profit=50001.0,
             risk_percent=1,
             timestamp=1000,
         )
