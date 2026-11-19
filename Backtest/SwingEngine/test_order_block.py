@@ -108,6 +108,21 @@ def test_bullish_order_block():
     print("PASS: bullish Order Block detection")
 
 
+def test_order_block_progress_callback():
+    calls = []
+    detect_order_blocks(
+        make_test_data(),
+        threshold=1.0,
+        atr_period=14,
+        lookback=10,
+        structure=make_test_structure(),
+        progress_callback=lambda done, total: calls.append((done, total)),
+    )
+    assert calls[0] == (1, 50)
+    assert calls[-1] == (50, 50)
+    print("PASS: Order Block progress callback")
+
+
 def test_bearish_order_block():
     df = make_test_data()
     structure = make_test_structure()
@@ -222,6 +237,7 @@ def test_order_block_price_ranges():
 
 def run_all_tests():
     test_bullish_order_block()
+    test_order_block_progress_callback()
     test_bearish_order_block()
     test_threshold_comparison()
     test_no_ob_before_bos()
