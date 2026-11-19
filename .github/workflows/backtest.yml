@@ -1,3 +1,4 @@
+
 name: Backtest
 
 on:
@@ -23,6 +24,11 @@ on:
         description: "فاصله اجرای ربات‌ها (دقیقه، مضرب ۱۵)"
         required: true
         default: "60"
+      download_only:
+        description: "فقط دانلود و ذخیره داده؛ بدون اجرای بک‌تست ربات‌ها"
+        required: true
+        type: boolean
+        default: false
       overrides:
         description: "تغییر پارامترها (اختیاری)، مثل: RECOVERY_ENABLED=0 RISK_PERCENT=1"
         required: false
@@ -41,12 +47,12 @@ on:
         default: ""
 
 permissions:
-  contents: write   # برای ذخیره‌ی دائمی داده در Releases
+  contents: write
 
 env:
   EXCHANGE: ${{ inputs.exchange }}
-  DATA_RELEASE: ${{ inputs.exchange }}-data      # okx-data  یا  toobit-data
-  DATA_ASSET: ${{ inputs.exchange }}_data.tar    # okx_data.tar  یا  toobit_data.tar
+  DATA_RELEASE: ${{ inputs.exchange }}-data
+  DATA_ASSET: ${{ inputs.exchange }}_data.tar
 
 jobs:
   backtest:
@@ -64,7 +70,7 @@ jobs:
 
       - run: pip install pandas numpy requests
 
-      # ۱) داده‌ی ذخیره‌شده‌ی قبلی را از Release برمی‌گرداند (اگر باشد)
+      # ۱) بازیابی داده‌های ذخیره‌شده قبلی
       - name: Restore data from Release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -75,19 +81,22 @@ jobs:
               --pattern "$DATA_ASSET" --dir /tmp --clobber || echo "asset not found"
             if [ -f "/tmp/$DATA_ASSET" ]; then
               tar -xf "/tmp/$DATA_ASSET" -C "data/$EXCHANGE"
-              echo "Restored cached data:"; du -sh "data/$EXCHANGE"
+              echo "Restored cached data:"
+              du -sh "data/$EXCHANGE"
             fi
           else
             echo "No cached data yet — first run will download everything."
           fi
 
-      # ۲) فقط بخش‌های ناقص (جدیدتر/قدیمی‌تر از داده‌ی موجود) دانلود می‌شود
-      - name: Download data (فقط بخش‌های ناقص)
+      # ۲) دانلود بخش‌های ناقص داده
+      - name: Download data
         run: |
           python -u "download_${EXCHANGE}_data.py" \
-            --end "${{ inputs.end_date }}" --days "${{ inputs.days }}" --out "data/$EXCHANGE"
+            --end "${{ inputs.end_date }}" \
+            --days "${{ inputs.days }}" \
+            --out "data/$EXCHANGE"
 
-      # ۳) بلافاصله بعد از دانلود در Release ذخیره می‌شود، حتی اگر بک‌تست خطا بدهد
+      # ۳) ذخیره داده‌ها در Release
       - name: Save data to Release
         if: always() && hashFiles('Backtest/data/**') != ''
         env:
@@ -97,11 +106,15 @@ jobs:
           ls -lh "/tmp/$DATA_ASSET"
           gh release view "$DATA_RELEASE" --repo "${{ github.repository }}" >/dev/null 2>&1 || \
             gh release create "$DATA_RELEASE" --repo "${{ github.repository }}" \
-              --title "$EXCHANGE data cache" --notes "کش داده‌ی کندل $EXCHANGE برای بک‌تست. حذف نکن." \
+              --title "$EXCHANGE data cache" \
+              --notes "کش داده‌ی کندل $EXCHANGE برای بک‌تست. حذف نکن." \
               --prerelease --latest=false
-          gh release upload "$DATA_RELEASE" "/tmp/$DATA_ASSET" --repo "${{ github.repository }}" --clobber
+          gh release upload "$DATA_RELEASE" "/tmp/$DATA_ASSET" \
+            --repo "${{ github.repository }}" --clobber
 
+      # ۴) اجرای بک‌تست فقط در صورت غیرفعال بودن Download Only
       - name: Run backtest
+        if: ${{ inputs.download_only != true }}
         env:
           OVERRIDES: ${{ inputs.overrides }}
           BOTS: ${{ inputs.bots }}
@@ -111,24 +124,45 @@ jobs:
           [ -n "$OVERRIDES" ] && EXTRA="$EXTRA --set $OVERRIDES"
           [ -n "$BOTS" ] && EXTRA="$EXTRA --bots $BOTS"
           [ -n "$TOP_LIQUID" ] && EXTRA="$EXTRA --top-liquid $TOP_LIQUID"
-          python -u backtest_bots.py --exchange "$EXCHANGE" --data-dir "data/$EXCHANGE" \
-            --days "${{ inputs.days }}" --end "${{ inputs.end_date }}" \
+
+          python -u backtest_bots.py --exchange "$EXCHANGE" \
+            --data-dir "data/$EXCHANGE" \
+            --days "${{ inputs.days }}" \
+            --end "${{ inputs.end_date }}" \
             --step-minutes "${{ inputs.step_minutes }}" $EXTRA | tee report_full.txt
+
           sed -n '/نتایج بک‌تست/,$p' report_full.txt > report.txt
-          { echo "exchange: $EXCHANGE | overrides: ${OVERRIDES:-none} | bots: ${BOTS:-all} | top_liquid: ${TOP_LIQUID:-all}"; echo '```'; cat report.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
 
+          {
+            echo "exchange: $EXCHANGE | overrides: ${OVERRIDES:-none} | bots: ${BOTS:-all} | top_liquid: ${TOP_LIQUID:-all}"
+            echo '```'
+            cat report.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # ۵) آزمون تصادفی فقط در حالت اجرای بک‌تست
       - name: Random-entry baseline (Monte Carlo)
-        if: ${{ inputs.random_baseline != '' }}
+        if: ${{ inputs.download_only != true && inputs.random_baseline != '' }}
         run: |
-          python -u random_baseline.py --trades backtest_results/trades.csv \
-            --exchange "$EXCHANGE" --data-dir "data/$EXCHANGE" \
-            --end "${{ inputs.end_date }}" --days "${{ inputs.days }}" \
-            --sims 500 --out report_random.txt
-          cat report_random.txt >> report.txt
-          { echo '```'; cat report_random.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          python -u random_baseline.py \
+            --trades backtest_results/trades.csv \
+            --exchange "$EXCHANGE" \
+            --data-dir "data/$EXCHANGE" \
+            --end "${{ inputs.end_date }}" \
+            --days "${{ inputs.days }}" \
+            --sims 500 \
+            --out report_random.txt
 
+          cat report_random.txt >> report.txt
+          {
+            echo '```'
+            cat report_random.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # ۶) آپلود گزارش فقط در حالت اجرای بک‌تست
       - name: Upload results
-        if: always()
+        if: always() && inputs.download_only != true
         uses: actions/upload-artifact@v4
         with:
           name: backtest-results
