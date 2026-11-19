@@ -1,0 +1,309 @@
+"""Chronological, simulation-only 9-combination Swing Engine backtest runner."""
+from __future__ import annotations
+
+import argparse
+import json
+from pathlib import Path
+from typing import Mapping
+
+import pandas as pd
+
+from data_loader import load_okx_data, dataset_report, TIMEFRAME_MS
+from order_block import detect_order_blocks
+from signal_engine import generate_entry_signals
+from trading_system import TradingSystem
+from okx_contract_specs import OKXContractSpecs
+
+
+INITIAL_CAPITAL = 100.0
+RISK_LEVELS = (0.05, 1.0, 1.5)
+REWARD_RATIOS = (1.5, 2.0, 2.5)
+METHOD_PRIORITY = {
+    "DIRECT": 0,
+    "ENGULFING": 1,
+    "PIN_BAR": 2,
+    "M15_STRUCTURE_BREAK": 3,
+}
+
+
+def prepare_signals(symbol_data, methods=None, zone_type="body",
+                    touch_rule="first", require_4h_alignment=False):
+    """Precompute causal signals and their source 1h OB rows per symbol."""
+    signals = {}
+    order_blocks = {}
+    for symbol, item in sorted(symbol_data.items()):
+        one_hour = item.frames["1h"]
+        fifteen = item.frames["15m"]
+        four_hour = item.frames["4h"]
+        obs = detect_order_blocks(one_hour)
+        order_blocks[symbol] = obs
+        found = generate_entry_signals(
+            symbol=symbol,
+            candles_15m=fifteen,
+            order_blocks_1h=obs,
+            candles_4h=four_hour,
+            methods=methods or (
+                "DIRECT", "ENGULFING", "PIN_BAR",
+                "M15_STRUCTURE_BREAK",
+            ),
+            zone_type=zone_type,
+            touch_rule=touch_rule,
+            require_4h_alignment=require_4h_alignment,
+        )
+        if not found.empty:
+            # Different confirmation methods can fire for one OB. Use only
+            # the earliest signal for that OB, with a stable method tie-break.
+            found = found.copy()
+            found["_priority"] = found["method"].map(METHOD_PRIORITY).fillna(99)
+            found = found.sort_values(
+                ["signal_ts", "ob_id", "_priority"],
+                kind="stable",
+            ).drop_duplicates(["ob_id"], keep="first")
+            signals[symbol] = found.drop(columns=["_priority"]).reset_index(drop=True)
+        else:
+            signals[symbol] = found
+    return signals, order_blocks
+
+
+def _stop_and_target(signal, ob, rr):
+    entry = float(signal["entry_price"])
+    direction = str(signal["direction"]).upper()
+    if direction == "BUY":
+        stop = float(ob["wick_low"])
+        distance = entry - stop
+        target = entry + distance * rr
+    elif direction == "SELL":
+        stop = float(ob["wick_high"])
+        distance = stop - entry
+        target = entry - distance * rr
+    else:
+        raise ValueError(f"Unsupported signal direction: {direction}")
+    if distance <= 0 or target <= 0:
+        return None
+    return stop, target
+
+
+def _equity_metrics(trades, initial_capital):
+    equity = float(initial_capital)
+    peak = equity
+    max_drawdown = 0.0
+    gross_profit = 0.0
+    gross_loss = 0.0
+    r_values = []
+    for trade in sorted(trades, key=lambda row: (row["closed_at"], row["symbol"])):
+        pnl = float(trade["pnl"])
+        equity += pnl
+        peak = max(peak, equity)
+        if peak > 0:
+            max_drawdown = max(max_drawdown, (peak - equity) / peak * 100)
+        if pnl > 0:
+            gross_profit += pnl
+        elif pnl < 0:
+            gross_loss += abs(pnl)
+        risk = float(trade["risk_amount"])
+        if risk > 0:
+            r_values.append(pnl / risk)
+    count = len(trades)
+    wins = sum(float(row["pnl"]) > 0 for row in trades)
+    losses = sum(float(row["pnl"]) < 0 for row in trades)
+    return {
+        "initial_capital": float(initial_capital),
+        "final_equity": equity,
+        "net_pnl": equity - initial_capital,
+        "closed_trades": count,
+        "wins": wins,
+        "losses": losses,
+        "win_rate_pct": wins / count * 100 if count else 0.0,
+        "profit_factor": (
+            gross_profit / gross_loss if gross_loss > 0
+            else (float("inf") if gross_profit > 0 else 0.0)
+        ),
+        "max_drawdown_pct": max_drawdown,
+        "average_r": sum(r_values) / len(r_values) if r_values else 0.0,
+    }
+
+
+def simulate_scenario(symbol_data, signals_by_symbol, order_blocks_by_symbol,
+                      risk_percent, reward_ratio, contract_specs=None,
+                      initial_capital=INITIAL_CAPITAL):
+    """Replay all symbols on one global candle-close timeline."""
+    system = TradingSystem(
+        initial_capital=initial_capital,
+        fee_rate=0.0,
+        slippage_rate=0.0,
+        max_total=6,
+        max_buy=3,
+        max_sell=3,
+        contract_specs=contract_specs,
+    )
+
+    candles_at_time = {}
+    for symbol, item in symbol_data.items():
+        frame = item.frames["15m"]
+        for row in frame.to_dict("records"):
+            close_time = int(row["ts"]) + TIMEFRAME_MS["15m"]
+            candles_at_time.setdefault(close_time, {})[symbol] = row
+
+    signals_at_time = {}
+    for symbol, frame in signals_by_symbol.items():
+        if frame is None or frame.empty:
+            continue
+        for row in frame.to_dict("records"):
+            signals_at_time.setdefault(int(row["signal_ts"]), []).append((symbol, row))
+
+    # A trade is checked only on candles closing strictly after its entry.
+    all_times = sorted(set(candles_at_time) | set(signals_at_time))
+    skipped = {"portfolio_limit": 0, "invalid_stop_or_target": 0,
+               "position_size_or_contract": 0, "missing_ob": 0}
+    closed_records = []
+
+    for timestamp in all_times:
+        current_candles = candles_at_time.get(timestamp, {})
+
+        # Exits first. This releases capacity before same-close entries.
+        for symbol in sorted(list(system.execution.open_positions)):
+            candle = current_candles.get(symbol)
+            if candle is None:
+                continue
+            position = system.execution.open_positions[symbol]
+            if timestamp <= position.opened_at:
+                continue
+            result = system.check_exit(symbol, candle, timestamp)
+            if result is not None:
+                closed_records.append({
+                    "symbol": result.symbol,
+                    "direction": result.direction,
+                    "entry_price": result.entry_price,
+                    "exit_price": result.exit_price,
+                    "quantity": result.quantity,
+                    "contract_count": result.contract_count,
+                    "risk_percent": result.risk_percent,
+                    "risk_amount": position.risk_amount,
+                    "pnl": result.pnl,
+                    "result": result.result,
+                    "exit_reason": result.exit_reason,
+                    "opened_at": result.opened_at,
+                    "closed_at": result.closed_at,
+                })
+
+        # Signals are filled at their confirmation candle close.
+        entries = sorted(
+            signals_at_time.get(timestamp, []),
+            key=lambda pair: (pair[0], METHOD_PRIORITY.get(str(pair[1]["method"]), 99),
+                              int(pair[1]["ob_id"])),
+        )
+        for symbol, signal in entries:
+            direction = str(signal["direction"]).upper()
+            if not system.can_search_symbol(symbol):
+                continue
+            if not system.can_open_trade(symbol, direction):
+                skipped["portfolio_limit"] += 1
+                continue
+
+            obs = order_blocks_by_symbol.get(symbol)
+            ob_id = int(signal["ob_id"])
+            if obs is None or ob_id not in obs.index:
+                skipped["missing_ob"] += 1
+                continue
+            levels = _stop_and_target(signal, obs.loc[ob_id], reward_ratio)
+            if levels is None:
+                skipped["invalid_stop_or_target"] += 1
+                continue
+            stop, target = levels
+            try:
+                system.open_trade(
+                    symbol=symbol,
+                    direction=direction,
+                    entry_price=float(signal["entry_price"]),
+                    stop_loss=stop,
+                    take_profit=target,
+                    risk_percent=float(risk_percent),
+                    timestamp=timestamp,
+                )
+            except (ValueError, KeyError):
+                # Includes exchange minimum-size rejection. Keep a count;
+                # do not silently enlarge risk to force a fill.
+                skipped["position_size_or_contract"] += 1
+
+    summary = _equity_metrics(closed_records, initial_capital)
+    summary.update({
+        "risk_percent": float(risk_percent),
+        "reward_ratio": float(reward_ratio),
+        "open_trades_at_end": len(system.execution.open_positions),
+        "skipped_portfolio_limit": skipped["portfolio_limit"],
+        "skipped_invalid_stop_or_target": skipped["invalid_stop_or_target"],
+        "skipped_position_size_or_contract": skipped["position_size_or_contract"],
+        "skipped_missing_ob": skipped["missing_ob"],
+    })
+    return summary, pd.DataFrame(closed_records), system
+
+
+def run_matrix(symbol_data, signals_by_symbol, order_blocks_by_symbol,
+               contract_specs=None, initial_capital=INITIAL_CAPITAL):
+    summaries = []
+    trade_frames = {}
+    for risk in RISK_LEVELS:
+        for rr in REWARD_RATIOS:
+            summary, trades, _ = simulate_scenario(
+                symbol_data,
+                signals_by_symbol,
+                order_blocks_by_symbol,
+                risk_percent=risk,
+                reward_ratio=rr,
+                contract_specs=contract_specs,
+                initial_capital=initial_capital,
+            )
+            summaries.append(summary)
+            trade_frames[f"risk_{risk:g}_rr_{rr:g}"] = trades
+    return pd.DataFrame(summaries), trade_frames
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--data-root", default="Backtest/data/okx")
+    parser.add_argument("--output-dir", default="Backtest/results/swing_engine")
+    parser.add_argument("--expected-symbols", type=int, default=76)
+    parser.add_argument(
+        "--legacy-sizing", action="store_true",
+        help="Use theoretical base-quantity sizing instead of OKX lot/min-size rules.",
+    )
+    parser.add_argument(
+        "--require-4h-alignment", action="store_true",
+        help="Require 4h trend alignment for entries.",
+    )
+    args = parser.parse_args()
+
+    data = load_okx_data(args.data_root, expected_symbols=args.expected_symbols)
+    print(f"Validated {len(data)} symbols.")
+    print(dataset_report(data).groupby("timeframe")["candles"].sum().to_string())
+
+    contract_specs = None
+    if not args.legacy_sizing:
+        contract_specs = OKXContractSpecs()
+        contract_specs.load()
+        print(f"Loaded {len(contract_specs.get_all())} live OKX USDT linear SWAP specifications.")
+
+    signals, obs = prepare_signals(
+        data,
+        require_4h_alignment=args.require_4h_alignment,
+    )
+    total_signals = sum(len(frame) for frame in signals.values())
+    print(f"Prepared {total_signals} unique-OB entry signals.")
+
+    summary, trades = run_matrix(data, signals, obs, contract_specs=contract_specs)
+    output = Path(args.output_dir)
+    output.mkdir(parents=True, exist_ok=True)
+    summary_path = output / "summary_9_combinations.csv"
+    summary.to_csv(summary_path, index=False)
+    for name, frame in trades.items():
+        frame.to_csv(output / f"trades_{name}.csv", index=False)
+    (output / "summary_9_combinations.json").write_text(
+        json.dumps(summary.to_dict("records"), indent=2, allow_nan=True),
+        encoding="utf-8",
+    )
+    print("\n" + summary.to_string(index=False))
+    print(f"\nSaved summary and 9 trade ledgers to {output}")
+
+
+if __name__ == "__main__":
+    main()
