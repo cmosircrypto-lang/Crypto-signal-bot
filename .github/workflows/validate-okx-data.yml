@@ -62,7 +62,7 @@ jobs:
               try:
                   df = pd.read_csv(path, compression="gzip")
 
-                  required = ["ts", "open", "high", "low", "close", "vol"]
+                  required = ["ts", "open", "high", "low", "close", "volume"]
                   missing_columns = [c for c in required if c not in df.columns]
 
                   if missing_columns:
@@ -140,7 +140,7 @@ jobs:
                       ).sum()
                   )
 
-                  invalid_volume = int((df["vol"] < 0).sum())
+                  invalid_volume = int((df["volume"] < 0).sum())
 
                   errors = (
                       duplicates + out_of_order + misaligned +
