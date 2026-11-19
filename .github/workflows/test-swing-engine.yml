@@ -49,3 +49,6 @@ jobs:
 
       - name: Test OKX contract specifications
         run: python Backtest/SwingEngine/test_okx_contract_specs.py
+
+      - name: Test signal engine
+        run: python Backtest/SwingEngine/test_signal_engine.py
