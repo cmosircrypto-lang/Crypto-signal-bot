@@ -1,10 +1,8 @@
 from dataclasses import dataclass
 from decimal import Decimal, ROUND_DOWN
-from typing import Optional
-
-import json
 from urllib.parse import urlencode
 from urllib.request import urlopen
+import json
 
 
 OKX_PUBLIC_URL = "https://www.okx.com/api/v5/public/instruments"
@@ -39,20 +37,15 @@ class ContractSpec:
     state: str
 
     def base_quantity_to_contracts(self, base_quantity):
-        """
-        Converts base-asset quantity into contract quantity.
-
-        Only supports linear contracts whose contract value
-        is expressed in the base currency.
-        """
-
         quantity = to_decimal(
             base_quantity,
             "base_quantity"
         )
 
         if self.contract_type != "linear":
-            raise ValueError("Only linear contracts are supported")
+            raise ValueError(
+                "Only linear contracts are supported"
+            )
 
         if self.contract_value_currency != self.base_ccy:
             raise ValueError(
@@ -62,14 +55,15 @@ class ContractSpec:
         return quantity / self.contract_value
 
     def contracts_to_base_quantity(self, contracts):
-        """
-        Converts contract quantity into base-asset quantity.
-        """
-
-        count = to_decimal(contracts, "contracts")
+        count = to_decimal(
+            contracts,
+            "contracts"
+        )
 
         if self.contract_type != "linear":
-            raise ValueError("Only linear contracts are supported")
+            raise ValueError(
+                "Only linear contracts are supported"
+            )
 
         if self.contract_value_currency != self.base_ccy:
             raise ValueError(
@@ -79,11 +73,6 @@ class ContractSpec:
         return count * self.contract_value
 
     def round_contracts_down(self, contracts):
-        """
-        Rounds contracts down to the allowed lot size.
-        Never rounds risk exposure upward.
-        """
-
         count = Decimal(str(contracts))
 
         if not count.is_finite() or count <= 0:
@@ -91,15 +80,13 @@ class ContractSpec:
 
         steps = (
             count / self.lot_size
-        ).to_integral_value(rounding=ROUND_DOWN)
+        ).to_integral_value(
+            rounding=ROUND_DOWN
+        )
 
         return steps * self.lot_size
 
     def validate_order_size(self, contracts):
-        """
-        Checks minimum size and lot-size alignment.
-        """
-
         count = Decimal(str(contracts))
 
         if not count.is_finite() or count <= 0:
@@ -119,41 +106,50 @@ class ContractSpec:
         stop_loss,
         risk_amount
     ):
-        """
-        Calculates contract count from a fixed USDT risk.
+        entry = to_decimal(
+            entry_price,
+            "entry_price"
+        )
 
-        Assumptions:
-        - Linear USDT-settled contract.
-        - Contract value is expressed in base currency.
-        - Fees and slippage are not included yet.
-        """
+        stop = to_decimal(
+            stop_loss,
+            "stop_loss"
+        )
 
-        entry = to_decimal(entry_price, "entry_price")
-        stop = to_decimal(stop_loss, "stop_loss")
-        risk = to_decimal(risk_amount, "risk_amount")
+        risk = to_decimal(
+            risk_amount,
+            "risk_amount"
+        )
 
         price_distance = abs(entry - stop)
 
         if price_distance == 0:
-            raise ValueError("Entry and stop-loss cannot be equal")
+            raise ValueError(
+                "Entry and stop-loss cannot be equal"
+            )
 
         if self.contract_type != "linear":
-            raise ValueError("Only linear contracts are supported")
+            raise ValueError(
+                "Only linear contracts are supported"
+            )
 
         if self.settle_ccy != "USDT":
-            raise ValueError("Only USDT-settled contracts are supported")
+            raise ValueError(
+                "Only USDT-settled contracts are supported"
+            )
 
         if self.contract_value_currency != self.base_ccy:
             raise ValueError(
                 "Unsupported contract value currency"
             )
 
-        # Risk per contract = price distance * contract value
         risk_per_contract = (
             price_distance * self.contract_value
         )
 
-        raw_contracts = risk / risk_per_contract
+        raw_contracts = (
+            risk / risk_per_contract
+        )
 
         contracts = self.round_contracts_down(
             raw_contracts
@@ -173,6 +169,7 @@ class OKXContractSpecs:
 
     @staticmethod
     def parse_instrument(item):
+
         inst_id = item.get("instId", "")
 
         if not inst_id.endswith("-USDT-SWAP"):
@@ -192,8 +189,6 @@ class OKXContractSpecs:
 
         base_ccy = item.get("baseCcy", "")
 
-        # For linear USDT contracts, require contract value
-        # to be expressed in the base currency.
         if item.get("ctValCcy") != base_ccy:
             return None
 
@@ -204,17 +199,21 @@ class OKXContractSpecs:
             settle_ccy=item["settleCcy"],
             contract_type=item["ctType"],
             contract_value=to_decimal(
-                item["ctVal"], "ctVal"
+                item["ctVal"],
+                "ctVal"
             ),
             contract_value_currency=item["ctValCcy"],
             lot_size=to_decimal(
-                item["lotSz"], "lotSz"
+                item["lotSz"],
+                "lotSz"
             ),
             min_size=to_decimal(
-                item["minSz"], "minSz"
+                item["minSz"],
+                "minSz"
             ),
             tick_size=to_decimal(
-                item["tickSz"], "tickSz"
+                item["tickSz"],
+                "tickSz"
             ),
             state=item["state"]
         )
@@ -222,19 +221,30 @@ class OKXContractSpecs:
     def load(self):
         """
         Downloads public OKX USDT linear SWAP specifications.
-        No API key is required.
+        No API key or external Python package is required.
         """
 
-        params = urlencode({"instType": "SWAP"})
+        params = urlencode({
+            "instType": "SWAP"
+        })
+
         url = f"{OKX_PUBLIC_URL}?{params}"
 
         try:
-        with urlopen(url, timeout=self.timeout) as response:
-        payload = json.loads(response.read().decode("utf-8"))
+            with urlopen(
+                url,
+                timeout=self.timeout
+            ) as response:
+
+                payload = json.loads(
+                    response.read().decode("utf-8")
+                )
+
         except Exception as exc:
-        raise RuntimeError(
-        f"Failed to load OKX contract specifications: {exc}"
-    )   from exc
+            raise RuntimeError(
+                "Failed to load OKX contract specifications: "
+                f"{exc}"
+            ) from exc
 
         if payload.get("code") != "0":
             raise RuntimeError(
@@ -244,11 +254,14 @@ class OKXContractSpecs:
         data = payload.get("data")
 
         if not isinstance(data, list):
-            raise RuntimeError("Invalid OKX instruments response")
+            raise RuntimeError(
+                "Invalid OKX instruments response"
+            )
 
         loaded = {}
 
         for item in data:
+
             spec = self.parse_instrument(item)
 
             if spec is not None:
@@ -264,6 +277,7 @@ class OKXContractSpecs:
         return self.contracts
 
     def get(self, inst_id):
+
         if inst_id not in self.contracts:
             raise KeyError(
                 f"Contract not found: {inst_id}"
@@ -275,4 +289,6 @@ class OKXContractSpecs:
         return dict(self.contracts)
 
     def symbols(self):
-        return sorted(self.contracts.keys())
+        return sorted(
+            self.contracts.keys()
+        )
