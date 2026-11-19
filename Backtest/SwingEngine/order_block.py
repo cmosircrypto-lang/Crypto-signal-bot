@@ -1,6 +1,8 @@
 
 from __future__ import annotations
 
+from typing import Callable
+
 import pandas as pd
 
 from market_structure import analyze_market_structure
@@ -125,6 +127,7 @@ def detect_order_blocks(
     atr_period: int = 14,
     lookback: int = 10,
     structure: pd.DataFrame | None = None,
+    progress_callback: Callable[[int, int], None] | None = None,
 ) -> pd.DataFrame:
     """
     Detect bullish and bearish Order Blocks.
@@ -190,6 +193,8 @@ def detect_order_blocks(
     order_blocks = []
 
     for bos_index in range(len(data)):
+        if progress_callback is not None and (bos_index == 0 or (bos_index + 1) % 50000 == 0 or bos_index + 1 == len(data)):
+            progress_callback(bos_index + 1, len(data))
 
         event = structure.loc[
             bos_index,
