@@ -7,146 +7,161 @@ from ob_touch_rules import (
 )
 
 
-def make_candles():
-    rows = []
-
-    # OB is created at index 2.
-    # Touches happen at indexes 4, 6 and 8.
-    for i in range(10):
-        rows.append({
-            "ts": i * 900000,
-            "open": 105.0,
-            "high": 106.0,
-            "low": 104.0,
-            "close": 105.0,
-        })
-
-    # Before OB creation: must not count.
-    rows[0]["low"] = 99.0
-    rows[0]["high"] = 101.0
-
-    # First touch.
-    rows[4]["low"] = 101.0
-    rows[4]["high"] = 103.0
-
-    # Second touch.
-    rows[6]["low"] = 100.5
-    rows[6]["high"] = 102.5
-
-    # Third touch.
-    rows[8]["low"] = 101.5
-    rows[8]["high"] = 103.5
-
-    return pd.DataFrame(rows)
-
-
 def make_order_blocks():
-    return pd.DataFrame([{
-        "direction": "BULLISH",
-        "ob_index": 2,
-        "body_low": 101.0,
-        "body_high": 102.0,
-        "wick_low": 100.0,
-        "wick_high": 103.0,
-    }])
+    return pd.DataFrame([
+        {
+            "direction": "BULLISH",
+            "ob_index": 2,
+            "bos_index": 3,
+            "body_low": 101.0,
+            "body_high": 102.0,
+            "wick_low": 100.0,
+            "wick_high": 103.0,
+        }
+    ])
 
 
-def test_touch_detection():
+def make_candles():
+    rows = [
+        # 0-2: before BOS
+        (104.5, 105.0, 104.0, 104.5),
+        (104.5, 105.0, 104.0, 104.5),
+        (104.5, 105.0, 104.0, 104.5),
+
+        # 3: BOS candle - must be ignored
+        (101.0, 102.0, 100.5, 101.5),
+
+        # 4: first touch
+        (101.0, 102.0, 100.5, 101.5),
+
+        # 5: still inside - not a new touch
+        (101.2, 102.5, 100.5, 101.8),
+
+        # 6: completely outside - reset
+        (104.5, 105.0, 104.0, 104.5),
+
+        # 7: second touch
+        (101.0, 102.0, 100.5, 101.5),
+
+        # 8: still inside - not a new touch
+        (101.2, 102.5, 100.5, 101.8),
+
+        # 9: completely outside - reset
+        (104.5, 105.0, 104.0, 104.5),
+
+        # 10: third touch
+        (101.0, 102.0, 100.5, 101.5),
+    ]
+
+    return pd.DataFrame([
+        {
+            "ts": i * 900000,
+            "open": row[0],
+            "high": row[1],
+            "low": row[2],
+            "close": row[3],
+        }
+        for i, row in enumerate(rows)
+    ])
+
+
+def test_touch_count():
     touches = evaluate_ob_touches(
         make_order_blocks(),
         make_candles(),
     )
 
     assert len(touches) == 3
+    assert touches["candle_index"].tolist() == [4, 7, 10]
     assert touches["touch_number"].tolist() == [1, 2, 3]
 
-    print("PASS: three Order Block touches detected")
+    print("PASS: BOS candle ignored; counting starts after BOS")
+    print("PASS: consecutive candles count as one touch")
+    print("PASS: full exit and re-entry create a new touch")
 
 
-def test_first_touch_only():
-    touches = evaluate_ob_touches(
-        make_order_blocks(),
-        make_candles(),
-    )
-
-    valid = touches["first_touch_only_valid"].tolist()
-
-    assert valid == [True, False, False]
-
-    print("PASS: first touch only rule")
-
-
-def test_max_two_touches():
-    touches = evaluate_ob_touches(
-        make_order_blocks(),
-        make_candles(),
-    )
-
-    valid = touches["max_two_touches_valid"].tolist()
-
-    assert valid == [True, True, False]
-
-    print("PASS: maximum two touches rule")
-
-
-def test_progressive_decay():
+def test_touch_rules():
     touches = evaluate_ob_touches(
         make_order_blocks(),
         make_candles(),
         decay_per_touch=0.25,
     )
 
-    scores = touches["progressive_score"].tolist()
+    assert touches["first_touch_only_valid"].tolist() == [
+        True, False, False
+    ]
 
-    assert scores == [1.0, 0.25, 0.0625]
-    assert scores[0] > scores[1] > scores[2]
+    assert touches["max_two_touches_valid"].tolist() == [
+        True, True, False
+    ]
 
-    print("PASS: progressive score decay")
+    assert touches["progressive_score"].tolist() == [
+        1.0, 0.25, 0.0625
+    ]
+
+    print("PASS: first-touch-only rule")
+    print("PASS: maximum-two-touches rule")
+    print("PASS: progressive decay scores")
 
 
 def test_comparison():
-    comparison = compare_touch_rules(
+    touches = evaluate_ob_touches(
         make_order_blocks(),
         make_candles(),
     )
 
-    assert len(comparison) == 3
+    comparison = compare_touch_rules(touches)
 
-    valid_counts = comparison.set_index("rule")[
-        "valid_touches"
-    ]
+    assert len(comparison) == 1
 
-    assert valid_counts["first_touch_only"] == 1
-    assert valid_counts["max_two_touches"] == 2
-    assert valid_counts["progressive_decay"] == 3
+    result = comparison.iloc[0]
 
-    print("PASS: all three rules compared")
+    assert result["total_touches"] == 3
+    assert result["first_touch_only_count"] == 1
+    assert result["max_two_touches_count"] == 2
+    assert abs(result["progressive_total_score"] - 1.3125) < 1e-9
+
+    print("PASS: all touch rules compared")
 
 
-def test_invalid_decay():
+def test_invalid_inputs():
+    ob = make_order_blocks()
+    candles = make_candles()
+
+    missing_bos = ob.drop(columns=["bos_index"])
+
     try:
-        evaluate_ob_touches(
-            make_order_blocks(),
-            make_candles(),
-            decay_per_touch=1.0,
-        )
+        evaluate_ob_touches(missing_bos, candles)
+        raise AssertionError("Missing bos_index was accepted")
     except ValueError:
-        print("PASS: invalid decay rejected")
-        return
+        pass
 
-    raise AssertionError("Invalid decay was accepted")
+    try:
+        evaluate_ob_touches(ob, candles, decay_per_touch=0)
+        raise AssertionError("Invalid decay was accepted")
+    except ValueError:
+        pass
+
+    invalid_range = ob.copy()
+    invalid_range.loc[0, "wick_low"] = 104
+
+    try:
+        evaluate_ob_touches(invalid_range, candles)
+        raise AssertionError("Invalid zone range was accepted")
+    except ValueError:
+        pass
+
+    print("PASS: invalid inputs rejected")
 
 
-def run_all_tests():
-    test_touch_detection()
-    test_first_touch_only()
-    test_max_two_touches()
-    test_progressive_decay()
+def main():
+    test_touch_count()
+    test_touch_rules()
     test_comparison()
-    test_invalid_decay()
+    test_invalid_inputs()
 
-    print("\nALL ORDER BLOCK TOUCH TESTS PASSED")
+    print("ALL ORDER BLOCK TOUCH TESTS PASSED")
 
 
 if __name__ == "__main__":
-    run_all_tests()
+    main()
