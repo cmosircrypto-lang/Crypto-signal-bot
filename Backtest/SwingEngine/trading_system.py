@@ -1,3 +1,4 @@
+
 from execution_engine import ExecutionEngine
 from portfolio_engine import PortfolioEngine
 
@@ -5,6 +6,9 @@ from portfolio_engine import PortfolioEngine
 class TradingSystem:
     """
     Coordinates ExecutionEngine and PortfolioEngine.
+
+    Supports OKX contract specifications while preserving
+    legacy base-quantity mode when no specifications exist.
     """
 
     def __init__(
@@ -14,18 +18,20 @@ class TradingSystem:
         slippage_rate=0.0,
         max_total=6,
         max_buy=3,
-        max_sell=3
+        max_sell=3,
+        contract_specs=None,
     ):
         self.execution = ExecutionEngine(
             initial_capital=initial_capital,
             fee_rate=fee_rate,
-            slippage_rate=slippage_rate
+            slippage_rate=slippage_rate,
+            contract_specs=contract_specs,
         )
 
         self.portfolio = PortfolioEngine(
             max_total=max_total,
             max_buy=max_buy,
-            max_sell=max_sell
+            max_sell=max_sell,
         )
 
     @staticmethod
@@ -68,7 +74,7 @@ class TradingSystem:
         stop_loss,
         take_profit,
         risk_percent,
-        timestamp
+        timestamp,
     ):
         """
         Registers portfolio capacity and opens the trade.
@@ -77,7 +83,14 @@ class TradingSystem:
         """
 
         symbol = self.normalize_symbol(symbol)
+
+        if not isinstance(direction, str):
+            raise ValueError("Invalid direction")
+
         direction = direction.strip().upper()
+
+        if direction not in ("BUY", "SELL"):
+            raise ValueError("Direction must be BUY or SELL")
 
         if not self.can_open_trade(symbol, direction):
             return None
@@ -85,7 +98,7 @@ class TradingSystem:
         # Reserve portfolio capacity first.
         registered = self.portfolio.open_position(
             symbol,
-            direction
+            direction,
         )
 
         if not registered:
@@ -99,7 +112,7 @@ class TradingSystem:
                 stop_loss=stop_loss,
                 take_profit=take_profit,
                 risk_percent=risk_percent,
-                timestamp=timestamp
+                timestamp=timestamp,
             )
 
             return position
@@ -121,7 +134,7 @@ class TradingSystem:
         result = self.execution.check_exit(
             symbol,
             candle,
-            timestamp
+            timestamp,
         )
 
         if result is not None:
@@ -134,7 +147,7 @@ class TradingSystem:
         symbol,
         exit_price,
         timestamp,
-        exit_reason
+        exit_reason,
     ):
         """
         Manually closes a trade and releases its capacity.
@@ -146,7 +159,7 @@ class TradingSystem:
             symbol,
             exit_price,
             timestamp,
-            exit_reason
+            exit_reason,
         )
 
         self.portfolio.close_position(symbol)
@@ -166,5 +179,5 @@ class TradingSystem:
             ),
             "closed_trades": len(
                 self.execution.closed_trades
-            )
+            ),
         }
