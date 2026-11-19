@@ -92,6 +92,7 @@ jobs:
       - name: Run nine-combination backtest
         if: ${{ inputs.run_full_backtest }}
         run: |
+          set -o pipefail
           EXTRA=""
           if [ "${{ inputs.legacy_sizing }}" = "true" ]; then
             EXTRA="$EXTRA --legacy-sizing"
