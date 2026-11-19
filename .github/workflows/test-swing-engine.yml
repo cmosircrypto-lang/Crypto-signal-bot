@@ -3,10 +3,6 @@ name: Swing Engine Market Structure Test
 
 on:
   workflow_dispatch:
-  push:
-    paths:
-      - "Backtest/SwingEngine/**"
-      - ".github/workflows/test-swing-engine.yml"
 
 jobs:
   test:
