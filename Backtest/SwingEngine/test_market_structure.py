@@ -53,6 +53,20 @@ def make_test_data():
     return pd.DataFrame(data)
 
 
+def test_progress_callback():
+    calls = []
+    result = analyze_market_structure(
+        make_test_data(),
+        left=5,
+        right=5,
+        progress_callback=lambda done, total: calls.append((done, total)),
+    )
+    assert len(result) == 30
+    assert calls[0] == (1, 30)
+    assert calls[-1] == (30, 30)
+    print("PASS: market structure progress callback")
+
+
 def test_swing_confirmation():
     df = make_test_data()
 
@@ -207,6 +221,7 @@ def test_close_based_breakout():
 
 
 def run_all_tests():
+    test_progress_callback()
     test_swing_confirmation()
     test_no_lookahead()
     test_bos_and_choch()
