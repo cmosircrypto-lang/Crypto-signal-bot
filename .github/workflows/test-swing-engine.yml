@@ -33,3 +33,7 @@ jobs:
       - name: Run Order Block Touch Rules Tests
         run: |
           python Backtest/SwingEngine/test_ob_touch_rules.py
+
+      - name: Run Order Block Zone Tests
+        run: |
+          python Backtest/SwingEngine/test_ob_zone_rules.py
