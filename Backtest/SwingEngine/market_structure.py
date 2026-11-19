@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import math
+from typing import Callable
+
 import pandas as pd
 
 
@@ -9,6 +11,7 @@ def analyze_market_structure(
     df: pd.DataFrame,
     left: int = 5,
     right: int = 5,
+    progress_callback: Callable[[int, int], None] | None = None,
 ) -> pd.DataFrame:
     """
     Detect confirmed swing points, market structure labels,
@@ -142,6 +145,8 @@ def analyze_market_structure(
     # ---------------------------------------------------------
 
     for i in range(n):
+        if progress_callback is not None and (i == 0 or (i + 1) % 50000 == 0 or i + 1 == n):
+            progress_callback(i + 1, n)
 
         # A pivot is checked only after its right-side
         # confirmation candles have closed.
