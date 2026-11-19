@@ -38,6 +38,7 @@ class ProgressMonitor:
         self.stage_started = self.started
         self.stage = "initializing"
         self.detail = "starting runner"
+        self.last_emit = 0.0
         self._lock = threading.Lock()
         self._stop = threading.Event()
         self._thread = None
@@ -50,11 +51,16 @@ class ProgressMonitor:
     def set_stage(self, stage, detail=""):
         now = time.monotonic()
         with self._lock:
-            if stage != self.stage:
+            changed = stage != self.stage
+            if changed:
                 self.stage_started = now
             self.stage = stage
             self.detail = detail
-        print(f"[STAGE] {stage} | {detail}", flush=True)
+            should_emit = changed or now - self.last_emit >= 15
+            if should_emit:
+                self.last_emit = now
+        if should_emit:
+            print(f"[STAGE] {stage} | {detail}", flush=True)
 
     def progress(self, stage, completed, total, detail=""):
         percent = int(completed * 100 / total) if total else 100
@@ -96,6 +102,8 @@ def prepare_signals(symbol_data, methods=None, zone_type="body",
                 progress_monitor.set_stage("order_block_detection", f"{symbol} 1h candles {done}/{total} ({int(done * 100 / total) if total else 100}%)")
         obs = detect_order_blocks(one_hour, progress_callback=ob_progress if progress_monitor else None)
         order_blocks[symbol] = obs
+        if progress_monitor:
+            progress_monitor.set_stage("signal_generation", f"{symbol}: analyzing 15m structure and scanning {len(obs)} order blocks")
         def signal_progress(stage, done, total):
             if progress_monitor:
                 progress_monitor.set_stage("signal_generation", f"{symbol} {stage} {done}/{total} ({int(done * 100 / total) if total else 100}%)")
@@ -354,12 +362,15 @@ def simulate_scenario(symbol_data, signals_by_symbol, order_blocks_by_symbol,
 
 
 def run_matrix(symbol_data, signals_by_symbol, order_blocks_by_symbol,
-               contract_specs=None, initial_capital=INITIAL_CAPITAL):
+               contract_specs=None, initial_capital=INITIAL_CAPITAL,
+               progress_monitor=None):
     summaries = []
     trade_frames = {}
     scenario_total = len(RISK_LEVELS) * len(REWARD_RATIOS)
     timeline = set()
-    for item in symbol_data.values():
+    for symbol_index, (symbol, item) in enumerate(sorted(symbol_data.items()), start=1):
+        if progress_monitor:
+            progress_monitor.progress("timeline_preparation", symbol_index, len(symbol_data), f"indexing 15m close times for {symbol}")
         for ts in item.frames["15m"]["ts"].tolist():
             timeline.add(int(ts) + TIMEFRAME_MS["15m"])
     matrix_started = time.monotonic()
@@ -451,7 +462,10 @@ def main():
         print(f"Prepared {total_signals} unique-OB entry signals.", flush=True)
 
         monitor.set_stage("backtest_matrix", "starting nine chronological risk/RR combinations")
-        summary, trades = run_matrix(data, signals, obs, contract_specs=contract_specs)
+        summary, trades = run_matrix(
+            data, signals, obs, contract_specs=contract_specs,
+            progress_monitor=monitor,
+        )
         monitor.set_stage("saving_results", f"writing summary and nine trade ledgers to {args.output_dir}")
         output = Path(args.output_dir)
         output.mkdir(parents=True, exist_ok=True)
