@@ -103,5 +103,8 @@ A `[HEARTBEAT]` line is emitted every 30 seconds and identifies the exact
 stage and current symbol/operation. If the same operation remains active for
 a long time, the heartbeat continues to show that it is alive but not
 advancing its sub-step counter; this helps distinguish a slow nested scan
-from a silent or stalled process. The heartbeat is diagnostic and does not
-change signal rules, event ordering, position sizing, or calculated results.
+from a silent or stalled process. If no sub-step callback arrives for two
+minutes, the runner also prints `[STALL WARNING]` with the current stage and
+operation. This warning does not kill or alter the run. The heartbeat is
+diagnostic and does not change signal rules, event ordering, position sizing,
+or calculated results.
