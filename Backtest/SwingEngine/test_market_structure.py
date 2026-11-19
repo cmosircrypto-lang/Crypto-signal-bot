@@ -55,15 +55,20 @@ def make_test_data():
 
 def test_swing_confirmation():
     df = make_test_data()
-    result = analyze_market_structure(df, left=5, right=5)
 
-    # Swing High at candle 5 must be confirmed at candle 10
+    result = analyze_market_structure(
+        df,
+        left=5,
+        right=5,
+    )
+
+    # Swing High at candle 5 is confirmed at candle 10
     assert not result.loc[5, "pivot_high_confirmed"]
     assert result.loc[10, "pivot_high_confirmed"]
     assert result.loc[10, "pivot_high_price"] == 20.0
     assert result.loc[10, "pivot_high_ts"] == 5
 
-    # Swing Low at candle 15 must be confirmed at candle 20
+    # Swing Low at candle 15 is confirmed at candle 20
     assert not result.loc[15, "pivot_low_confirmed"]
     assert result.loc[20, "pivot_low_confirmed"]
     assert result.loc[20, "pivot_low_price"] == 1.0
@@ -75,9 +80,13 @@ def test_swing_confirmation():
 def test_no_lookahead():
     df = make_test_data()
 
-    full = analyze_market_structure(df, left=5, right=5)
+    full = analyze_market_structure(
+        df,
+        left=5,
+        right=5,
+    )
 
-    # At index 9, five right-side candles are not yet complete.
+    # At index 9, the Swing High is not yet confirmed
     partial = analyze_market_structure(
         df.iloc[:10].copy(),
         left=5,
@@ -86,7 +95,7 @@ def test_no_lookahead():
 
     assert not partial["pivot_high_confirmed"].any()
 
-    # At index 10, the pivot becomes confirmed.
+    # At index 10, the Swing High becomes confirmed
     partial = analyze_market_structure(
         df.iloc[:11].copy(),
         left=5,
@@ -95,18 +104,25 @@ def test_no_lookahead():
 
     assert partial.loc[10, "pivot_high_confirmed"]
 
-    # Results available up to each decision point must
-    # match the same prefix processed independently.
+    # All generated columns must remain consistent
+    # when historical data is processed in shorter prefixes.
     columns = [
         "pivot_high_confirmed",
         "pivot_low_confirmed",
         "pivot_high_price",
         "pivot_low_price",
+        "pivot_high_ts",
+        "pivot_low_ts",
         "high_label",
         "low_label",
+        "last_swing_high",
+        "last_swing_low",
         "structure_event",
+        "break_level",
         "structure_trend",
     ]
+
+    missing_value = "__MISSING__"
 
     for end in [9, 10, 11, 19, 20, 21, 25]:
 
@@ -116,46 +132,51 @@ def test_no_lookahead():
             right=5,
         )
 
-        expected = full.loc[:end, columns].reset_index(drop=True)
-        actual = prefix[columns].reset_index(drop=True)
+        expected = full.loc[
+            :end,
+            columns,
+        ].reset_index(drop=True)
 
-        # Compare numeric columns separately so NaN values
-        # are treated as equal, without hiding real differences.
-        numeric_columns = [
-            "pivot_high_price",
-            "pivot_low_price",
-        ]
+        actual = prefix[
+            columns
+        ].reset_index(drop=True)
 
-        other_columns = [
-            col for col in columns
-            if col not in numeric_columns
-        ]
-
-        pd.testing.assert_frame_equal(
-            expected[other_columns],
-            actual[other_columns],
-            check_dtype=False,
+        # Normalize all missing values and data types
+        # before comparing the two DataFrames.
+        expected = expected.astype(object).where(
+            pd.notna(expected),
+            missing_value,
         )
 
-        for col in numeric_columns:
-            pd.testing.assert_series_equal(
-                expected[col],
-                actual[col],
-                check_dtype=False,
-                check_exact=True,
-            )
+        actual = actual.astype(object).where(
+            pd.notna(actual),
+            missing_value,
+        )
+
+        pd.testing.assert_frame_equal(
+            expected,
+            actual,
+            check_dtype=False,
+            check_exact=True,
+        )
 
     print("PASS: no-lookahead prefix consistency")
 
 
 def test_bos_and_choch():
     df = make_test_data()
-    result = analyze_market_structure(df, left=5, right=5)
 
-    # Break above confirmed Swing High
+    result = analyze_market_structure(
+        df,
+        left=5,
+        right=5,
+    )
+
+    # Break above the confirmed Swing High
     assert result.loc[11, "structure_event"] == "BOS_BULLISH"
 
-    # Break below confirmed Swing Low after bullish trend
+    # Break below the confirmed Swing Low
+    # after a bullish trend
     assert result.loc[21, "structure_event"] == "CHOCH_BEARISH"
 
     assert result.loc[11, "structure_trend"] == "BULLISH"
@@ -167,13 +188,18 @@ def test_bos_and_choch():
 def test_close_based_breakout():
     df = make_test_data()
 
-    # Wick crosses the swing high, but close does not.
+    # Wick crosses the Swing High,
+    # but candle close remains below it.
     df.loc[11, "open"] = 19.0
     df.loc[11, "high"] = 22.0
     df.loc[11, "low"] = 18.0
     df.loc[11, "close"] = 19.5
 
-    result = analyze_market_structure(df, left=5, right=5)
+    result = analyze_market_structure(
+        df,
+        left=5,
+        right=5,
+    )
 
     assert result.loc[11, "structure_event"] != "BOS_BULLISH"
 
