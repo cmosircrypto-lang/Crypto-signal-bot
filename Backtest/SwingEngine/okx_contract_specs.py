@@ -2,7 +2,9 @@ from dataclasses import dataclass
 from decimal import Decimal, ROUND_DOWN
 from typing import Optional
 
-import requests
+import json
+from urllib.parse import urlencode
+from urllib.request import urlopen
 
 
 OKX_PUBLIC_URL = "https://www.okx.com/api/v5/public/instruments"
@@ -223,15 +225,16 @@ class OKXContractSpecs:
         No API key is required.
         """
 
-        response = requests.get(
-            OKX_PUBLIC_URL,
-            params={"instType": "SWAP"},
-            timeout=self.timeout
-        )
+        params = urlencode({"instType": "SWAP"})
+        url = f"{OKX_PUBLIC_URL}?{params}"
 
-        response.raise_for_status()
-
-        payload = response.json()
+        try:
+        with urlopen(url, timeout=self.timeout) as response:
+        payload = json.loads(response.read().decode("utf-8"))
+        except Exception as exc:
+        raise RuntimeError(
+        f"Failed to load OKX contract specifications: {exc}"
+    )   from exc
 
         if payload.get("code") != "0":
             raise RuntimeError(
