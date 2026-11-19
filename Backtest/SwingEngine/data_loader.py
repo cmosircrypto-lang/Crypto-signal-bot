@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict
+from typing import Dict, Callable
 
 import numpy as np
 import pandas as pd
@@ -83,6 +83,7 @@ def _validate_frame(path: Path, timeframe: str) -> pd.DataFrame:
 def load_okx_data(
     data_root: str | Path = "Backtest/data/okx",
     expected_symbols: int | None = EXPECTED_SYMBOLS,
+    progress_callback: Callable[[str, str, int, int], None] | None = None,
 ) -> Dict[str, SymbolData]:
     """Load and validate all symbols across the three available timeframes.
 
@@ -123,11 +124,14 @@ def load_okx_data(
         )
 
     result: Dict[str, SymbolData] = {}
-    for symbol in sorted(base_symbols):
-        frames = {
-            timeframe: _validate_frame(paths[timeframe][symbol], timeframe)
-            for timeframe in TIMEFRAME_MS
-        }
+    symbols = sorted(base_symbols)
+    total = len(symbols)
+    for index, symbol in enumerate(symbols, start=1):
+        frames = {}
+        for timeframe in TIMEFRAME_MS:
+            frames[timeframe] = _validate_frame(paths[timeframe][symbol], timeframe)
+            if progress_callback is not None:
+                progress_callback(timeframe, symbol, index, total)
         result[symbol] = SymbolData(symbol=symbol, frames=frames)
 
     return result
