@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import time
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Mapping
@@ -28,17 +29,76 @@ METHOD_PRIORITY = {
 }
 
 
+class ProgressMonitor:
+    """Threaded heartbeat plus explicit stage progress for long preparation work."""
+
+    def __init__(self, interval_seconds=30):
+        self.interval_seconds = interval_seconds
+        self.started = time.monotonic()
+        self.stage_started = self.started
+        self.stage = "initializing"
+        self.detail = "starting runner"
+        self._lock = threading.Lock()
+        self._stop = threading.Event()
+        self._thread = None
+
+    def start(self):
+        self._thread = threading.Thread(target=self._heartbeat, daemon=True)
+        self._thread.start()
+        self.set_stage("startup", "runner initialized")
+
+    def set_stage(self, stage, detail=""):
+        now = time.monotonic()
+        with self._lock:
+            if stage != self.stage:
+                self.stage_started = now
+            self.stage = stage
+            self.detail = detail
+        print(f"[STAGE] {stage} | {detail}", flush=True)
+
+    def progress(self, stage, completed, total, detail=""):
+        percent = int(completed * 100 / total) if total else 100
+        self.set_stage(stage, f"{completed}/{total} ({percent}%) {detail}")
+
+    def _heartbeat(self):
+        while not self._stop.wait(self.interval_seconds):
+            with self._lock:
+                stage, detail = self.stage, self.detail
+                stage_elapsed = time.monotonic() - self.stage_started
+            total_elapsed = time.monotonic() - self.started
+            print(
+                f"[HEARTBEAT] alive | stage={stage} | {detail} | "
+                f"stage_elapsed={stage_elapsed / 60:.1f}m | total_elapsed={total_elapsed / 60:.1f}m",
+                flush=True,
+            )
+
+    def stop(self):
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=2)
+
+
 def prepare_signals(symbol_data, methods=None, zone_type="body",
-                    touch_rule="first", require_4h_alignment=False):
+                    touch_rule="first", require_4h_alignment=False,
+                    progress_monitor=None):
     """Precompute causal signals and their source 1h OB rows per symbol."""
     signals = {}
     order_blocks = {}
-    for symbol, item in sorted(symbol_data.items()):
+    symbols = sorted(symbol_data.items())
+    for symbol_index, (symbol, item) in enumerate(symbols, start=1):
+        if progress_monitor:
+            progress_monitor.set_stage("order_block_detection", f"symbol {symbol_index}/{len(symbols)}: {symbol}")
         one_hour = item.frames["1h"]
         fifteen = item.frames["15m"]
         four_hour = item.frames["4h"]
-        obs = detect_order_blocks(one_hour)
+        def ob_progress(done, total):
+            if progress_monitor:
+                progress_monitor.set_stage("order_block_detection", f"{symbol} 1h candles {done}/{total} ({int(done * 100 / total) if total else 100}%)")
+        obs = detect_order_blocks(one_hour, progress_callback=ob_progress if progress_monitor else None)
         order_blocks[symbol] = obs
+        def signal_progress(stage, done, total):
+            if progress_monitor:
+                progress_monitor.set_stage("signal_generation", f"{symbol} {stage} {done}/{total} ({int(done * 100 / total) if total else 100}%)")
         found = generate_entry_signals(
             symbol=symbol,
             candles_15m=fifteen,
@@ -51,6 +111,7 @@ def prepare_signals(symbol_data, methods=None, zone_type="body",
             zone_type=zone_type,
             touch_rule=touch_rule,
             require_4h_alignment=require_4h_alignment,
+            progress_callback=signal_progress if progress_monitor else None,
         )
         if not found.empty:
             # Different confirmation methods can fire for one OB. Use only
@@ -64,6 +125,8 @@ def prepare_signals(symbol_data, methods=None, zone_type="body",
             signals[symbol] = found.drop(columns=["_priority"]).reset_index(drop=True)
         else:
             signals[symbol] = found
+        if progress_monitor:
+            progress_monitor.progress("symbol_preparation", symbol_index, len(symbols), f"completed {symbol}; OBs={len(obs)}; signals={len(signals[symbol])}")
     return signals, order_blocks
 
 
