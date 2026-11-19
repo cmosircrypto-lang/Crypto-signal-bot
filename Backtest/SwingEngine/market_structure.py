@@ -41,7 +41,7 @@ def analyze_market_structure(
         raise ValueError(f"Missing columns: {missing}")
 
     if len(df) == 0:
-    raise ValueError("DataFrame is empty")
+        raise ValueError("DataFrame is empty")
 
     data = df.copy().reset_index(drop=True)
 
