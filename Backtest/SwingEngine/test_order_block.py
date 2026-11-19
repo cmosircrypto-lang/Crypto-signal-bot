@@ -16,10 +16,13 @@ from order_block import (
 
 def make_test_data():
     """
-    Create synthetic OHLC data with:
-    - One bearish candle before bullish BOS
-    - One bullish candle before bearish BOS
-    - Controlled ATR and displacement
+    Synthetic OHLC data with controlled
+    displacement strength for ATR thresholds.
+
+    Expected:
+        Threshold 1.0  -> 2 Order Blocks
+        Threshold 1.25 -> 1 Order Block
+        Threshold 1.5  -> 0 Order Blocks
     """
 
     n = 50
@@ -32,44 +35,37 @@ def make_test_data():
         "close": [100.0] * n,
     }
 
-    # Create an initial range for ATR stabilization.
-    for i in range(14):
-        data["open"][i] = 100.0
-        data["high"][i] = 101.0
-        data["low"][i] = 99.0
-        data["close"][i] = 100.0
-
-    # Bearish OB candle
+    # Bearish candle before bullish BOS
     data["open"][18] = 100.0
     data["high"][18] = 101.0
     data["low"][18] = 98.0
     data["close"][18] = 99.0
 
-    # Bullish BOS candle
+    # Moderate bullish BOS
     data["open"][20] = 100.0
     data["high"][20] = 104.0
     data["low"][20] = 100.0
-    data["close"][20] = 104.0
+    data["close"][20] = 102.4
 
-    # Bullish OB candle
+    # Bullish candle before bearish BOS
     data["open"][28] = 100.0
     data["high"][28] = 102.0
     data["low"][28] = 99.0
     data["close"][28] = 101.0
 
-    # Bearish BOS candle
+    # Stronger bearish BOS
     data["open"][30] = 100.0
     data["high"][30] = 100.0
     data["low"][30] = 96.0
-    data["close"][30] = 96.0
+    data["close"][30] = 96.8
 
     return pd.DataFrame(data)
 
 
 def make_test_structure():
     """
-    Supply controlled BOS events for isolated
-    Order Block tests.
+    Controlled structure events for isolated
+    Order Block testing.
     """
 
     structure = pd.DataFrame(
@@ -152,19 +148,14 @@ def test_threshold_comparison():
         structure=structure,
     )
 
-    assert set(results.keys()) == {
-        1.0,
-        1.25,
-        1.5,
-    }
-
     counts = {
         threshold: len(result)
         for threshold, result in results.items()
     }
 
-    assert counts[1.0] >= counts[1.25]
-    assert counts[1.25] >= counts[1.5]
+    assert counts[1.0] == 2, counts
+    assert counts[1.25] == 1, counts
+    assert counts[1.5] == 0, counts
 
     print("PASS: threshold comparison")
 
@@ -177,10 +168,9 @@ def test_threshold_comparison():
 
 def test_no_ob_before_bos():
     df = make_test_data()
-
     structure = make_test_structure()
 
-    # Remove BOS confirmation.
+    # Remove both BOS events.
     structure.loc[20, "structure_event"] = None
     structure.loc[30, "structure_event"] = None
 
