@@ -63,6 +63,23 @@ class SignalEngineStructureBreakTests(unittest.TestCase):
         self.assertEqual(signal["entry_price"], 105.0)
         self.assertEqual(signal["confirmation"], "M15_STRUCTURE_BREAK")
 
+    def test_progress_callback_reports_order_blocks_and_candles(self):
+        calls = []
+        structure = self._structure()
+        with patch(
+            "signal_engine.analyze_market_structure",
+            return_value=structure,
+        ):
+            generate_entry_signals(
+                symbol="BTC-USDT-SWAP",
+                candles_15m=self.candles,
+                order_blocks_1h=self.order_blocks,
+                methods=("M15_STRUCTURE_BREAK",),
+                progress_callback=lambda stage, done, total: calls.append((stage, done, total)),
+            )
+        self.assertIn(("order_blocks", 1, 1), calls)
+        self.assertIn(("candles", len(self.candles), len(self.candles)), calls)
+
     def test_structure_break_on_touch_candle_is_ignored(self):
         signals = self._run(
             self._structure(1, "BOS_BULLISH")
