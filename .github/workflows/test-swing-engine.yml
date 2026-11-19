@@ -40,3 +40,6 @@ jobs:
      
       - name: Test execution engine
         run: python Backtest/SwingEngine/test_execution_engine.py
+
+      - name: Test portfolio engine
+        run: python Backtest/SwingEngine/test_portfolio_engine.py
