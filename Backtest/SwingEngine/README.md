@@ -82,3 +82,13 @@ trade counts.
 
 A candle is available to a decision only when its close time has passed:
 `candle_open_timestamp + timeframe_duration <= decision_timestamp`.
+
+
+## Live progress reporting
+
+During each scenario, the runner prints progress approximately every 5%,
+including processed timeline events, the active UTC month and its event
+progress, elapsed time, and estimated remaining time. After each of the nine
+risk/RR scenarios it prints per-symbol signal counts, closed trades, and open
+positions. These are observational messages only and do not alter the
+backtest calculations.
