@@ -46,3 +46,6 @@ jobs:
 
       - name: Test integrated trading system
         run: python Backtest/SwingEngine/test_trading_system.py
+
+      - name: Test OKX contract specifications
+        run: python Backtest/SwingEngine/test_okx_contract_specs.py
