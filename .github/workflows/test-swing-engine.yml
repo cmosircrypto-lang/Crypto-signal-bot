@@ -43,3 +43,6 @@ jobs:
 
       - name: Test portfolio engine
         run: python Backtest/SwingEngine/test_portfolio_engine.py
+
+      - name: Test integrated trading system
+        run: python Backtest/SwingEngine/test_trading_system.py
