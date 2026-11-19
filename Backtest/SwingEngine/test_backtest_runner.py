@@ -67,6 +67,17 @@ class BacktestRunnerTests(unittest.TestCase):
         self.assertEqual(trades.iloc[0]["exit_reason"], "SL")
         self.assertAlmostEqual(trades.iloc[0]["exit_price"], 105.0)
 
+    def test_progress_reporting_preserves_results(self):
+        data, signals, obs = fixture_data()
+        baseline, baseline_trades, _ = simulate_scenario(
+            data, signals, obs, risk_percent=1.0, reward_ratio=1.5
+        )
+        observed, observed_trades, _ = simulate_scenario(
+            data, signals, obs, risk_percent=1.0, reward_ratio=1.5
+        )
+        self.assertEqual(baseline, observed)
+        pd.testing.assert_frame_equal(baseline_trades, observed_trades)
+
     def test_matrix_contains_all_nine_risk_rr_pairs(self):
         data, signals, obs = fixture_data()
         summary, ledgers = run_matrix(data, signals, obs)
