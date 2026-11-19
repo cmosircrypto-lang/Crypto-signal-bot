@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Mapping
 
@@ -163,9 +165,22 @@ def simulate_scenario(symbol_data, signals_by_symbol, order_blocks_by_symbol,
     skipped = {"portfolio_limit": 0, "invalid_stop_or_target": 0,
                "position_size_or_contract": 0, "missing_ob": 0}
     closed_records = []
+    started = time.monotonic()
+    month_labels = [
+        datetime.fromtimestamp(ts / 1000, tz=timezone.utc).strftime("%Y-%m")
+        for ts in all_times
+    ]
+    month_totals = {}
+    for label in month_labels:
+        month_totals[label] = month_totals.get(label, 0) + 1
+    month_done = {}
+    report_every = max(1, len(all_times) // 20)
+    last_reported = 0
 
-    for timestamp in all_times:
+    for event_index, timestamp in enumerate(all_times, start=1):
         current_candles = candles_at_time.get(timestamp, {})
+        month = month_labels[event_index - 1]
+        month_done[month] = month_done.get(month, 0) + 1
 
         # Exits first. This releases capacity before same-close entries.
         for symbol in sorted(list(system.execution.open_positions)):
@@ -232,6 +247,19 @@ def simulate_scenario(symbol_data, signals_by_symbol, order_blocks_by_symbol,
                 # do not silently enlarge risk to force a fill.
                 skipped["position_size_or_contract"] += 1
 
+        percent = int(event_index * 100 / len(all_times)) if all_times else 100
+        if percent >= last_reported + 5 or event_index == len(all_times):
+            last_reported = percent
+            elapsed = time.monotonic() - started
+            rate = event_index / elapsed if elapsed > 0 else 0
+            eta = (len(all_times) - event_index) / rate if rate > 0 else 0
+            print(
+                f"[PROGRESS] {percent:3d}% | {event_index}/{len(all_times)} events "
+                f"| month {month}: {month_done[month]}/{month_totals[month]} "
+                f"| elapsed {elapsed / 60:.1f}m | ETA {eta / 60:.1f}m",
+                flush=True,
+            )
+
     summary = _equity_metrics(closed_records, initial_capital)
     summary.update({
         "risk_percent": float(risk_percent),
@@ -251,7 +279,7 @@ def run_matrix(symbol_data, signals_by_symbol, order_blocks_by_symbol,
     trade_frames = {}
     for risk in RISK_LEVELS:
         for rr in REWARD_RATIOS:
-            summary, trades, _ = simulate_scenario(
+            summary, trades, system = simulate_scenario(
                 symbol_data,
                 signals_by_symbol,
                 order_blocks_by_symbol,
@@ -262,6 +290,20 @@ def run_matrix(symbol_data, signals_by_symbol, order_blocks_by_symbol,
             )
             summaries.append(summary)
             trade_frames[f"risk_{risk:g}_rr_{rr:g}"] = trades
+            print(
+                f"[SCENARIO COMPLETE] risk={risk:g}% RR={rr:g} "
+                f"| closed={len(trades)} | open={len(system.execution.open_positions)}",
+                flush=True,
+            )
+            for symbol in sorted(symbol_data):
+                closed = int((trades["symbol"] == symbol).sum()) if not trades.empty else 0
+                opened = int(symbol in system.execution.open_positions)
+                signal_count = len(signals_by_symbol.get(symbol, []))
+                print(
+                    f"[SYMBOL] {symbol}: signals={signal_count}, "
+                    f"closed={closed}, open={opened}",
+                    flush=True,
+                )
     return pd.DataFrame(summaries), trade_frames
 
 
