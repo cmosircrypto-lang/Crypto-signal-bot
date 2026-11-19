@@ -369,6 +369,7 @@ def generate_entry_signals(
         inside = False
         touch_number = 0
         triggered_methods = set()
+        pending_structure_touch = None
 
         for i in range(len(candles)):
 
@@ -389,109 +390,179 @@ def generate_entry_signals(
                 zone_high,
             )
 
+            is_new_touch = False
+
             if not overlaps:
                 inside = False
-                continue
+            elif not inside:
+                inside = True
+                touch_number += 1
+                is_new_touch = True
 
-            if inside:
-                continue
-
-            inside = True
-            touch_number += 1
-
-            if touch_rule == "first" and touch_number > 1:
-                continue
-
-            if touch_rule == "max_two" and touch_number > 2:
-                continue
-
-            touch_score = decay_per_touch ** (
-                touch_number - 1
+            # Direct/reversal entries are evaluated on a new,
+            # eligible OB touch. Structure-break entries are armed
+            # by that touch and may confirm on a later closed candle.
+            eligible_touch = (
+                is_new_touch
+                and not (
+                    touch_rule == "first"
+                    and touch_number > 1
+                )
+                and not (
+                    touch_rule == "max_two"
+                    and touch_number > 2
+                )
             )
 
-            htf_trend = "NOT_USED"
-
-            if require_4h_alignment:
-                htf_trend = _get_htf_trend(
-                    candles_4h,
-                    decision_time,
-                    structure_4h,
+            if eligible_touch:
+                touch_score = decay_per_touch ** (
+                    touch_number - 1
                 )
 
-                if not _direction_matches_trend(
-                    direction,
-                    htf_trend,
+                if (
+                    "M15_STRUCTURE_BREAK" in methods
+                    and pending_structure_touch is None
+                    and "M15_STRUCTURE_BREAK"
+                    not in triggered_methods
                 ):
-                    continue
+                    pending_structure_touch = {
+                        "index": i,
+                        "touch_number": touch_number,
+                        "touch_score": float(touch_score),
+                    }
 
-            confirmations = {}
+                touch_htf_trend = "NOT_USED"
 
-            if "DIRECT" in methods:
-                confirmations["DIRECT"] = True
-
-            if i > 0 and "ENGULFING" in methods:
-                previous = candles.iloc[i - 1]
-
-                if direction == "BUY":
-                    confirmations["ENGULFING"] = (
-                        is_bullish_engulfing(
-                            previous,
-                            candle,
-                        )
-                    )
-                else:
-                    confirmations["ENGULFING"] = (
-                        is_bearish_engulfing(
-                            previous,
-                            candle,
-                        )
+                if require_4h_alignment:
+                    touch_htf_trend = _get_htf_trend(
+                        candles_4h,
+                        decision_time,
+                        structure_4h,
                     )
 
-            if "PIN_BAR" in methods:
-                if direction == "BUY":
-                    confirmations["PIN_BAR"] = (
-                        is_bullish_pin_bar(candle)
+                touch_alignment_ok = (
+                    not require_4h_alignment
+                    or _direction_matches_trend(
+                        direction,
+                        touch_htf_trend,
                     )
-                else:
-                    confirmations["PIN_BAR"] = (
-                        is_bearish_pin_bar(candle)
-                    )
+                )
 
-            if "M15_STRUCTURE_BREAK" in methods:
+                if touch_alignment_ok:
+                    confirmations = {}
+
+                    if "DIRECT" in methods:
+                        confirmations["DIRECT"] = True
+
+                    if i > 0 and "ENGULFING" in methods:
+                        previous = candles.iloc[i - 1]
+
+                        if direction == "BUY":
+                            confirmations["ENGULFING"] = (
+                                is_bullish_engulfing(
+                                    previous,
+                                    candle,
+                                )
+                            )
+                        else:
+                            confirmations["ENGULFING"] = (
+                                is_bearish_engulfing(
+                                    previous,
+                                    candle,
+                                )
+                            )
+
+                    if "PIN_BAR" in methods:
+                        if direction == "BUY":
+                            confirmations["PIN_BAR"] = (
+                                is_bullish_pin_bar(candle)
+                            )
+                        else:
+                            confirmations["PIN_BAR"] = (
+                                is_bearish_pin_bar(candle)
+                            )
+
+                    for method in methods:
+                        if method == "M15_STRUCTURE_BREAK":
+                            continue
+
+                        if method in triggered_methods:
+                            continue
+
+                        if not confirmations.get(method, False):
+                            continue
+
+                        triggered_methods.add(method)
+
+                        results.append({
+                            "symbol": symbol,
+                            "method": method,
+                            "direction": direction,
+                            "ob_id": ob_id,
+                            "ob_ts": ob.get("ob_ts", None),
+                            "bos_ts": ob["bos_ts"],
+                            "touch_number": touch_number,
+                            "touch_score": float(touch_score),
+                            "signal_index": i,
+                            "signal_ts": decision_time,
+                            "entry_price": float(candle["close"]),
+                            "htf_trend": touch_htf_trend,
+                            "confirmation": method,
+                        })
+
+            # A structure break on the touch candle itself is not
+            # accepted. Wait for a later fully closed 15m candle.
+            if (
+                pending_structure_touch is not None
+                and "M15_STRUCTURE_BREAK" in methods
+                and "M15_STRUCTURE_BREAK" not in triggered_methods
+                and i > pending_structure_touch["index"]
+            ):
                 event = structure_15m.loc[
                     i,
                     "structure_event",
                 ]
 
-                confirmations["M15_STRUCTURE_BREAK"] = (
-                    event in expected_event
-                )
+                if event in expected_event:
+                    signal_htf_trend = "NOT_USED"
 
-            for method in methods:
+                    if require_4h_alignment:
+                        signal_htf_trend = _get_htf_trend(
+                            candles_4h,
+                            decision_time,
+                            structure_4h,
+                        )
 
-                if method in triggered_methods:
-                    continue
+                    if (
+                        not require_4h_alignment
+                        or _direction_matches_trend(
+                            direction,
+                            signal_htf_trend,
+                        )
+                    ):
+                        triggered_methods.add(
+                            "M15_STRUCTURE_BREAK"
+                        )
 
-                if not confirmations.get(method, False):
-                    continue
-
-                triggered_methods.add(method)
-
-                results.append({
-                    "symbol": symbol,
-                    "method": method,
-                    "direction": direction,
-                    "ob_id": ob_id,
-                    "ob_ts": ob.get("ob_ts", None),
-                    "bos_ts": ob["bos_ts"],
-                    "touch_number": touch_number,
-                    "touch_score": float(touch_score),
-                    "signal_index": i,
-                    "signal_ts": decision_time,
-                    "entry_price": float(candle["close"]),
-                    "htf_trend": htf_trend,
-                    "confirmation": method,
-                })
+                        results.append({
+                            "symbol": symbol,
+                            "method": "M15_STRUCTURE_BREAK",
+                            "direction": direction,
+                            "ob_id": ob_id,
+                            "ob_ts": ob.get("ob_ts", None),
+                            "bos_ts": ob["bos_ts"],
+                            "touch_number": pending_structure_touch[
+                                "touch_number"
+                            ],
+                            "touch_score": pending_structure_touch[
+                                "touch_score"
+                            ],
+                            "signal_index": i,
+                            "signal_ts": decision_time,
+                            "entry_price": float(candle["close"]),
+                            "htf_trend": signal_htf_trend,
+                            "confirmation": "M15_STRUCTURE_BREAK",
+                        })
 
             if len(triggered_methods) == len(methods):
                 break
