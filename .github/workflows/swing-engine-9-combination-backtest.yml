@@ -1,0 +1,88 @@
+name: Swing Engine 9-Combination Backtest
+
+on:
+  workflow_dispatch:
+    inputs:
+      legacy_sizing:
+        description: "Use theoretical base-quantity sizing instead of OKX contract lot/minimum rules"
+        required: true
+        type: boolean
+        default: false
+      require_4h_alignment:
+        description: "Require 4h trend alignment for entries"
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  backtest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+
+    steps:
+      - name: Checkout selected branch
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install numpy pandas
+
+      - name: Download validated OKX datasets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download okx-data --repo "${GITHUB_REPOSITORY}" \
+            --pattern "okx_data.tar" --dir /tmp
+          gh release download okx-data --repo "${GITHUB_REPOSITORY}" \
+            --pattern "okx_timeframes.tar" --dir /tmp
+          mkdir -p Backtest/data/okx
+          tar -xf /tmp/okx_data.tar -C Backtest/data/okx
+          tar -xf /tmp/okx_timeframes.tar -C Backtest/data/okx
+          for timeframe in 15m 1h 4h; do
+            count=$(find "Backtest/data/okx/$timeframe" -maxdepth 1 -name '*.csv.gz' | wc -l)
+            echo "$timeframe: $count symbol files"
+            test "$count" -eq 76
+          done
+
+      - name: Run nine-combination backtest
+        run: |
+          EXTRA=""
+          if [ "${{ inputs.legacy_sizing }}" = "true" ]; then
+            EXTRA="$EXTRA --legacy-sizing"
+          fi
+          if [ "${{ inputs.require_4h_alignment }}" = "true" ]; then
+            EXTRA="$EXTRA --require-4h-alignment"
+          fi
+          python -u Backtest/SwingEngine/backtest_runner.py $EXTRA | tee /tmp/swing-backtest.log
+
+      - name: Add summary to workflow
+        if: always()
+        run: |
+          if [ -f /tmp/swing-backtest.log ]; then
+            {
+              echo "## Swing Engine — 9 combinations"
+              echo '\`\`\`text'
+              tail -n 80 /tmp/swing-backtest.log
+              echo '\`\`\`'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload backtest results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: swing-engine-9-combination-results
+          path: |
+            Backtest/results/swing_engine/
+            /tmp/swing-backtest.log
+          if-no-files-found: warn
+          retention-days: 30
