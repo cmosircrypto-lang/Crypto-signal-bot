@@ -1,0 +1,193 @@
+
+name: Build OKX 1H and 4H Dataset
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install pandas tabulate
+
+      - name: Download validated 15m dataset
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download okx-data \
+            --repo "${GITHUB_REPOSITORY}" \
+            --pattern "okx_data.tar" \
+            --dir /tmp
+
+          mkdir -p Backtest/data/okx
+          tar -xf /tmp/okx_data.tar -C Backtest/data/okx
+
+      - name: Build 1H and 4H candles
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import pandas as pd
+
+          BASE = Path("Backtest/data/okx")
+          SOURCE = BASE / "15m"
+          COLUMNS = ["ts", "open", "high", "low", "close", "volume"]
+          BAR_MS = 900000
+          TIMEFRAMES = {"1h": 4, "4h": 16}
+
+          files = sorted(SOURCE.glob("*.csv.gz"))
+          if not files:
+              raise SystemExit("No 15m dataset found")
+
+          results = []
+          errors = []
+
+          for path in files:
+              try:
+                  df = pd.read_csv(path, compression="gzip")
+
+                  if any(c not in df.columns for c in COLUMNS):
+                      raise ValueError("Missing required columns")
+
+                  df = df[COLUMNS].copy()
+
+                  for c in COLUMNS:
+                      df[c] = pd.to_numeric(df[c], errors="coerce")
+
+                  if df.isna().any().any():
+                      raise ValueError("Null or invalid source values")
+
+                  if (df["ts"] % BAR_MS != 0).any():
+                      raise ValueError("15m timestamp misalignment")
+
+                  if df["ts"].duplicated().any():
+                      raise ValueError("Duplicate 15m timestamps")
+
+                  df = df.sort_values("ts").reset_index(drop=True)
+
+                  for tf, factor in TIMEFRAMES.items():
+                      target_ms = factor * BAR_MS
+                      df["group"] = (df["ts"] // target_ms) * target_ms
+
+                      output = []
+                      dropped = 0
+
+                      for group_ts, g in df.groupby("group", sort=True):
+                          actual = g["ts"].astype("int64").tolist()
+                          expected = [
+                              int(group_ts) + i * BAR_MS
+                              for i in range(factor)
+                          ]
+
+                          if len(actual) != factor or actual != expected:
+                              dropped += 1
+                              continue
+
+                          output.append({
+                              "ts": int(group_ts),
+                              "open": float(g["open"].iloc[0]),
+                              "high": float(g["high"].max()),
+                              "low": float(g["low"].min()),
+                              "close": float(g["close"].iloc[-1]),
+                              "volume": float(g["volume"].sum()),
+                          })
+
+                      out = pd.DataFrame(output, columns=COLUMNS)
+
+                      if not out.empty:
+                          if out["ts"].duplicated().any():
+                              raise ValueError(f"Duplicate {tf} timestamps")
+
+                          if (out["ts"] % target_ms != 0).any():
+                              raise ValueError(f"Misaligned {tf} timestamps")
+
+                      destination = BASE / tf
+                      destination.mkdir(parents=True, exist_ok=True)
+
+                      out_path = destination / path.name
+                      out.to_csv(
+                          out_path,
+                          index=False,
+                          compression="gzip"
+                      )
+
+                      results.append({
+                          "symbol": path.stem.replace(".csv", ""),
+                          "timeframe": tf,
+                          "source_15m": len(df),
+                          "output_candles": len(out),
+                          "dropped_incomplete_groups": dropped,
+                          "status": "OK"
+                      })
+
+              except Exception as exc:
+                  errors.append(f"{path.name}: {exc}")
+                  results.append({
+                      "symbol": path.name,
+                      "status": "ERROR",
+                      "error": str(exc)
+                  })
+
+          report = pd.DataFrame(results)
+          Path("reports").mkdir(exist_ok=True)
+
+          report.to_csv(
+              "reports/okx_timeframe_report.csv",
+              index=False
+          )
+
+          report.to_markdown(
+              "reports/okx_timeframe_report.md",
+              index=False
+          )
+
+          print(report.to_string(index=False))
+
+          for tf in TIMEFRAMES:
+              subset = report[report["timeframe"] == tf]
+              ok = int((subset["status"] == "OK").sum())
+              print(f"{tf}: {ok} OK / {len(subset)-ok} ERROR")
+
+          if errors:
+              raise SystemExit("\n".join(errors))
+
+          if len(report) != len(files) * 2:
+              raise SystemExit("Unexpected output report row count")
+
+          print("1H and 4H datasets built successfully")
+          PY
+
+      - name: Package derived datasets
+        run: |
+          tar -cf /tmp/okx_timeframes.tar \
+            -C Backtest/data/okx 1h 4h
+
+          sha256sum /tmp/okx_timeframes.tar
+
+      - name: Save derived dataset to OKX release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload okx-data \
+            /tmp/okx_timeframes.tar \
+            --repo "${GITHUB_REPOSITORY}" \
+            --clobber
+
+      - name: Upload build report
+        uses: actions/upload-artifact@v4
+        with:
+          name: okx-timeframe-build-report
+          path: reports/
+          retention-days: 30
