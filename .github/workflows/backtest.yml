@@ -27,6 +27,10 @@ on:
         description: "تغییر پارامترها (اختیاری)، مثل: RECOVERY_ENABLED=0 RISK_PERCENT=1"
         required: false
         default: ""
+      top_liquid:
+        description: "فقط N نماد پرنقدینگی (بر اساس ۳۰ روز قبل از شروع)، مثل 10. خالی = همه"
+        required: false
+        default: ""
       bots:
         description: "فقط این ربات‌ها (اختیاری، با فاصله)، مثل: crypto-signal-bot-v70a"
         required: false
@@ -97,15 +101,17 @@ jobs:
         env:
           OVERRIDES: ${{ inputs.overrides }}
           BOTS: ${{ inputs.bots }}
+          TOP_LIQUID: ${{ inputs.top_liquid }}
         run: |
           EXTRA=""
           [ -n "$OVERRIDES" ] && EXTRA="$EXTRA --set $OVERRIDES"
           [ -n "$BOTS" ] && EXTRA="$EXTRA --bots $BOTS"
+          [ -n "$TOP_LIQUID" ] && EXTRA="$EXTRA --top-liquid $TOP_LIQUID"
           python -u backtest_bots.py --exchange "$EXCHANGE" --data-dir "data/$EXCHANGE" \
             --days "${{ inputs.days }}" --end "${{ inputs.end_date }}" \
             --step-minutes "${{ inputs.step_minutes }}" $EXTRA | tee report_full.txt
           sed -n '/نتایج بک‌تست/,$p' report_full.txt > report.txt
-          { echo "exchange: $EXCHANGE | overrides: ${OVERRIDES:-none} | bots: ${BOTS:-all}"; echo '```'; cat report.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          { echo "exchange: $EXCHANGE | overrides: ${OVERRIDES:-none} | bots: ${BOTS:-all} | top_liquid: ${TOP_LIQUID:-all}"; echo '```'; cat report.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload results
         if: always()
