@@ -277,8 +277,10 @@ def test_mocked_api_loading():
             self.close()
             return False
 
-    def fake_urlopen(url, timeout):
-        assert "instType=SWAP" in url
+    def fake_urlopen(request, timeout):
+        assert "instType=SWAP" in request.full_url
+        assert request.get_header("User-agent") == "SwingEngineBacktest/1.0"
+        assert request.get_header("Accept") == "application/json"
         assert timeout == 20
 
         return FakeResponse(
