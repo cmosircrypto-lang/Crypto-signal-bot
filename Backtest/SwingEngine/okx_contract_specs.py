@@ -257,22 +257,31 @@ class OKXContractSpecs:
         if item.get("state") != "live":
             return None
 
-        base_ccy = item.get("baseCcy", "")
+        # OKX documents baseCcy/quoteCcy for SPOT and MARGIN;
+        # these fields may be empty for SWAP instruments. Derive the
+        # currencies from the canonical instrument ID instead.
+        parts = inst_id.split("-")
+        if len(parts) != 3 or parts[1] != "USDT" or parts[2] != "SWAP":
+            return None
 
-        if item.get("ctValCcy") != base_ccy:
+        base_ccy = parts[0]
+        quote_ccy = parts[1]
+        contract_value_currency = item.get("ctValCcy", "")
+
+        if not base_ccy or contract_value_currency != base_ccy:
             return None
 
         return ContractSpec(
             inst_id=inst_id,
             base_ccy=base_ccy,
-            quote_ccy=item.get("quoteCcy", "USDT"),
+            quote_ccy=quote_ccy,
             settle_ccy=item["settleCcy"],
             contract_type=item["ctType"],
             contract_value=to_decimal(
                 item["ctVal"],
                 "ctVal"
             ),
-            contract_value_currency=item["ctValCcy"],
+            contract_value_currency=contract_value_currency,
             lot_size=to_decimal(
                 item["lotSz"],
                 "lotSz"
