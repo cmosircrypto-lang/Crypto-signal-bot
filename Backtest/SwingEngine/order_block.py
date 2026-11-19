@@ -171,6 +171,7 @@ def detect_order_blocks(
             data,
             left=5,
             right=5,
+            progress_callback=progress_callback,
         )
     else:
         structure = structure.reset_index(drop=True)
