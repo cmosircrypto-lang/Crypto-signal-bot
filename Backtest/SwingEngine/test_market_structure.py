@@ -114,12 +114,15 @@ def test_no_lookahead():
             "structure_event",
             "structure_trend",
         ]
-
-        pd.testing.assert_frame_equal(
-            full.loc[:end, columns].reset_index(drop=True),
-            prefix[columns].reset_index(drop=True),
-            check_dtype=False,
-        )
+        expected = full.loc[:end, columns].reset_index(drop=True)
+        actual = prefix[columns].reset_index(drop=True)
+       pd.testing.assert_frame_equal(
+           expected,
+           actual,
+           check_dtype=False,
+           check_exact=True,
+           check_names=True,
+       )
 
     print("PASS: no-lookahead prefix consistency")
 
