@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, asdict
+from decimal import Decimal
 from typing import Optional
 import math
 
@@ -21,6 +22,7 @@ class Position:
     risk_amount: float
     opened_at: int
     status: str = "OPEN"
+    contract_count: Optional[float] = None
 
 
 @dataclass
@@ -36,19 +38,23 @@ class TradeResult:
     exit_reason: str
     opened_at: int
     closed_at: int
+    contract_count: Optional[float] = None
 
 
 class ExecutionEngine:
     """
     Simulation-only execution engine.
 
-    Rules:
-    - Initial capital: $100
-    - Risk based on current equity.
-    - No leverage-based risk inflation.
-    - Fees and slippage are zero for the initial tests.
-    - If SL and TP are both touched in one candle,
-      SL is assumed to execute first.
+    Supports:
+    - Legacy base-quantity sizing when contract_specs is None.
+    - OKX linear USDT SWAP contract sizing when specs are provided.
+    - Risk calculated from current equity.
+    - Contract quantities rounded down to lotSz.
+    - Orders below minSz rejected.
+    - PnL calculated using the actual base-asset quantity.
+    - SL has priority when SL and TP are touched in one candle.
+
+    No real orders are submitted.
     """
 
     def __init__(
@@ -56,9 +62,15 @@ class ExecutionEngine:
         initial_capital: float = INITIAL_CAPITAL,
         fee_rate: float = 0.0,
         slippage_rate: float = 0.0,
+        contract_specs=None,
     ):
-        if not math.isfinite(initial_capital) or initial_capital <= 0:
-            raise ValueError("Initial capital must be positive")
+        if (
+            not math.isfinite(initial_capital)
+            or initial_capital <= 0
+        ):
+            raise ValueError(
+                "Initial capital must be positive"
+            )
 
         if not 0 <= fee_rate < 1:
             raise ValueError("Invalid fee rate")
@@ -71,6 +83,21 @@ class ExecutionEngine:
         self.fee_rate = float(fee_rate)
         self.slippage_rate = float(slippage_rate)
 
+        if contract_specs is None:
+            self.contract_specs = None
+
+        elif hasattr(contract_specs, "get_all"):
+            self.contract_specs = contract_specs.get_all()
+
+        elif isinstance(contract_specs, dict):
+            self.contract_specs = dict(contract_specs)
+
+        else:
+            raise TypeError(
+                "contract_specs must be a dictionary "
+                "or an OKXContractSpecs instance"
+            )
+
         self.open_positions: dict[str, Position] = {}
         self.closed_trades: list[TradeResult] = []
 
@@ -80,24 +107,142 @@ class ExecutionEngine:
         stop_loss: float,
         risk_percent: float,
     ) -> tuple[float, float]:
-        if not math.isfinite(entry_price) or entry_price <= 0:
+
+        if (
+            not math.isfinite(entry_price)
+            or entry_price <= 0
+        ):
             raise ValueError("Invalid entry price")
 
-        if not math.isfinite(stop_loss) or stop_loss <= 0:
+        if (
+            not math.isfinite(stop_loss)
+            or stop_loss <= 0
+        ):
             raise ValueError("Invalid stop loss")
 
-        if not 0 < risk_percent <= 100:
+        if (
+            not math.isfinite(risk_percent)
+            or not 0 < risk_percent <= 100
+        ):
             raise ValueError("Invalid risk percentage")
 
         distance = abs(entry_price - stop_loss)
 
         if distance <= 0:
-            raise ValueError("Entry and stop loss cannot be equal")
+            raise ValueError(
+                "Entry and stop loss cannot be equal"
+            )
 
-        risk_amount = self.equity * risk_percent / 100
+        risk_amount = (
+            self.equity * risk_percent / 100
+        )
+
         quantity = risk_amount / distance
 
         return quantity, risk_amount
+
+    def calculate_contract_position_size(
+        self,
+        symbol: str,
+        entry_price: float,
+        stop_loss: float,
+        risk_percent: float,
+    ) -> tuple[float, float, float]:
+        """
+        Returns:
+            contract_count,
+            base_quantity,
+            actual_risk_amount
+
+        Contract count is rounded down according to lotSz.
+        A size below minSz is rejected.
+        """
+
+        if self.contract_specs is None:
+            raise RuntimeError(
+                "Contract specifications are not configured"
+            )
+
+        if symbol not in self.contract_specs:
+            raise KeyError(
+                f"Contract specification not found: {symbol}"
+            )
+
+        if (
+            not math.isfinite(entry_price)
+            or entry_price <= 0
+        ):
+            raise ValueError("Invalid entry price")
+
+        if (
+            not math.isfinite(stop_loss)
+            or stop_loss <= 0
+        ):
+            raise ValueError("Invalid stop loss")
+
+        if (
+            not math.isfinite(risk_percent)
+            or not 0 < risk_percent <= 100
+        ):
+            raise ValueError("Invalid risk percentage")
+
+        distance = abs(entry_price - stop_loss)
+
+        if distance <= 0:
+            raise ValueError(
+                "Entry and stop loss cannot be equal"
+            )
+
+        risk_amount = (
+            self.equity * risk_percent / 100
+        )
+
+        spec = self.contract_specs[symbol]
+
+        contracts = spec.contracts_for_risk(
+            entry_price=entry_price,
+            stop_loss=stop_loss,
+            risk_amount=risk_amount,
+        )
+
+        if contracts <= 0:
+            raise ValueError(
+                "Calculated contract size is below minSz"
+            )
+
+        base_quantity = spec.contracts_to_base_quantity(
+            contracts
+        )
+
+        actual_risk = (
+            Decimal(str(distance)) * base_quantity
+        )
+
+        contract_count = float(contracts)
+        quantity = float(base_quantity)
+        actual_risk_amount = float(actual_risk)
+
+        if (
+            not math.isfinite(contract_count)
+            or not math.isfinite(quantity)
+            or not math.isfinite(actual_risk_amount)
+            or contract_count <= 0
+            or quantity <= 0
+        ):
+            raise ValueError(
+                "Invalid calculated contract position size"
+            )
+
+        if actual_risk > Decimal(str(risk_amount)):
+            raise ValueError(
+                "Calculated risk exceeds requested risk"
+            )
+
+        return (
+            contract_count,
+            quantity,
+            actual_risk_amount,
+        )
 
     def open_trade(
         self,
@@ -109,29 +254,76 @@ class ExecutionEngine:
         risk_percent: float,
         timestamp: int,
     ) -> Position:
+
+        if not isinstance(symbol, str) or not symbol.strip():
+            raise ValueError("Invalid symbol")
+
+        symbol = symbol.strip().upper()
+
         if symbol in self.open_positions:
-            raise ValueError("Symbol already has an open position")
+            raise ValueError(
+                "Symbol already has an open position"
+            )
+
+        if not isinstance(direction, str):
+            raise ValueError("Invalid direction")
+
+        direction = direction.strip().upper()
 
         if direction not in ("BUY", "SELL"):
-            raise ValueError("Direction must be BUY or SELL")
+            raise ValueError(
+                "Direction must be BUY or SELL"
+            )
 
-        prices = (entry_price, stop_loss, take_profit)
+        prices = (
+            entry_price,
+            stop_loss,
+            take_profit,
+        )
 
-        if not all(math.isfinite(p) and p > 0 for p in prices):
-            raise ValueError("Prices must be finite and positive")
+        if not all(
+            isinstance(price, (int, float))
+            and math.isfinite(price)
+            and price > 0
+            for price in prices
+        ):
+            raise ValueError(
+                "Prices must be finite and positive"
+            )
 
         if direction == "BUY":
             if not stop_loss < entry_price < take_profit:
-                raise ValueError("Invalid BUY price structure")
+                raise ValueError(
+                    "Invalid BUY price structure"
+                )
         else:
             if not take_profit < entry_price < stop_loss:
-                raise ValueError("Invalid SELL price structure")
+                raise ValueError(
+                    "Invalid SELL price structure"
+                )
 
-        quantity, risk_amount = self.calculate_position_size(
-            entry_price,
-            stop_loss,
-            risk_percent,
-        )
+        contract_count = None
+
+        if self.contract_specs is not None:
+            (
+                contract_count,
+                quantity,
+                risk_amount,
+            ) = self.calculate_contract_position_size(
+                symbol=symbol,
+                entry_price=entry_price,
+                stop_loss=stop_loss,
+                risk_percent=risk_percent,
+            )
+
+        else:
+            quantity, risk_amount = (
+                self.calculate_position_size(
+                    entry_price,
+                    stop_loss,
+                    risk_percent,
+                )
+            )
 
         position = Position(
             symbol=symbol,
@@ -143,9 +335,11 @@ class ExecutionEngine:
             risk_percent=float(risk_percent),
             risk_amount=risk_amount,
             opened_at=int(timestamp),
+            contract_count=contract_count,
         )
 
         self.open_positions[symbol] = position
+
         return position
 
     def check_exit(
@@ -154,6 +348,7 @@ class ExecutionEngine:
         candle: dict,
         timestamp: int,
     ) -> Optional[TradeResult]:
+
         if symbol not in self.open_positions:
             return None
 
@@ -162,15 +357,25 @@ class ExecutionEngine:
         high = float(candle["high"])
         low = float(candle["low"])
 
-        if not math.isfinite(high) or not math.isfinite(low):
-            raise ValueError("Invalid candle prices")
+        if (
+            not math.isfinite(high)
+            or not math.isfinite(low)
+            or high <= 0
+            or low <= 0
+        ):
+            raise ValueError(
+                "Invalid candle prices"
+            )
 
         if high < low:
-            raise ValueError("Candle high cannot be below low")
+            raise ValueError(
+                "Candle high cannot be below low"
+            )
 
         if position.direction == "BUY":
             sl_hit = low <= position.stop_loss
             tp_hit = high >= position.take_profit
+
         else:
             sl_hit = high >= position.stop_loss
             tp_hit = low <= position.take_profit
@@ -200,12 +405,18 @@ class ExecutionEngine:
         timestamp: int,
         exit_reason: str,
     ) -> TradeResult:
+
         if symbol not in self.open_positions:
-            raise ValueError("No open position for symbol")
+            raise ValueError(
+                "No open position for symbol"
+            )
 
         position = self.open_positions[symbol]
 
-        if not math.isfinite(exit_price) or exit_price <= 0:
+        if (
+            not math.isfinite(exit_price)
+            or exit_price <= 0
+        ):
             raise ValueError("Invalid exit price")
 
         if exit_reason not in ("SL", "TP", "MANUAL"):
@@ -215,6 +426,7 @@ class ExecutionEngine:
             raw_pnl = (
                 exit_price - position.entry_price
             ) * position.quantity
+
         else:
             raw_pnl = (
                 position.entry_price - exit_price
@@ -250,12 +462,15 @@ class ExecutionEngine:
             quantity=position.quantity,
             risk_percent=position.risk_percent,
             pnl=pnl,
-            result="WIN" if pnl > 0 else (
-                "LOSS" if pnl < 0 else "BREAKEVEN"
+            result=(
+                "WIN" if pnl > 0
+                else "LOSS" if pnl < 0
+                else "BREAKEVEN"
             ),
             exit_reason=exit_reason,
             opened_at=position.opened_at,
             closed_at=int(timestamp),
+            contract_count=position.contract_count,
         )
 
         position.status = "CLOSED"
@@ -266,16 +481,20 @@ class ExecutionEngine:
         return result
 
     def get_summary(self) -> dict:
+
         wins = sum(
-            trade.pnl > 0 for trade in self.closed_trades
+            trade.pnl > 0
+            for trade in self.closed_trades
         )
 
         losses = sum(
-            trade.pnl < 0 for trade in self.closed_trades
+            trade.pnl < 0
+            for trade in self.closed_trades
         )
 
         total_pnl = sum(
-            trade.pnl for trade in self.closed_trades
+            trade.pnl
+            for trade in self.closed_trades
         )
 
         return {
@@ -288,7 +507,8 @@ class ExecutionEngine:
             "losses": losses,
             "win_rate": (
                 wins / len(self.closed_trades) * 100
-                if self.closed_trades else 0.0
+                if self.closed_trades
+                else 0.0
             ),
         }
 
