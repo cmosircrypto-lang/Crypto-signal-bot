@@ -1,4 +1,3 @@
-
 from decimal import Decimal
 
 from execution_engine import ExecutionEngine
@@ -389,6 +388,105 @@ def test_contract_sell_pnl():
 
 
 # --------------------------------------------------
+# Tick-size integration tests
+# --------------------------------------------------
+
+def test_buy_tick_rounding_and_risk_recalculation():
+    spec = make_spec()
+
+    engine = ExecutionEngine(
+        initial_capital=1000.05,
+        contract_specs={
+            "BTC-USDT-SWAP": spec,
+        },
+    )
+
+    position = engine.open_trade(
+        symbol="BTC-USDT-SWAP",
+        direction="BUY",
+        entry_price=50000,
+        stop_loss=49000.06,
+        take_profit=52000.04,
+        risk_percent=1,
+        timestamp=1000,
+    )
+
+    assert position.stop_loss == 49000.0
+    assert position.take_profit == 52000.1
+
+    # The rounded SL is farther away.
+    # Contract count must be recalculated using that distance.
+    assert abs(position.contract_count - 0.9) < 1e-9
+    assert abs(position.quantity - 0.009) < 1e-9
+
+    assert position.risk_amount <= 10.0005
+
+    print("PASS: BUY tick rounding recalculates position risk")
+
+
+def test_sell_tick_rounding_and_risk_recalculation():
+    spec = make_spec()
+
+    engine = ExecutionEngine(
+        initial_capital=1000.05,
+        contract_specs={
+            "BTC-USDT-SWAP": spec,
+        },
+    )
+
+    position = engine.open_trade(
+        symbol="BTC-USDT-SWAP",
+        direction="SELL",
+        entry_price=50000,
+        stop_loss=51000.04,
+        take_profit=48000.04,
+        risk_percent=1,
+        timestamp=1000,
+    )
+
+    assert position.stop_loss == 51000.1
+    assert position.take_profit == 48000.0
+
+    assert abs(position.contract_count - 0.9) < 1e-9
+    assert abs(position.quantity - 0.009) < 1e-9
+
+    assert position.risk_amount <= 10.0005
+
+    print("PASS: SELL tick rounding recalculates position risk")
+
+
+def test_tick_rounding_preserves_valid_price_structure():
+    spec = make_spec()
+
+    engine = ExecutionEngine(
+        initial_capital=100,
+        contract_specs={
+            "BTC-USDT-SWAP": spec,
+        },
+    )
+
+    try:
+        engine.open_trade(
+            symbol="BTC-USDT-SWAP",
+            direction="BUY",
+            entry_price=50000.05,
+            stop_loss=50000.04,
+            take_profit=50001,
+            risk_percent=1,
+            timestamp=1000,
+        )
+        raise AssertionError(
+            "Invalid rounded BUY structure was accepted"
+        )
+    except ValueError:
+        pass
+
+    assert "BTC-USDT-SWAP" not in engine.open_positions
+
+    print("PASS: invalid price structure after rounding rejected")
+
+
+# --------------------------------------------------
 # Test runner
 # --------------------------------------------------
 
@@ -407,6 +505,10 @@ def main():
     test_contract_pnl_uses_base_quantity()
     test_missing_contract_spec_rejected()
     test_contract_sell_pnl()
+
+    test_buy_tick_rounding_and_risk_recalculation()
+    test_sell_tick_rounding_and_risk_recalculation()
+    test_tick_rounding_preserves_valid_price_structure()
 
     print("ALL EXECUTION ENGINE TESTS PASSED")
 
