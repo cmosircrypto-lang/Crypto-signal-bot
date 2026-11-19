@@ -1,4 +1,6 @@
 import unittest
+import io
+from contextlib import redirect_stdout
 from types import SimpleNamespace
 
 import pandas as pd
@@ -72,11 +74,15 @@ class BacktestRunnerTests(unittest.TestCase):
         baseline, baseline_trades, _ = simulate_scenario(
             data, signals, obs, risk_percent=1.0, reward_ratio=1.5
         )
-        observed, observed_trades, _ = simulate_scenario(
-            data, signals, obs, risk_percent=1.0, reward_ratio=1.5
-        )
+        output = io.StringIO()
+        with redirect_stdout(output):
+            observed, observed_trades, _ = simulate_scenario(
+                data, signals, obs, risk_percent=1.0, reward_ratio=1.5
+            )
         self.assertEqual(baseline, observed)
         pd.testing.assert_frame_equal(baseline_trades, observed_trades)
+        self.assertIn("[PROGRESS]", output.getvalue())
+        self.assertIn("month 1970-01", output.getvalue())
 
     def test_matrix_contains_all_nine_risk_rr_pairs(self):
         data, signals, obs = fixture_data()
