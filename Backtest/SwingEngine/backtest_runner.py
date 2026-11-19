@@ -134,7 +134,7 @@ def _equity_metrics(trades, initial_capital):
 
 def simulate_scenario(symbol_data, signals_by_symbol, order_blocks_by_symbol,
                       risk_percent, reward_ratio, contract_specs=None,
-                      initial_capital=INITIAL_CAPITAL):
+                      initial_capital=INITIAL_CAPITAL, progress_context=None):
     """Replay all symbols on one global candle-close timeline."""
     system = TradingSystem(
         initial_capital=initial_capital,
@@ -247,14 +247,31 @@ def simulate_scenario(symbol_data, signals_by_symbol, order_blocks_by_symbol,
                 # do not silently enlarge risk to force a fill.
                 skipped["position_size_or_contract"] += 1
 
-        percent = int(event_index * 100 / len(all_times)) if all_times else 100
-        if percent >= last_reported + 5 or event_index == len(all_times):
-            last_reported = percent
+        local_percent = int(event_index * 100 / len(all_times)) if all_times else 100
+        if progress_context:
+            completed = (
+                (progress_context["scenario_index"] - 1) * len(all_times) + event_index
+            )
+            total = progress_context["total_events"]
+            percent = int(completed * 100 / total) if total else 100
+            elapsed = time.monotonic() - progress_context["started"]
+            rate = completed / elapsed if elapsed > 0 else 0
+            eta = (total - completed) / rate if rate > 0 else 0
+            scenario_text = (
+                f"scenario {progress_context['scenario_index']}/"
+                f"{progress_context['scenario_total']}"
+            )
+        else:
+            percent = local_percent
             elapsed = time.monotonic() - started
             rate = event_index / elapsed if elapsed > 0 else 0
             eta = (len(all_times) - event_index) / rate if rate > 0 else 0
+            scenario_text = "single scenario"
+        if percent >= last_reported + 5 or event_index == len(all_times):
+            last_reported = percent
             print(
-                f"[PROGRESS] {percent:3d}% | {event_index}/{len(all_times)} events "
+                f"[PROGRESS] {percent:3d}% | {scenario_text} | "
+                f"{event_index}/{len(all_times)} events "
                 f"| month {month}: {month_done[month]}/{month_totals[month]} "
                 f"| elapsed {elapsed / 60:.1f}m | ETA {eta / 60:.1f}m",
                 flush=True,
@@ -277,8 +294,15 @@ def run_matrix(symbol_data, signals_by_symbol, order_blocks_by_symbol,
                contract_specs=None, initial_capital=INITIAL_CAPITAL):
     summaries = []
     trade_frames = {}
+    scenario_total = len(RISK_LEVELS) * len(REWARD_RATIOS)
+    timeline = set()
+    for item in symbol_data.values():
+        for ts in item.frames["15m"]["ts"].tolist():
+            timeline.add(int(ts) + TIMEFRAME_MS["15m"])
+    matrix_started = time.monotonic()
     for risk in RISK_LEVELS:
         for rr in REWARD_RATIOS:
+            scenario_index = len(summaries) + 1
             summary, trades, system = simulate_scenario(
                 symbol_data,
                 signals_by_symbol,
@@ -287,6 +311,12 @@ def run_matrix(symbol_data, signals_by_symbol, order_blocks_by_symbol,
                 reward_ratio=rr,
                 contract_specs=contract_specs,
                 initial_capital=initial_capital,
+                progress_context={
+                    "scenario_index": scenario_index,
+                    "scenario_total": scenario_total,
+                    "total_events": len(timeline) * scenario_total,
+                    "started": matrix_started,
+                },
             )
             summaries.append(summary)
             trade_frames[f"risk_{risk:g}_rr_{rr:g}"] = trades
