@@ -3,6 +3,14 @@ name: Backtest
 on:
   workflow_dispatch:
     inputs:
+      exchange:
+        description: "صرافی منبع داده"
+        required: true
+        type: choice
+        options:
+          - toobit
+          - okx
+        default: toobit
       end_date:
         description: "تاریخ پایان بک‌تست (UTC، مثل 2026-11-17)"
         required: true
@@ -14,22 +22,23 @@ on:
       step_minutes:
         description: "فاصله اجرای ربات‌ها (دقیقه، مضرب ۱۵)"
         required: true
-        default: "15"
+        default: "60"
       overrides:
-        description: "تغییر پارامترها (اختیاری)، مثل: RISK_PERCENT=1 MAX_LEVERAGE=10 B1_MIN_SCORE=0.75"
+        description: "تغییر پارامترها (اختیاری)، مثل: RECOVERY_ENABLED=0 RISK_PERCENT=1"
         required: false
         default: ""
       bots:
-        description: "فقط این ربات‌ها (اختیاری، با فاصله)، مثل: crypto-signal-bot-v60 crypto-signal-bot-v60a"
+        description: "فقط این ربات‌ها (اختیاری، با فاصله)، مثل: crypto-signal-bot-v70a"
         required: false
         default: ""
 
 permissions:
-  contents: write   # برای ذخیره‌ی دائمی داده‌ی OKX در Releases
+  contents: write   # برای ذخیره‌ی دائمی داده در Releases
 
 env:
-  DATA_RELEASE: okx-data          # نام Release (و تگ) نگهدارنده‌ی داده
-  DATA_ASSET: okx_data.tar        # نام فایل داخل Release
+  EXCHANGE: ${{ inputs.exchange }}
+  DATA_RELEASE: ${{ inputs.exchange }}-data      # okx-data  یا  toobit-data
+  DATA_ASSET: ${{ inputs.exchange }}_data.tar    # okx_data.tar  یا  toobit_data.tar
 
 jobs:
   backtest:
@@ -48,37 +57,39 @@ jobs:
       - run: pip install pandas numpy requests
 
       # ۱) داده‌ی ذخیره‌شده‌ی قبلی را از Release برمی‌گرداند (اگر باشد)
-      - name: Restore OKX data from Release
+      - name: Restore data from Release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          mkdir -p data/okx
+          mkdir -p "data/$EXCHANGE"
           if gh release view "$DATA_RELEASE" --repo "${{ github.repository }}" >/dev/null 2>&1; then
             gh release download "$DATA_RELEASE" --repo "${{ github.repository }}" \
               --pattern "$DATA_ASSET" --dir /tmp --clobber || echo "asset not found"
             if [ -f "/tmp/$DATA_ASSET" ]; then
-              tar -xf "/tmp/$DATA_ASSET" -C data/okx
-              echo "Restored cached data:"; du -sh data/okx
+              tar -xf "/tmp/$DATA_ASSET" -C "data/$EXCHANGE"
+              echo "Restored cached data:"; du -sh "data/$EXCHANGE"
             fi
           else
             echo "No cached data yet — first run will download everything."
           fi
 
       # ۲) فقط بخش‌های ناقص (جدیدتر/قدیمی‌تر از داده‌ی موجود) دانلود می‌شود
-      - name: Download OKX data (فقط بخش‌های ناقص)
-        run: python download_okx_data.py --end "${{ inputs.end_date }}" --days "${{ inputs.days }}"
+      - name: Download data (فقط بخش‌های ناقص)
+        run: |
+          python -u "download_${EXCHANGE}_data.py" \
+            --end "${{ inputs.end_date }}" --days "${{ inputs.days }}" --out "data/$EXCHANGE"
 
       # ۳) بلافاصله بعد از دانلود در Release ذخیره می‌شود، حتی اگر بک‌تست خطا بدهد
-      - name: Save OKX data to Release
-        if: always() && hashFiles('Backtest/data/okx/**') != ''
+      - name: Save data to Release
+        if: always() && hashFiles('Backtest/data/**') != ''
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          tar -cf "/tmp/$DATA_ASSET" -C data/okx .
+          tar -cf "/tmp/$DATA_ASSET" -C "data/$EXCHANGE" .
           ls -lh "/tmp/$DATA_ASSET"
           gh release view "$DATA_RELEASE" --repo "${{ github.repository }}" >/dev/null 2>&1 || \
             gh release create "$DATA_RELEASE" --repo "${{ github.repository }}" \
-              --title "OKX data cache" --notes "کش داده‌ی کندل OKX برای بک‌تست. حذف نکن." \
+              --title "$EXCHANGE data cache" --notes "کش داده‌ی کندل $EXCHANGE برای بک‌تست. حذف نکن." \
               --prerelease --latest=false
           gh release upload "$DATA_RELEASE" "/tmp/$DATA_ASSET" --repo "${{ github.repository }}" --clobber
 
@@ -90,10 +101,11 @@ jobs:
           EXTRA=""
           [ -n "$OVERRIDES" ] && EXTRA="$EXTRA --set $OVERRIDES"
           [ -n "$BOTS" ] && EXTRA="$EXTRA --bots $BOTS"
-          python -u backtest_bots.py --days "${{ inputs.days }}" --end "${{ inputs.end_date }}" \
+          python -u backtest_bots.py --exchange "$EXCHANGE" --data-dir "data/$EXCHANGE" \
+            --days "${{ inputs.days }}" --end "${{ inputs.end_date }}" \
             --step-minutes "${{ inputs.step_minutes }}" $EXTRA | tee report_full.txt
           sed -n '/نتایج بک‌تست/,$p' report_full.txt > report.txt
-          { echo "overrides: ${OVERRIDES:-none} | bots: ${BOTS:-all}"; echo '```'; cat report.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          { echo "exchange: $EXCHANGE | overrides: ${OVERRIDES:-none} | bots: ${BOTS:-all}"; echo '```'; cat report.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload results
         if: always()
