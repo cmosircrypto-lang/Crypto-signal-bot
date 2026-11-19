@@ -78,33 +78,36 @@ def tb_get(session, path, params, retries=8):
 
 
 def fetch_range(session, sym, bar, start_ms, end_ms):
-    """کندل‌های کاملاً بسته‌شده با ts در [start_ms, end_ms) را از قدیم به جدید می‌گیرد."""
+    """
+    کندل‌های کاملاً بسته‌شده با ts در [start_ms, end_ms) را می‌گیرد.
+    Toobit وقتی endTime داده شود، آخرین ۱۰۰۰ کندل قبل از آن را برمی‌گرداند
+    (نه ۱۰۰۰ کندل بعد از startTime)؛ پس از جدید به قدیم صفحه‌بندی می‌کنیم.
+    """
     bar_ms = BAR_MS[bar]
-    rows, cursor = [], start_ms
+    rows, e = [], end_ms
     now_ms = int(time.time() * 1000)
-    while cursor < end_ms:
+    while e > start_ms:
         try:
             data = tb_get(session, "/quote/v1/klines",
-                          {"symbol": sym, "interval": bar, "startTime": cursor,
-                           "endTime": end_ms - 1, "limit": PAGE})
+                          {"symbol": sym, "interval": bar, "startTime": start_ms,
+                           "endTime": e - 1, "limit": PAGE})
         except NoData:
             data = []
         if not isinstance(data, list):
             raise RuntimeError(f"پاسخ نامعتبر: {str(data)[:120]}")
         if not data:
-            if rows:
-                break                       # به انتهای داده‌ی موجود رسیدیم
-            cursor += PAGE * bar_ms         # احتمالاً قبل از تاریخ لیست شدن؛ جلو می‌رویم
-            continue
+            break                           # قدیمی‌تر از این داده‌ای وجود ندارد
         data.sort(key=lambda r: int(r[0]))
         for r in data:
             ts = int(r[0])
             if start_ms <= ts < end_ms and ts + bar_ms <= now_ms:
                 rows.append((ts, float(r[1]), float(r[2]), float(r[3]), float(r[4]), float(r[5])))
-        last = int(data[-1][0])
-        if last + bar_ms <= cursor:
+        oldest = int(data[0][0])
+        if oldest >= e:
             break                           # پیشرفتی نشد
-        cursor = last + bar_ms
+        e = oldest                          # صفحه‌ی بعد: قبل از قدیمی‌ترین کندل این صفحه
+        if len(data) < PAGE and oldest <= start_ms + bar_ms:
+            break
     return rows
 
 
