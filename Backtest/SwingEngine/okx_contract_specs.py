@@ -1,5 +1,10 @@
 from dataclasses import dataclass
-from decimal import Decimal, ROUND_DOWN
+from decimal import (
+    Decimal,
+    ROUND_DOWN,
+    ROUND_FLOOR,
+    ROUND_CEILING,
+)
 from urllib.parse import urlencode
 from urllib.request import urlopen
 import json
@@ -35,6 +40,71 @@ class ContractSpec:
     min_size: Decimal
     tick_size: Decimal
     state: str
+
+    def round_price_down(self, price):
+        """
+        Rounds a positive price down to the nearest tick.
+        """
+        value = to_decimal(price, "price")
+
+        steps = (
+            value / self.tick_size
+        ).to_integral_value(
+            rounding=ROUND_FLOOR
+        )
+
+        return steps * self.tick_size
+
+    def round_price_up(self, price):
+        """
+        Rounds a positive price up to the nearest tick.
+        """
+        value = to_decimal(price, "price")
+
+        steps = (
+            value / self.tick_size
+        ).to_integral_value(
+            rounding=ROUND_CEILING
+        )
+
+        return steps * self.tick_size
+
+    def round_exit_prices(
+        self,
+        direction,
+        stop_loss,
+        take_profit,
+    ):
+        """
+        Rounds SL and TP outward so rounding does not
+        move either exit closer to the entry.
+
+        BUY:
+            SL down
+            TP up
+
+        SELL:
+            SL up
+            TP down
+        """
+
+        if not isinstance(direction, str):
+            raise ValueError("Invalid direction")
+
+        direction = direction.strip().upper()
+
+        if direction == "BUY":
+            rounded_sl = self.round_price_down(stop_loss)
+            rounded_tp = self.round_price_up(take_profit)
+
+        elif direction == "SELL":
+            rounded_sl = self.round_price_up(stop_loss)
+            rounded_tp = self.round_price_down(take_profit)
+
+        else:
+            raise ValueError("Direction must be BUY or SELL")
+
+        return rounded_sl, rounded_tp
 
     def base_quantity_to_contracts(self, base_quantity):
         quantity = to_decimal(
