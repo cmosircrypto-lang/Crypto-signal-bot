@@ -53,7 +53,7 @@ def _aggregate_trades(frame: pd.DataFrame, keys: list[str]) -> pd.DataFrame:
 
 def generate_diagnostics(input_dir: str | Path) -> list[Path]:
     root = Path(input_dir)
-    trade_files = sorted(root.glob("trades_risk_*_rr_*.csv"))
+    trade_files = sorted(set(root.glob("trades_risk_*_rr_*.csv")) | set(root.glob("trades_*_risk_*_rr_*.csv")))
     if not trade_files:
         raise FileNotFoundError(f"No trades_risk_*_rr_*.csv files found in {root}")
 
@@ -62,7 +62,7 @@ def generate_diagnostics(input_dir: str | Path) -> list[Path]:
         frame = pd.read_csv(path)
         if frame.empty:
             continue
-        frame["scenario"] = _scenario_from_path(path, "trades_risk_")
+        frame["scenario"] = _scenario_from_path(path, "trades_")
         frame["entry_month"] = pd.to_datetime(
             pd.to_numeric(frame["opened_at"], errors="coerce"),
             unit="ms", utc=True,
