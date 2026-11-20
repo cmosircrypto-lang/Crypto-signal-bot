@@ -84,6 +84,7 @@ def generate_diagnostics(input_dir: str | Path) -> list[Path]:
         "by_entry_month": ["scenario", "entry_month"],
         "by_exit_month": ["scenario", "exit_month"],
         "by_direction": ["scenario", "direction"],
+        "by_ob_direction": ["scenario", "ob_direction"],
         "by_touch_number": ["scenario", "touch_number"],
         "by_exit_reason": ["scenario", "exit_reason"],
         "by_symbol_method": ["scenario", "symbol", "method"],
