@@ -162,6 +162,8 @@ jobs:
         run: |
           gh release download okx-data --repo "${GITHUB_REPOSITORY}" \
             --pattern "okx_data.tar" --dir /tmp
+          gh release download okx-data --repo "${GITHUB_REPOSITORY}" \
+            --pattern "okx_timeframes.tar" --dir /tmp
           mkdir -p Backtest/data/okx
           tar -xf /tmp/okx_data.tar -C Backtest/data/okx
           tar -xf /tmp/okx_timeframes.tar -C Backtest/data/okx
