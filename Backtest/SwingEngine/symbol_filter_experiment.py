@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 import pandas as pd
 
-from backtest_runner import FILTER_MODES, INITIAL_CAPITAL, build_btc_trend_frames, prepare_signals, simulate_scenario
+from backtest_runner import FILTER_MODES, INITIAL_CAPITAL, ProgressMonitor, build_btc_trend_frames, prepare_signals, simulate_scenario
 from data_loader import TIMEFRAME_MS, load_okx_data
 from okx_contract_specs import OKXContractSpecs
 
@@ -98,8 +98,18 @@ def _run_one(data, signals, obs, specs, btc_frames, mode):
 def run_experiment(data_root="Backtest/data/okx", output_dir="Backtest/results/symbol_filter_experiment"):
     output = Path(output_dir)
     output.mkdir(parents=True, exist_ok=True)
-    print("[STAGE] loading and validating OKX dataset", flush=True)
-    data = load_okx_data(data_root, expected_symbols=76)
+    monitor = ProgressMonitor(interval_seconds=30)
+    monitor.start()
+    try:
+        monitor.set_stage("dataset_validation", f"loading and validating OKX dataset from {data_root}")
+
+        def load_progress(timeframe, symbol, index, total):
+            if timeframe == "4h":
+                monitor.progress("dataset_loading", index, total, f"loaded all timeframes for {symbol}")
+
+        data = load_okx_data(data_root, expected_symbols=76, progress_callback=load_progress)
+    finally:
+        monitor.stop()
 
     timeline = sorted({
         int(ts) + TIMEFRAME_MS["15m"]
@@ -114,8 +124,14 @@ def run_experiment(data_root="Backtest/data/okx", output_dir="Backtest/results/s
     specs = OKXContractSpecs()
     specs.load()
     print("[STAGE] preparing causal signals and BTC trends", flush=True)
-    signals, obs = prepare_signals(data)
-    btc_frames = build_btc_trend_frames(data)
+    monitor = ProgressMonitor(interval_seconds=30)
+    monitor.start()
+    try:
+        signals, obs = prepare_signals(data, progress_monitor=monitor)
+        monitor.set_stage("btc_trend_preparation", "building causal BTC 1d/4h/1h trend frames")
+        btc_frames = build_btc_trend_frames(data)
+    finally:
+        monitor.stop()
 
     train_data = _subset_data(data, cutoff, True)
     test_data = _subset_data(data, cutoff, False)
