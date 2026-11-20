@@ -161,15 +161,23 @@ def main() -> None:
         details[f"btc_{timeframe}_trend"] = states
         alignment_summaries.append(alignment_counts(trades, timeframe, states))
 
+    details["pass_1d_filter"] = details["btc_1d_trend"].to_numpy() == details["direction"].to_numpy()
     details["pass_4h_filter"] = details["btc_4h_trend"].to_numpy() == details["direction"].to_numpy()
     details["pass_1h_filter"] = details["btc_1h_trend"].to_numpy() == details["direction"].to_numpy()
-    details["pass_both_filters"] = details["pass_4h_filter"] & details["pass_1h_filter"]
+    details["pass_1d_4h_filter"] = details["pass_1d_filter"] & details["pass_4h_filter"]
+    details["pass_1d_1h_filter"] = details["pass_1d_filter"] & details["pass_1h_filter"]
+    details["pass_4h_1h_filter"] = details["pass_4h_filter"] & details["pass_1h_filter"]
+    details["pass_all_three_filters"] = details["pass_1d_filter"] & details["pass_4h_filter"] & details["pass_1h_filter"]
 
     filters = {
         "no_filter_baseline": np.ones(len(details), dtype=bool),
+        "1d_aligned_only": details["pass_1d_filter"].to_numpy(dtype=bool),
         "4h_aligned_only": details["pass_4h_filter"].to_numpy(dtype=bool),
         "1h_aligned_only": details["pass_1h_filter"].to_numpy(dtype=bool),
-        "both_4h_and_1h_aligned": details["pass_both_filters"].to_numpy(dtype=bool),
+        "1d_and_4h_aligned": details["pass_1d_4h_filter"].to_numpy(dtype=bool),
+        "1d_and_1h_aligned": details["pass_1d_1h_filter"].to_numpy(dtype=bool),
+        "4h_and_1h_aligned": details["pass_4h_1h_filter"].to_numpy(dtype=bool),
+        "all_1d_4h_1h_aligned": details["pass_all_three_filters"].to_numpy(dtype=bool),
     }
     performance = []
     for name, mask in filters.items():
@@ -189,7 +197,7 @@ def main() -> None:
         "",
         "Scope: executed and closed trades from the baseline scenario (risk 0.05%, RR 1.5). This is a historical post-filter of those executed trades, not a full portfolio re-simulation; removed trades are not replaced by other signals.",
         "",
-        "Trend rule at entry time, using only fully closed BTC candles: BUY when close > EMA20 > EMA50; SELL when close < EMA20 < EMA50; otherwise NEUTRAL. EMA periods are 20 and 50.",
+        "Trend rule at entry time, using only fully closed BTC candles: BUY when close > EMA20 > EMA50; SELL when close < EMA20 < EMA50; otherwise NEUTRAL. EMA periods are 20 and 50. Daily candles are built from exactly 24 complete UTC 1h candles; incomplete days are excluded.",
         "",
         "## Alignment at entry",
         "",
@@ -218,7 +226,7 @@ def main() -> None:
         "",
         "Interpretation caution: PnL and equity are calculated by summing the original realized trade PnL values in close-time order, starting from $100. The original trade sizes are retained. This isolates the effect of excluding trades but does not recalculate position sizes from a filtered equity curve, free-slot replacement entries, or overlapping-position portfolio constraints.",
         "",
-        "The detailed CSV contains every original trade, BTC trend states, and pass/fail flags for each filter. Separate CSV ledgers contain trades retained by each filter.",
+        "The requested comparisons are 1d alone, 1d+4h, 1d+1h, and all three timeframes. 4h alone, 1h alone, and 4h+1h are also retained as comparison controls. The detailed CSV contains every original trade, BTC trend states, and pass/fail flags for each filter. Separate CSV ledgers contain trades retained by each filter.",
         "Run #35 stores opened_at rather than original signal_ts; opened_at is used as the entry decision timestamp because the runner enters at the signal candle close.",
     ]
     report = "\n".join(lines) + "\n"
