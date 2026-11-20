@@ -1,4 +1,4 @@
-"""Chronological, simulation-only 9-combination Swing Engine backtest runner."""
+"""Chronological, simulation-only BTC-filtered 36-scenario Swing Engine backtest."""
 from __future__ import annotations
 
 import argparse
@@ -545,7 +545,8 @@ def run_matrix(symbol_data, signals_by_symbol, order_blocks_by_symbol,
                         "bos_ts", "signal_ts", "touch_number", "touch_score",
                         "htf_trend", "ob_direction", "ob_body_low",
                         "ob_body_high", "ob_wick_low", "ob_wick_high",
-                        "risk_percent", "reward_ratio", "skip_reason", "error",
+                        "risk_percent", "reward_ratio", "btc_1d_trend", "btc_4h_trend",
+                        "btc_1h_trend", "skip_reason", "error",
                     ],
                 )
                 diagnostics_out[f"open_{scenario_name}"] = pd.DataFrame([
@@ -640,7 +641,7 @@ def main():
             progress_monitor=monitor, diagnostics_out=diagnostics,
             filter_modes=FILTER_MODES, btc_trend_frames=btc_trend_frames,
         )
-        monitor.set_stage("saving_results", f"writing summary and nine trade ledgers to {args.output_dir}")
+        monitor.set_stage("saving_results", f"writing summary and {len(trades)} trade ledgers to {args.output_dir}")
         output = Path(args.output_dir)
         output.mkdir(parents=True, exist_ok=True)
         summary_path = output / "summary_btc_filters_36_scenarios.csv"
@@ -656,7 +657,7 @@ def main():
         from analyze_results import generate_diagnostics
         diagnostic_paths = generate_diagnostics(output)
         print(f"Generated {len(diagnostic_paths)} diagnostic reports.", flush=True)
-        (output / "summary_9_combinations.json").write_text(
+        (output / "summary_btc_filters_36_scenarios.json").write_text(
             json.dumps(summary.to_dict("records"), indent=2, allow_nan=True),
             encoding="utf-8",
         )
