@@ -165,29 +165,33 @@ def build_btc_trend_frames(symbol_data):
     daily = pd.DataFrame(daily_rows)
     if daily.empty:
         raise ValueError("No complete UTC daily BTC candles could be built")
-    return {"1d": daily, "4h": symbol_data[candidates[0]].frames["4h"][["ts", "close"]].copy(),
-            "1h": hourly[["ts", "close"]].copy()}
+    result = {"1d": daily, "4h": symbol_data[candidates[0]].frames["4h"][["ts", "close"]].copy(),
+              "1h": hourly[["ts", "close"]].copy()}
+    for timeframe, frame in result.items():
+        close = frame["close"].astype(float)
+        e20 = close.ewm(span=20, adjust=False, min_periods=20).mean().to_numpy()
+        e50 = close.ewm(span=50, adjust=False, min_periods=50).mean().to_numpy()
+        states = []
+        for price, fast, slow in zip(close.to_numpy(), e20, e50):
+            if pd.isna(fast) or pd.isna(slow):
+                states.append("NEUTRAL")
+            elif price > fast > slow:
+                states.append("BUY")
+            elif price < fast < slow:
+                states.append("SELL")
+            else:
+                states.append("NEUTRAL")
+        frame["trend"] = states
+        duration = 24 * TIMEFRAME_MS["1h"] if timeframe == "1d" else TIMEFRAME_MS[timeframe]
+        frame["close_ts"] = frame["ts"].astype("int64") + duration
+    return result
 
 
 def btc_trends_at_time(trend_frames, decision_time):
     states = {}
     for timeframe, frame in trend_frames.items():
-        closes = frame["close"].astype(float)
-        ema20 = closes.ewm(span=20, adjust=False, min_periods=20).mean().to_numpy()
-        ema50 = closes.ewm(span=50, adjust=False, min_periods=50).mean().to_numpy()
-        duration = 24 * TIMEFRAME_MS["1h"] if timeframe == "1d" else TIMEFRAME_MS[timeframe]
-        close_times = frame["ts"].to_numpy(dtype="int64") + duration
-        idx = int(pd.Series(close_times).searchsorted(int(decision_time), side="right") - 1)
-        state = "UNAVAILABLE"
-        if idx >= 0 and pd.notna(ema20[idx]) and pd.notna(ema50[idx]):
-            close = float(closes.iloc[idx])
-            if close > ema20[idx] > ema50[idx]:
-                state = "BUY"
-            elif close < ema20[idx] < ema50[idx]:
-                state = "SELL"
-            else:
-                state = "NEUTRAL"
-        states[timeframe] = state
+        idx = int(frame["close_ts"].searchsorted(int(decision_time), side="right") - 1)
+        states[timeframe] = str(frame.iloc[idx]["trend"]) if idx >= 0 else "UNAVAILABLE"
     return states
 
 
@@ -298,7 +302,7 @@ def simulate_scenario(symbol_data, signals_by_symbol, order_blocks_by_symbol,
     # A trade is checked only on candles closing strictly after its entry.
     all_times = sorted(set(candles_at_time) | set(signals_at_time))
     skipped = {"portfolio_limit": 0, "invalid_stop_or_target": 0,
-               "position_size_or_contract": 0, "missing_ob": 0}
+               "position_size_or_contract": 0, "missing_ob": 0, "btc_trend_filter": 0}
     closed_records = []
     skipped_records = []
     active_trade_metadata = {}
@@ -382,6 +386,7 @@ def simulate_scenario(symbol_data, signals_by_symbol, order_blocks_by_symbol,
                 )
                 signal_metadata.update({f"btc_{tf}_trend": trend[tf] for tf in ("1d", "4h", "1h")})
                 if any(trend[tf] != direction for tf in required):
+                    skipped["btc_trend_filter"] += 1
                     skipped_records.append({**skip_base, **{f"btc_{tf}_trend": trend[tf] for tf in trend},
                                              "skip_reason": "btc_trend_filter"})
                     continue
@@ -486,6 +491,7 @@ def simulate_scenario(symbol_data, signals_by_symbol, order_blocks_by_symbol,
         "skipped_invalid_stop_or_target": skipped["invalid_stop_or_target"],
         "skipped_position_size_or_contract": skipped["position_size_or_contract"],
         "skipped_missing_ob": skipped["missing_ob"],
+        "skipped_btc_trend_filter": skipped["btc_trend_filter"],
     })
     system._active_trade_metadata = active_trade_metadata
     return summary, pd.DataFrame(closed_records), system
@@ -643,8 +649,9 @@ def main():
             frame.to_csv(output / f"trades_{name}.csv", index=False)
             monitor.progress("saving_trade_ledgers", index, len(trades), name)
         for name, frame in diagnostics.items():
-            prefix = "skipped" if name.startswith("risk_") else "open"
-            suffix = name.removeprefix("open_").removeprefix("risk_")
+            is_open = name.startswith("open_")
+            prefix = "open" if is_open else "skipped"
+            suffix = name.removeprefix("open_") if is_open else name
             frame.to_csv(output / f"{prefix}_{suffix}.csv", index=False)
         from analyze_results import generate_diagnostics
         diagnostic_paths = generate_diagnostics(output)
