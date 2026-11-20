@@ -112,7 +112,7 @@ class BacktestRunnerTests(unittest.TestCase):
             self.assertEqual(int(by_method.iloc[0]["closed_trades"]), 1)
             self.assertGreaterEqual(len(outputs), 10)
 
-    def test_matrix_contains_all_nine_risk_rr_pairs(self):
+    def test_matrix_contains_all_twelve_risk_rr_pairs(self):
         data, signals, obs = fixture_data()
         diagnostics = {}
         summary, ledgers = run_matrix(
@@ -121,8 +121,8 @@ class BacktestRunnerTests(unittest.TestCase):
         self.assertEqual(len(summary), 12)
         self.assertEqual(len(ledgers), 12)
         self.assertEqual(len(diagnostics), 24)
-        self.assertIn("risk_0.05_rr_1.5", diagnostics)
-        self.assertIn("open_risk_0.05_rr_1.5", diagnostics)
+        self.assertIn("no_filter_risk_0.05_rr_1.5", diagnostics)
+        self.assertIn("open_no_filter_risk_0.05_rr_1.5", diagnostics)
         self.assertEqual(
             set(summary["risk_percent"]),
             {0.05, 0.5, 1.0, 1.5},
