@@ -19,7 +19,8 @@ from okx_contract_specs import OKXContractSpecs
 
 
 INITIAL_CAPITAL = 100.0
-RISK_LEVELS = (0.05, 1.0, 1.5)
+RISK_LEVELS = (0.05, 0.5, 1.0, 1.5)
+FILTER_MODES = ("1d_4h", "1d_1h", "1d_4h_1h")
 REWARD_RATIOS = (1.5, 2.0, 2.5)
 METHOD_PRIORITY = {
     "DIRECT": 0,
@@ -148,6 +149,48 @@ def prepare_signals(symbol_data, methods=None, zone_type="body",
     return signals, order_blocks
 
 
+def build_btc_trend_frames(symbol_data):
+    """Build causal BTC trend frames; daily bars require 24 contiguous UTC 1h bars."""
+    candidates = [name for name in symbol_data if "BTC" in name.upper() and "USDT" in name.upper() and "SWAP" in name.upper()]
+    if len(candidates) != 1:
+        raise ValueError(f"Expected one BTC USDT SWAP dataset, found {candidates}")
+    hourly = symbol_data[candidates[0]].frames["1h"].copy()
+    hourly["utc_day"] = (hourly["ts"] // (24 * TIMEFRAME_MS["1h"])) * (24 * TIMEFRAME_MS["1h"])
+    daily_rows = []
+    for day, group in hourly.groupby("utc_day", sort=True):
+        expected = int(day) + __import__("numpy").arange(24, dtype="int64") * TIMEFRAME_MS["1h"]
+        actual = group["ts"].to_numpy(dtype="int64")
+        if len(actual) == 24 and (actual == expected).all():
+            daily_rows.append({"ts": int(day), "close": float(group.iloc[-1]["close"])})
+    daily = pd.DataFrame(daily_rows)
+    if daily.empty:
+        raise ValueError("No complete UTC daily BTC candles could be built")
+    return {"1d": daily, "4h": symbol_data[candidates[0]].frames["4h"][["ts", "close"]].copy(),
+            "1h": hourly[["ts", "close"]].copy()}
+
+
+def btc_trends_at_time(trend_frames, decision_time):
+    states = {}
+    for timeframe, frame in trend_frames.items():
+        closes = frame["close"].astype(float)
+        ema20 = closes.ewm(span=20, adjust=False, min_periods=20).mean().to_numpy()
+        ema50 = closes.ewm(span=50, adjust=False, min_periods=50).mean().to_numpy()
+        duration = 24 * TIMEFRAME_MS["1h"] if timeframe == "1d" else TIMEFRAME_MS[timeframe]
+        close_times = frame["ts"].to_numpy(dtype="int64") + duration
+        idx = int(pd.Series(close_times).searchsorted(int(decision_time), side="right") - 1)
+        state = "UNAVAILABLE"
+        if idx >= 0 and pd.notna(ema20[idx]) and pd.notna(ema50[idx]):
+            close = float(closes.iloc[idx])
+            if close > ema20[idx] > ema50[idx]:
+                state = "BUY"
+            elif close < ema20[idx] < ema50[idx]:
+                state = "SELL"
+            else:
+                state = "NEUTRAL"
+        states[timeframe] = state
+    return states
+
+
 def _stop_and_target(signal, ob, rr):
     entry = float(signal["entry_price"])
     direction = str(signal["direction"]).upper()
@@ -215,7 +258,8 @@ def _equity_metrics(trades, initial_capital):
 
 def simulate_scenario(symbol_data, signals_by_symbol, order_blocks_by_symbol,
                       risk_percent, reward_ratio, contract_specs=None,
-                      initial_capital=INITIAL_CAPITAL, progress_context=None):
+                      initial_capital=INITIAL_CAPITAL, progress_context=None,
+                      filter_mode=None, btc_trend_frames=None):
     """Replay all symbols on one global candle-close timeline."""
     system = TradingSystem(
         initial_capital=initial_capital,
@@ -329,6 +373,18 @@ def simulate_scenario(symbol_data, signals_by_symbol, order_blocks_by_symbol,
                 "risk_percent": float(risk_percent),
                 "reward_ratio": float(reward_ratio),
             }
+            if filter_mode:
+                if btc_trend_frames is None:
+                    raise ValueError("BTC trend frames are required when a BTC filter is active")
+                trend = btc_trends_at_time(btc_trend_frames, timestamp)
+                required = ("1d", "4h") if filter_mode == "1d_4h" else (
+                    ("1d", "1h") if filter_mode == "1d_1h" else ("1d", "4h", "1h")
+                )
+                signal_metadata.update({f"btc_{tf}_trend": trend[tf] for tf in ("1d", "4h", "1h")})
+                if any(trend[tf] != direction for tf in required):
+                    skipped_records.append({**skip_base, **{f"btc_{tf}_trend": trend[tf] for tf in trend},
+                                             "skip_reason": "btc_trend_filter"})
+                    continue
             if not system.can_search_symbol(symbol):
                 skipped_records.append({**skip_base, "skip_reason": "symbol_already_open"})
                 continue
@@ -424,6 +480,7 @@ def simulate_scenario(symbol_data, signals_by_symbol, order_blocks_by_symbol,
     summary.update({
         "risk_percent": float(risk_percent),
         "reward_ratio": float(reward_ratio),
+        "filter_mode": filter_mode or "no_filter",
         "open_trades_at_end": len(system.execution.open_positions),
         "skipped_portfolio_limit": skipped["portfolio_limit"],
         "skipped_invalid_stop_or_target": skipped["invalid_stop_or_target"],
@@ -436,10 +493,12 @@ def simulate_scenario(symbol_data, signals_by_symbol, order_blocks_by_symbol,
 
 def run_matrix(symbol_data, signals_by_symbol, order_blocks_by_symbol,
                contract_specs=None, initial_capital=INITIAL_CAPITAL,
-               progress_monitor=None, diagnostics_out=None):
+               progress_monitor=None, diagnostics_out=None,
+               filter_modes=None, btc_trend_frames=None):
     summaries = []
     trade_frames = {}
-    scenario_total = len(RISK_LEVELS) * len(REWARD_RATIOS)
+    selected_filters = tuple(filter_modes) if filter_modes is not None else (None,)
+    scenario_total = len(selected_filters) * len(RISK_LEVELS) * len(REWARD_RATIOS)
     timeline = set()
     for symbol_index, (symbol, item) in enumerate(sorted(symbol_data.items()), start=1):
         if progress_monitor:
@@ -447,7 +506,8 @@ def run_matrix(symbol_data, signals_by_symbol, order_blocks_by_symbol,
         for ts in item.frames["15m"]["ts"].tolist():
             timeline.add(int(ts) + TIMEFRAME_MS["15m"])
     matrix_started = time.monotonic()
-    for risk in RISK_LEVELS:
+    for filter_mode in selected_filters:
+      for risk in RISK_LEVELS:
         for rr in REWARD_RATIOS:
             scenario_index = len(summaries) + 1
             summary, trades, system = simulate_scenario(
@@ -458,6 +518,8 @@ def run_matrix(symbol_data, signals_by_symbol, order_blocks_by_symbol,
                 reward_ratio=rr,
                 contract_specs=contract_specs,
                 initial_capital=initial_capital,
+                filter_mode=filter_mode,
+                btc_trend_frames=btc_trend_frames,
                 progress_context={
                     "scenario_index": scenario_index,
                     "scenario_total": scenario_total,
@@ -467,7 +529,7 @@ def run_matrix(symbol_data, signals_by_symbol, order_blocks_by_symbol,
                 },
             )
             summaries.append(summary)
-            scenario_name = f"risk_{risk:g}_rr_{rr:g}"
+            scenario_name = f"{filter_mode or 'no_filter'}_risk_{risk:g}_rr_{rr:g}"
             trade_frames[scenario_name] = trades
             if diagnostics_out is not None:
                 diagnostics_out[scenario_name] = pd.DataFrame(
@@ -497,7 +559,7 @@ def run_matrix(symbol_data, signals_by_symbol, order_blocks_by_symbol,
                     for active_meta in [system._active_trade_metadata.get(symbol, {})]
                 ])
             print(
-                f"[SCENARIO COMPLETE] risk={risk:g}% RR={rr:g} "
+                f"[SCENARIO COMPLETE] filter={filter_mode or 'no_filter'} risk={risk:g}% RR={rr:g} "
                 f"| closed={len(trades)} | open={len(system.execution.open_positions)}",
                 flush=True,
             )
@@ -563,17 +625,19 @@ def main():
         monitor.set_stage("signal_preparation_complete", f"prepared {total_signals} unique-OB entry signals")
         print(f"Prepared {total_signals} unique-OB entry signals.", flush=True)
 
-        monitor.set_stage("backtest_matrix", "starting nine chronological risk/RR combinations")
+        monitor.set_stage("btc_trend_preparation", "building causal BTC 1d/4h/1h trend frames")
+        btc_trend_frames = build_btc_trend_frames(data)
+        monitor.set_stage("backtest_matrix", "starting 36 chronological filtered risk/RR scenarios")
         diagnostics = {}
         summary, trades = run_matrix(
             data, signals, obs, contract_specs=contract_specs,
-            progress_monitor=monitor,
-            diagnostics_out=diagnostics,
+            progress_monitor=monitor, diagnostics_out=diagnostics,
+            filter_modes=FILTER_MODES, btc_trend_frames=btc_trend_frames,
         )
         monitor.set_stage("saving_results", f"writing summary and nine trade ledgers to {args.output_dir}")
         output = Path(args.output_dir)
         output.mkdir(parents=True, exist_ok=True)
-        summary_path = output / "summary_9_combinations.csv"
+        summary_path = output / "summary_btc_filters_36_scenarios.csv"
         summary.to_csv(summary_path, index=False)
         for index, (name, frame) in enumerate(trades.items(), start=1):
             frame.to_csv(output / f"trades_{name}.csv", index=False)
@@ -590,8 +654,8 @@ def main():
             encoding="utf-8",
         )
         print("\\n" + summary.to_string(index=False), flush=True)
-        print(f"\\nSaved summary and 9 trade ledgers to {output}", flush=True)
-        monitor.set_stage("complete", "all nine scenarios and output files completed")
+        print(f"\\nSaved summary and {len(trades)} trade ledgers to {output}", flush=True)
+        monitor.set_stage("complete", "all 36 BTC-filtered scenarios and output files completed")
     finally:
         monitor.stop()
 
