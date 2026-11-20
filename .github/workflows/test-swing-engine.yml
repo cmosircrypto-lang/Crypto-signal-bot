@@ -18,9 +18,15 @@ on:
         required: true
         type: boolean
         default: false
+      run_btc_trend_analysis:
+        description: "Analyze Run #35 executed entries against BTC 1h and 4h trends"
+        required: true
+        type: boolean
+        default: false
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   test:
