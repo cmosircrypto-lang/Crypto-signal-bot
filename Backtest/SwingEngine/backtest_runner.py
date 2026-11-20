@@ -415,6 +415,7 @@ def simulate_scenario(symbol_data, signals_by_symbol, order_blocks_by_symbol,
         "skipped_position_size_or_contract": skipped["position_size_or_contract"],
         "skipped_missing_ob": skipped["missing_ob"],
     })
+    system._active_trade_metadata = active_trade_metadata
     return summary, pd.DataFrame(closed_records), system
 
 
@@ -477,7 +478,7 @@ def run_matrix(symbol_data, signals_by_symbol, order_blocks_by_symbol,
                         "risk_percent": position.risk_percent,
                     }
                     for symbol, position in system.execution.open_positions.items()
-                    for active_meta in [active_trade_metadata.get(symbol, {})]
+                    for active_meta in [system._active_trade_metadata.get(symbol, {})]
                 ])
             print(
                 f"[SCENARIO COMPLETE] risk={risk:g}% RR={rr:g} "
