@@ -343,7 +343,22 @@ def simulate_scenario(symbol_data, signals_by_symbol, order_blocks_by_symbol,
                 skipped["missing_ob"] += 1
                 skipped_records.append({**skip_base, "skip_reason": "missing_ob"})
                 continue
-            levels = _stop_and_target(signal, obs.loc[ob_id], reward_ratio)
+            ob_row = obs.loc[ob_id]
+            signal_metadata.update({
+                "ob_direction": str(ob_row.get("direction", "UNKNOWN")),
+                "ob_body_low": float(ob_row.get("body_low", 0.0)),
+                "ob_body_high": float(ob_row.get("body_high", 0.0)),
+                "ob_wick_low": float(ob_row.get("wick_low", 0.0)),
+                "ob_wick_high": float(ob_row.get("wick_high", 0.0)),
+            })
+            skip_base.update({
+                "ob_direction": signal_metadata["ob_direction"],
+                "ob_body_low": signal_metadata["ob_body_low"],
+                "ob_body_high": signal_metadata["ob_body_high"],
+                "ob_wick_low": signal_metadata["ob_wick_low"],
+                "ob_wick_high": signal_metadata["ob_wick_high"],
+            })
+            levels = _stop_and_target(signal, ob_row, reward_ratio)
             if levels is None:
                 skipped["invalid_stop_or_target"] += 1
                 skipped_records.append({**skip_base, "skip_reason": "invalid_stop_or_target"})
@@ -564,7 +579,7 @@ def main():
             monitor.progress("saving_trade_ledgers", index, len(trades), name)
         for name, frame in diagnostics.items():
             prefix = "skipped" if name.startswith("risk_") else "open"
-            suffix = name.removeprefix("risk_").removeprefix("open_")
+            suffix = name.removeprefix("open_").removeprefix("risk_")
             frame.to_csv(output / f"{prefix}_{suffix}.csv", index=False)
         from analyze_results import generate_diagnostics
         diagnostic_paths = generate_diagnostics(output)
