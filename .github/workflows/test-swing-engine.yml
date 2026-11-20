@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       run_full_backtest:
-        description: "After tests, run the 9-combination backtest on the cached 76-symbol OKX dataset"
+        description: "After tests, run 36 BTC-filtered risk/RR scenarios on the cached 76-symbol OKX dataset"
         required: true
         type: boolean
         default: false
@@ -95,7 +95,7 @@ jobs:
             test "$count" -eq 76
           done
 
-      - name: Run nine-combination backtest
+      - name: Run 36 BTC-filtered backtest scenarios
         if: ${{ inputs.run_full_backtest }}
         run: |
           set -o pipefail
@@ -113,7 +113,7 @@ jobs:
         run: |
           if [ -f /tmp/swing-backtest.log ]; then
             {
-              echo "## Swing Engine — 9 combinations"
+              echo "## Swing Engine — 36 BTC-filtered scenarios"
               tail -n 80 /tmp/swing-backtest.log
             } >> "$GITHUB_STEP_SUMMARY"
           fi
@@ -122,7 +122,7 @@ jobs:
         if: ${{ always() && inputs.run_full_backtest }}
         uses: actions/upload-artifact@v4
         with:
-          name: swing-engine-9-combination-results
+          name: swing-engine-btc-filter-36-scenarios
           path: |
             Backtest/results/swing_engine/
             /tmp/swing-backtest.log
