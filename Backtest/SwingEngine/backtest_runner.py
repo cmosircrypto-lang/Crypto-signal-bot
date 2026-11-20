@@ -256,6 +256,9 @@ def simulate_scenario(symbol_data, signals_by_symbol, order_blocks_by_symbol,
     skipped = {"portfolio_limit": 0, "invalid_stop_or_target": 0,
                "position_size_or_contract": 0, "missing_ob": 0}
     closed_records = []
+    skipped_records = []
+    active_trade_metadata = {}
+    system._diagnostic_skips = skipped_records
     started = time.monotonic()
     month_labels = [
         datetime.fromtimestamp(ts / 1000, tz=timezone.utc).strftime("%Y-%m")
@@ -283,7 +286,9 @@ def simulate_scenario(symbol_data, signals_by_symbol, order_blocks_by_symbol,
                 continue
             result = system.check_exit(symbol, candle, timestamp)
             if result is not None:
+                trade_metadata = active_trade_metadata.pop(symbol, {})
                 closed_records.append({
+                    **trade_metadata,
                     "symbol": result.symbol,
                     "direction": result.direction,
                     "entry_price": result.entry_price,
@@ -307,24 +312,45 @@ def simulate_scenario(symbol_data, signals_by_symbol, order_blocks_by_symbol,
         )
         for symbol, signal in entries:
             direction = str(signal["direction"]).upper()
+            signal_metadata = {
+                "method": str(signal.get("method", "UNKNOWN")),
+                "ob_id": int(signal.get("ob_id", -1)),
+                "ob_ts": signal.get("ob_ts"),
+                "bos_ts": signal.get("bos_ts"),
+                "signal_ts": int(signal.get("signal_ts", timestamp)),
+                "touch_number": int(signal.get("touch_number", 0)),
+                "touch_score": float(signal.get("touch_score", 0.0)),
+                "htf_trend": str(signal.get("htf_trend", "UNKNOWN")),
+            }
+            skip_base = {
+                "symbol": symbol,
+                "direction": direction,
+                **signal_metadata,
+                "risk_percent": float(risk_percent),
+                "reward_ratio": float(reward_ratio),
+            }
             if not system.can_search_symbol(symbol):
+                skipped_records.append({**skip_base, "skip_reason": "symbol_already_open"})
                 continue
             if not system.can_open_trade(symbol, direction):
                 skipped["portfolio_limit"] += 1
+                skipped_records.append({**skip_base, "skip_reason": "portfolio_limit"})
                 continue
 
             obs = order_blocks_by_symbol.get(symbol)
             ob_id = int(signal["ob_id"])
             if obs is None or ob_id not in obs.index:
                 skipped["missing_ob"] += 1
+                skipped_records.append({**skip_base, "skip_reason": "missing_ob"})
                 continue
             levels = _stop_and_target(signal, obs.loc[ob_id], reward_ratio)
             if levels is None:
                 skipped["invalid_stop_or_target"] += 1
+                skipped_records.append({**skip_base, "skip_reason": "invalid_stop_or_target"})
                 continue
             stop, target = levels
             try:
-                system.open_trade(
+                position = system.open_trade(
                     symbol=symbol,
                     direction=direction,
                     entry_price=float(signal["entry_price"]),
@@ -333,10 +359,21 @@ def simulate_scenario(symbol_data, signals_by_symbol, order_blocks_by_symbol,
                     risk_percent=float(risk_percent),
                     timestamp=timestamp,
                 )
-            except (ValueError, KeyError):
+                if position is not None:
+                    active_trade_metadata[symbol] = {
+                        **signal_metadata,
+                        "stop_loss": float(stop),
+                        "take_profit": float(target),
+                    }
+            except (ValueError, KeyError) as exc:
                 # Includes exchange minimum-size rejection. Keep a count;
                 # do not silently enlarge risk to force a fill.
                 skipped["position_size_or_contract"] += 1
+                skipped_records.append({
+                    **skip_base,
+                    "skip_reason": "position_size_or_contract",
+                    "error": str(exc),
+                })
 
         local_percent = int(event_index * 100 / len(all_times)) if all_times else 100
         if progress_context:
@@ -383,7 +420,7 @@ def simulate_scenario(symbol_data, signals_by_symbol, order_blocks_by_symbol,
 
 def run_matrix(symbol_data, signals_by_symbol, order_blocks_by_symbol,
                contract_specs=None, initial_capital=INITIAL_CAPITAL,
-               progress_monitor=None):
+               progress_monitor=None, diagnostics_out=None):
     summaries = []
     trade_frames = {}
     scenario_total = len(RISK_LEVELS) * len(REWARD_RATIOS)
@@ -414,7 +451,34 @@ def run_matrix(symbol_data, signals_by_symbol, order_blocks_by_symbol,
                 },
             )
             summaries.append(summary)
-            trade_frames[f"risk_{risk:g}_rr_{rr:g}"] = trades
+            scenario_name = f"risk_{risk:g}_rr_{rr:g}"
+            trade_frames[scenario_name] = trades
+            if diagnostics_out is not None:
+                diagnostics_out[scenario_name] = pd.DataFrame(
+                    getattr(system, "_diagnostic_skips", []),
+                    columns=[
+                        "symbol", "direction", "method", "ob_id", "ob_ts",
+                        "bos_ts", "signal_ts", "touch_number", "touch_score",
+                        "htf_trend", "risk_percent", "reward_ratio",
+                        "skip_reason", "error",
+                    ],
+                )
+                diagnostics_out[f"open_{scenario_name}"] = pd.DataFrame([
+                    {
+                        "symbol": symbol,
+                        **active_meta,
+                        "entry_price": position.entry_price,
+                        "stop_loss": position.stop_loss,
+                        "take_profit": position.take_profit,
+                        "opened_at": position.opened_at,
+                        "risk_amount": position.risk_amount,
+                        "quantity": position.quantity,
+                        "contract_count": position.contract_count,
+                        "risk_percent": position.risk_percent,
+                    }
+                    for symbol, position in system.execution.open_positions.items()
+                    for active_meta in [active_trade_metadata.get(symbol, {})]
+                ])
             print(
                 f"[SCENARIO COMPLETE] risk={risk:g}% RR={rr:g} "
                 f"| closed={len(trades)} | open={len(system.execution.open_positions)}",
@@ -483,9 +547,11 @@ def main():
         print(f"Prepared {total_signals} unique-OB entry signals.", flush=True)
 
         monitor.set_stage("backtest_matrix", "starting nine chronological risk/RR combinations")
+        diagnostics = {}
         summary, trades = run_matrix(
             data, signals, obs, contract_specs=contract_specs,
             progress_monitor=monitor,
+            diagnostics_out=diagnostics,
         )
         monitor.set_stage("saving_results", f"writing summary and nine trade ledgers to {args.output_dir}")
         output = Path(args.output_dir)
@@ -495,6 +561,13 @@ def main():
         for index, (name, frame) in enumerate(trades.items(), start=1):
             frame.to_csv(output / f"trades_{name}.csv", index=False)
             monitor.progress("saving_trade_ledgers", index, len(trades), name)
+        for name, frame in diagnostics.items():
+            prefix = "skipped" if name.startswith("risk_") else "open"
+            suffix = name.removeprefix("risk_").removeprefix("open_")
+            frame.to_csv(output / f"{prefix}_{suffix}.csv", index=False)
+        from analyze_results import generate_diagnostics
+        diagnostic_paths = generate_diagnostics(output)
+        print(f"Generated {len(diagnostic_paths)} diagnostic reports.", flush=True)
         (output / "summary_9_combinations.json").write_text(
             json.dumps(summary.to_dict("records"), indent=2, allow_nan=True),
             encoding="utf-8",
