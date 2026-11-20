@@ -23,6 +23,11 @@ on:
         required: true
         type: boolean
         default: false
+      run_symbol_filter_experiment:
+        description: "Run chronological train/OOS comparison of all, weak-excluded and strong-only symbol universes"
+        required: true
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -77,8 +82,11 @@ jobs:
       - name: Test chronological backtest runner
         run: python Backtest/SwingEngine/test_backtest_runner.py
 
+      - name: Test chronological symbol-filter experiment
+        run: python Backtest/SwingEngine/test_symbol_filter_experiment.py
+
       - name: Download validated OKX datasets
-        if: ${{ inputs.run_full_backtest }}
+        if: ${{ inputs.run_full_backtest || inputs.run_symbol_filter_experiment }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -107,6 +115,33 @@ jobs:
             EXTRA="$EXTRA --require-4h-alignment"
           fi
           python -u Backtest/SwingEngine/backtest_runner.py $EXTRA | tee /tmp/swing-backtest.log
+
+      - name: Run chronological symbol-filter OOS experiment
+        if: ${{ inputs.run_symbol_filter_experiment }}
+        run: |
+          set -o pipefail
+          python -u Backtest/SwingEngine/symbol_filter_experiment.py | tee /tmp/symbol-filter-experiment.log
+
+      - name: Add symbol-filter experiment summary
+        if: ${{ always() && inputs.run_symbol_filter_experiment }}
+        run: |
+          if [ -f Backtest/results/symbol_filter_experiment/README.md ]; then
+            cat Backtest/results/symbol_filter_experiment/README.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [ -f /tmp/symbol-filter-experiment.log ]; then
+            tail -n 60 /tmp/symbol-filter-experiment.log >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload symbol-filter experiment results
+        if: ${{ always() && inputs.run_symbol_filter_experiment }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: swing-engine-symbol-filter-oos-experiment
+          path: |
+            Backtest/results/symbol_filter_experiment/
+            /tmp/symbol-filter-experiment.log
+          if-no-files-found: warn
+          retention-days: 30
 
       - name: Add backtest summary
         if: ${{ always() && inputs.run_full_backtest }}
