@@ -12,7 +12,7 @@ import pandas as pd
 RUN35_ARTIFACT = Path("run35-results.zip")
 DATA_ROOT = Path("Backtest/data/okx")
 TRADE_SUFFIX = "trades_risk_0.05_rr_1.5.csv"
-TIMEFRAME_MS = {"1h": 60 * 60 * 1000, "4h": 4 * 60 * 60 * 1000}
+TIMEFRAME_MS = {"1h": 60 * 60 * 1000, "4h": 4 * 60 * 60 * 1000, "1d": 24 * 60 * 60 * 1000}
 INITIAL_CAPITAL = 100.0
 
 
@@ -38,13 +38,38 @@ def load_run35_trades(path: Path) -> pd.DataFrame:
 
 
 def btc_trend_at_entries(timeframe: str, entry_times: np.ndarray) -> np.ndarray:
+    if timeframe == "1d":
+        hourly_path = DATA_ROOT / "1h" / "BTC-USDT-SWAP.csv.gz"
+        if not hourly_path.is_file():
+            candidates = sorted((DATA_ROOT / "1h").glob("*BTC*USDT*SWAP*.csv.gz"))
+            if len(candidates) != 1:
+                raise FileNotFoundError(f"Cannot uniquely locate BTC 1h data for daily aggregation; candidates={candidates}")
+            hourly_path = candidates[0]
+        hourly = pd.read_csv(hourly_path, compression="gzip")
+        required = {"ts", "close"}
+        if not required.issubset(hourly.columns):
+            raise RuntimeError(f"{hourly_path} must contain ts and close")
+        hourly["ts"] = pd.to_numeric(hourly["ts"], errors="raise").astype("int64")
+        hourly["close"] = pd.to_numeric(hourly["close"], errors="raise")
+        hourly = hourly.sort_values("ts").drop_duplicates("ts")
+        hourly["utc_day"] = (hourly["ts"] // TIMEFRAME_MS["1d"]) * TIMEFRAME_MS["1d"]
+        rows = []
+        for day, group in hourly.groupby("utc_day", sort=True):
+            expected = day + np.arange(24, dtype=np.int64) * TIMEFRAME_MS["1h"]
+            actual = group["ts"].to_numpy(dtype=np.int64)
+            if len(actual) == 24 and np.array_equal(actual, expected):
+                rows.append({"ts": int(day), "close": float(group.iloc[-1]["close"])})
+        candles = pd.DataFrame(rows)
+        if candles.empty:
+            raise RuntimeError("No complete UTC daily BTC candles could be derived from 1h data")
+        return _trend_states_from_candles(candles, "1d", entry_times)
+
     path = DATA_ROOT / timeframe / "BTC-USDT-SWAP.csv.gz"
     if not path.is_file():
         candidates = sorted((DATA_ROOT / timeframe).glob("*BTC*USDT*SWAP*.csv.gz"))
         if len(candidates) != 1:
             raise FileNotFoundError(f"Cannot uniquely locate BTC-USDT-SWAP {timeframe} data; candidates={candidates}")
         path = candidates[0]
-
     candles = pd.read_csv(path, compression="gzip")
     required = {"ts", "close"}
     if not required.issubset(candles.columns):
@@ -52,13 +77,16 @@ def btc_trend_at_entries(timeframe: str, entry_times: np.ndarray) -> np.ndarray:
     candles["ts"] = pd.to_numeric(candles["ts"], errors="raise").astype("int64")
     candles["close"] = pd.to_numeric(candles["close"], errors="raise")
     candles = candles.sort_values("ts").drop_duplicates("ts")
+    return _trend_states_from_candles(candles, timeframe, entry_times)
+
+
+def _trend_states_from_candles(candles: pd.DataFrame, timeframe: str, entry_times: np.ndarray) -> np.ndarray:
     ema20 = candles["close"].ewm(span=20, adjust=False, min_periods=20).mean()
     ema50 = candles["close"].ewm(span=50, adjust=False, min_periods=50).mean()
-    close_times = candles["ts"].to_numpy() + TIMEFRAME_MS[timeframe]
-    close_values = candles["close"].to_numpy()
+    close_times = candles["ts"].to_numpy(dtype=np.int64) + TIMEFRAME_MS[timeframe]
+    close_values = candles["close"].to_numpy(dtype=float)
     e20 = ema20.to_numpy()
     e50 = ema50.to_numpy()
-
     indices = np.searchsorted(close_times, entry_times, side="right") - 1
     states = np.full(len(entry_times), "UNAVAILABLE", dtype=object)
     valid = indices >= 0
@@ -156,7 +184,7 @@ def main() -> None:
     entry_times = trades["opened_at"].to_numpy(dtype=np.int64)
     details = trades.copy()
     alignment_summaries = []
-    for timeframe in ("4h", "1h"):
+    for timeframe in ("1d", "4h", "1h"):
         states = btc_trend_at_entries(timeframe, entry_times)
         details[f"btc_{timeframe}_trend"] = states
         alignment_summaries.append(alignment_counts(trades, timeframe, states))
