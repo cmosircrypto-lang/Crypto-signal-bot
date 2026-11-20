@@ -120,8 +120,6 @@ def performance_metrics(name: str, trades: pd.DataFrame) -> dict:
     peaks = np.maximum.accumulate(equity_with_start)
     drawdowns = peaks - equity_with_start
     max_drawdown = float(drawdowns.max()) if len(drawdowns) else 0.0
-    peak_indices = np.maximum.accumulate(np.arange(len(equity_with_start)))  # stable shape for empty ledgers
-    del peak_indices
     drawdown_pct = np.divide(
         drawdowns, peaks, out=np.zeros_like(drawdowns), where=peaks != 0
     ) * 100.0
