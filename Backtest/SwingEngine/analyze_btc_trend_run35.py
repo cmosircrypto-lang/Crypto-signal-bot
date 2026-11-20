@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compare Run #35 executed entries with BTC 1h/4h trend without lookahead."""
+"""Compare Run #35 trades with BTC trend and evaluate post-entry trend filters."""
 from __future__ import annotations
 
 import argparse
@@ -13,6 +13,7 @@ RUN35_ARTIFACT = Path("run35-results.zip")
 DATA_ROOT = Path("Backtest/data/okx")
 TRADE_SUFFIX = "trades_risk_0.05_rr_1.5.csv"
 TIMEFRAME_MS = {"1h": 60 * 60 * 1000, "4h": 4 * 60 * 60 * 1000}
+INITIAL_CAPITAL = 100.0
 
 
 def load_run35_trades(path: Path) -> pd.DataFrame:
@@ -22,11 +23,13 @@ def load_run35_trades(path: Path) -> pd.DataFrame:
             raise RuntimeError(f"Expected one baseline trade ledger ending {TRADE_SUFFIX}; found {matches}")
         with archive.open(matches[0]) as stream:
             trades = pd.read_csv(stream)
-    required = {"symbol", "direction", "opened_at"}
+    required = {"symbol", "direction", "opened_at", "closed_at", "pnl"}
     missing = required - set(trades.columns)
     if missing:
         raise RuntimeError(f"Run #35 trade ledger missing columns: {sorted(missing)}")
     trades["opened_at"] = pd.to_numeric(trades["opened_at"], errors="raise").astype("int64")
+    trades["closed_at"] = pd.to_numeric(trades["closed_at"], errors="raise").astype("int64")
+    trades["pnl"] = pd.to_numeric(trades["pnl"], errors="raise")
     trades["direction"] = trades["direction"].astype(str).str.upper()
     trades = trades[trades["direction"].isin(["BUY", "SELL"])].copy()
     if trades.empty:
@@ -73,7 +76,7 @@ def btc_trend_at_entries(timeframe: str, entry_times: np.ndarray) -> np.ndarray:
     return states
 
 
-def summarize(trades: pd.DataFrame, timeframe: str, states: np.ndarray) -> dict:
+def alignment_counts(trades: pd.DataFrame, timeframe: str, states: np.ndarray) -> dict:
     directions = trades["direction"].to_numpy()
     aligned = states == directions
     opposite = ((states == "BUY") & (directions == "SELL")) | ((states == "SELL") & (directions == "BUY"))
@@ -94,6 +97,56 @@ def summarize(trades: pd.DataFrame, timeframe: str, states: np.ndarray) -> dict:
     }
 
 
+def performance_metrics(name: str, trades: pd.DataFrame) -> dict:
+    ordered = trades.sort_values(["closed_at", "opened_at"]).copy()
+    pnl = ordered["pnl"].astype(float)
+    wins = int((pnl > 0).sum())
+    losses = int((pnl < 0).sum())
+    breakeven = int((pnl == 0).sum())
+    gross_profit = float(pnl[pnl > 0].sum())
+    gross_loss = float(pnl[pnl < 0].sum())
+    net_pnl = float(pnl.sum())
+    if gross_loss < 0:
+        profit_factor = gross_profit / abs(gross_loss)
+    elif gross_profit > 0:
+        profit_factor = float("inf")
+    else:
+        profit_factor = 0.0
+
+    # Realized-equity curve: aggregate trades closed at the same timestamp.
+    by_close = ordered.groupby("closed_at", sort=True)["pnl"].sum()
+    equity = INITIAL_CAPITAL + by_close.cumsum()
+    equity_with_start = np.concatenate(([INITIAL_CAPITAL], equity.to_numpy(dtype=float)))
+    peaks = np.maximum.accumulate(equity_with_start)
+    drawdowns = peaks - equity_with_start
+    max_drawdown = float(drawdowns.max()) if len(drawdowns) else 0.0
+    peak_indices = np.maximum.accumulate(np.arange(len(equity_with_start)))  # stable shape for empty ledgers
+    del peak_indices
+    drawdown_pct = np.divide(
+        drawdowns, peaks, out=np.zeros_like(drawdowns), where=peaks != 0
+    ) * 100.0
+
+    directions = ordered["direction"]
+    return {
+        "filter": name,
+        "trades": int(len(ordered)),
+        "buy_trades": int((directions == "BUY").sum()),
+        "sell_trades": int((directions == "SELL").sum()),
+        "wins": wins,
+        "losses": losses,
+        "breakeven": breakeven,
+        "win_rate_pct": round(wins / len(ordered) * 100, 2) if len(ordered) else 0.0,
+        "gross_profit": round(gross_profit, 8),
+        "gross_loss": round(gross_loss, 8),
+        "net_pnl": round(net_pnl, 8),
+        "ending_equity": round(INITIAL_CAPITAL + net_pnl, 8),
+        "profit_factor": round(profit_factor, 6) if np.isfinite(profit_factor) else "INF",
+        "max_drawdown": round(max_drawdown, 8),
+        "max_drawdown_pct": round(float(drawdown_pct.max()) if len(drawdown_pct) else 0.0, 4),
+        "avg_pnl_per_trade": round(net_pnl / len(ordered), 8) if len(ordered) else 0.0,
+    }
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--artifact", type=Path, default=RUN35_ARTIFACT)
@@ -103,39 +156,76 @@ def main() -> None:
 
     trades = load_run35_trades(args.artifact)
     entry_times = trades["opened_at"].to_numpy(dtype=np.int64)
-    summaries = []
     details = trades.copy()
+    alignment_summaries = []
     for timeframe in ("4h", "1h"):
         states = btc_trend_at_entries(timeframe, entry_times)
         details[f"btc_{timeframe}_trend"] = states
-        summaries.append(summarize(trades, timeframe, states))
+        alignment_summaries.append(alignment_counts(trades, timeframe, states))
 
-    summary = pd.DataFrame(summaries)
-    summary.to_csv(args.output / "btc_trend_alignment_summary.csv", index=False)
+    details["pass_4h_filter"] = details["btc_4h_trend"].to_numpy() == details["direction"].to_numpy()
+    details["pass_1h_filter"] = details["btc_1h_trend"].to_numpy() == details["direction"].to_numpy()
+    details["pass_both_filters"] = details["pass_4h_filter"] & details["pass_1h_filter"]
+
+    filters = {
+        "no_filter_baseline": np.ones(len(details), dtype=bool),
+        "4h_aligned_only": details["pass_4h_filter"].to_numpy(dtype=bool),
+        "1h_aligned_only": details["pass_1h_filter"].to_numpy(dtype=bool),
+        "both_4h_and_1h_aligned": details["pass_both_filters"].to_numpy(dtype=bool),
+    }
+    performance = []
+    for name, mask in filters.items():
+        selected = details.loc[mask].copy()
+        performance.append(performance_metrics(name, selected))
+        if name != "no_filter_baseline":
+            selected.to_csv(args.output / f"filtered_trades_{name}.csv", index=False)
+
+    alignment = pd.DataFrame(alignment_summaries)
+    performance_df = pd.DataFrame(performance)
+    alignment.to_csv(args.output / "btc_trend_alignment_summary.csv", index=False)
+    performance_df.to_csv(args.output / "btc_filter_performance_summary.csv", index=False)
     details.to_csv(args.output / "btc_trend_alignment_trade_details.csv", index=False)
 
     lines = [
-        "# Bitcoin trend alignment — Run #35",
+        "# Bitcoin trend alignment and filter test — Run #35",
         "",
-        "Scope: executed and closed trades from the baseline scenario (risk 0.05%, RR 1.5), not every generated signal and not all nine scenario ledgers.",
+        "Scope: executed and closed trades from the baseline scenario (risk 0.05%, RR 1.5). This is a historical post-filter of those executed trades, not a full portfolio re-simulation; removed trades are not replaced by other signals.",
         "",
-        "Trend rule at entry time (using only fully closed BTC candles): BUY when close > EMA20 > EMA50; SELL when close < EMA20 < EMA50; otherwise NEUTRAL. EMA periods are 20 and 50.",
+        "Trend rule at entry time, using only fully closed BTC candles: BUY when close > EMA20 > EMA50; SELL when close < EMA20 < EMA50; otherwise NEUTRAL. EMA periods are 20 and 50.",
+        "",
+        "## Alignment at entry",
         "",
         "| Timeframe | Trades | Aligned | Aligned % | Opposite | Opposite % | Neutral | Neutral % | Unavailable |",
         "|---|---:|---:|---:|---:|---:|---:|---:|---:|",
     ]
-    for row in summaries:
+    for row in alignment_summaries:
         lines.append(
             f"| {row['timeframe']} | {row['trades']} | {row['aligned']} | {row['aligned_pct']}% | "
             f"{row['opposite']} | {row['opposite_pct']}% | {row['neutral']} | {row['neutral_pct']}% | {row['unavailable']} |"
         )
     lines += [
         "",
-        "The detailed CSV contains each trade and the BTC trend classification on both timeframes.",
-        "The Run #35 artifact stores opened_at rather than the original signal_ts; the runner fills at the signal candle close, so opened_at is used as the signal/entry decision timestamp.",
+        "## Performance after applying filters",
+        "",
+        "| Filter | Trades | BUY | SELL | Wins | Losses | Win rate | Net PnL | Ending equity | Profit Factor | Max DD | Max DD % |",
+        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
     ]
-    (args.output / "README.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
-    print("\n".join(lines), flush=True)
+    for row in performance:
+        lines.append(
+            f"| {row['filter']} | {row['trades']} | {row['buy_trades']} | {row['sell_trades']} | "
+            f"{row['wins']} | {row['losses']} | {row['win_rate_pct']}% | {row['net_pnl']} | "
+            f"{row['ending_equity']} | {row['profit_factor']} | {row['max_drawdown']} | {row['max_drawdown_pct']}% |"
+        )
+    lines += [
+        "",
+        "Interpretation caution: PnL and equity are calculated by summing the original realized trade PnL values in close-time order, starting from $100. The original trade sizes are retained. This isolates the effect of excluding trades but does not recalculate position sizes from a filtered equity curve, free-slot replacement entries, or overlapping-position portfolio constraints.",
+        "",
+        "The detailed CSV contains every original trade, BTC trend states, and pass/fail flags for each filter. Separate CSV ledgers contain trades retained by each filter.",
+        "Run #35 stores opened_at rather than original signal_ts; opened_at is used as the entry decision timestamp because the runner enters at the signal candle close.",
+    ]
+    report = "\n".join(lines) + "\n"
+    (args.output / "README.md").write_text(report, encoding="utf-8")
+    print(report, flush=True)
 
 
 if __name__ == "__main__":
