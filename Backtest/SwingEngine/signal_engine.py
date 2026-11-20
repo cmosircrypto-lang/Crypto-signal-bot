@@ -1,6 +1,8 @@
 
 from __future__ import annotations
 
+from typing import Callable
+
 import pandas as pd
 
 from market_structure import analyze_market_structure
@@ -230,6 +232,7 @@ def generate_entry_signals(
     touch_rule: str = "first",
     decay_per_touch: float = 0.25,
     require_4h_alignment: bool = False,
+    progress_callback: Callable[[str, int, int], None] | None = None,
 ) -> pd.DataFrame:
     """
     Generate independent entry signals from 1h Order Blocks.
@@ -322,6 +325,10 @@ def generate_entry_signals(
             candles_4h,
             left=5,
             right=5,
+            progress_callback=(
+                (lambda done, total: progress_callback("4h_structure", done, total))
+                if progress_callback else None
+            ),
         )
     else:
         structure_4h = None
@@ -332,13 +339,20 @@ def generate_entry_signals(
         candles,
         left=5,
         right=5,
+        progress_callback=(
+            (lambda done, total: progress_callback("15m_structure", done, total))
+            if progress_callback else None
+        ),
     )
 
     results = []
 
-    for ob_id, ob in order_blocks_1h.reset_index(
+    total_obs = len(order_blocks_1h)
+    for ob_position, (ob_id, ob) in enumerate(order_blocks_1h.reset_index(
         drop=True
-    ).iterrows():
+    ).iterrows(), start=1):
+        if progress_callback is not None:
+            progress_callback("order_blocks", ob_position, total_obs)
 
         if ob["direction"] == "BULLISH":
             direction = "BUY"
@@ -372,6 +386,8 @@ def generate_entry_signals(
         pending_structure_touch = None
 
         for i in range(len(candles)):
+            if progress_callback is not None and (i == 0 or (i + 1) % 50000 == 0 or i + 1 == len(candles)):
+                progress_callback("candles", i + 1, len(candles))
 
             candle = candles.iloc[i]
 

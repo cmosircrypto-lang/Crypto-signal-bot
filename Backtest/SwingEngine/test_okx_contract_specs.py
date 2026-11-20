@@ -34,8 +34,8 @@ def test_contract_parsing():
     item = {
         "instId": "BTC-USDT-SWAP",
         "instType": "SWAP",
-        "baseCcy": "BTC",
-        "quoteCcy": "USDT",
+        "baseCcy": "",
+        "quoteCcy": "",
         "settleCcy": "USDT",
         "ctType": "linear",
         "ctVal": "0.01",
@@ -50,6 +50,8 @@ def test_contract_parsing():
 
     assert spec is not None
     assert spec.inst_id == "BTC-USDT-SWAP"
+    assert spec.base_ccy == "BTC"
+    assert spec.quote_ccy == "USDT"
     assert spec.contract_value == Decimal("0.01")
     assert spec.lot_size == Decimal("0.1")
 
@@ -62,8 +64,8 @@ def test_unsupported_contracts_rejected():
     item = {
         "instId": "BTC-USDT-SWAP",
         "instType": "SWAP",
-        "baseCcy": "BTC",
-        "quoteCcy": "USDT",
+        "baseCcy": "",
+        "quoteCcy": "",
         "settleCcy": "USDT",
         "ctType": "inverse",
         "ctVal": "100",
@@ -251,8 +253,8 @@ def test_mocked_api_loading():
     valid_item = {
         "instId": "BTC-USDT-SWAP",
         "instType": "SWAP",
-        "baseCcy": "BTC",
-        "quoteCcy": "USDT",
+        "baseCcy": "",
+        "quoteCcy": "",
         "settleCcy": "USDT",
         "ctType": "linear",
         "ctVal": "0.01",
@@ -277,8 +279,10 @@ def test_mocked_api_loading():
             self.close()
             return False
 
-    def fake_urlopen(url, timeout):
-        assert "instType=SWAP" in url
+    def fake_urlopen(request, timeout):
+        assert "instType=SWAP" in request.full_url
+        assert request.get_header("User-agent") == "SwingEngineBacktest/1.0"
+        assert request.get_header("Accept") == "application/json"
         assert timeout == 20
 
         return FakeResponse(
