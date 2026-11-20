@@ -1,5 +1,7 @@
 import unittest
 import io
+import tempfile
+from pathlib import Path
 from contextlib import redirect_stdout
 from types import SimpleNamespace
 
@@ -9,6 +11,7 @@ from backtest_runner import (
     simulate_scenario,
     run_matrix,
 )
+from analyze_results import generate_diagnostics
 
 
 def fixture_data(direction="BUY", second_candle=None):
@@ -56,6 +59,9 @@ class BacktestRunnerTests(unittest.TestCase):
         self.assertAlmostEqual(trades.iloc[0]["pnl"], -1.0)
         self.assertEqual(trades.iloc[0]["opened_at"], 900_000)
         self.assertEqual(trades.iloc[0]["closed_at"], 1_800_000)
+        self.assertEqual(trades.iloc[0]["method"], "DIRECT")
+        self.assertEqual(trades.iloc[0]["ob_id"], 0)
+        self.assertEqual(trades.iloc[0]["touch_number"], 1)
 
     def test_sell_stop_uses_far_upper_wick(self):
         data, signals, obs = fixture_data(
@@ -84,11 +90,39 @@ class BacktestRunnerTests(unittest.TestCase):
         self.assertIn("[PROGRESS]", output.getvalue())
         self.assertIn("month 1970-01", output.getvalue())
 
+    def test_diagnostic_reports_group_trades_by_method_and_scenario(self):
+        data, signals, obs = fixture_data()
+        _, trades, _ = simulate_scenario(
+            data, signals, obs, risk_percent=1.0, reward_ratio=1.5
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            trades.to_csv(root / "trades_risk_1_rr_1.5.csv", index=False)
+            skipped = pd.DataFrame([{
+                "symbol": "BTC-USDT-SWAP",
+                "method": "DIRECT",
+                "skip_reason": "portfolio_limit",
+            }])
+            skipped.to_csv(root / "skipped_1_rr_1.5.csv", index=False)
+            outputs = generate_diagnostics(root)
+            self.assertTrue((root / "diagnostics_by_method.csv").exists())
+            self.assertTrue((root / "diagnostics_skipped_by_reason.csv").exists())
+            by_method = pd.read_csv(root / "diagnostics_by_method.csv")
+            self.assertEqual(by_method.iloc[0]["method"], "DIRECT")
+            self.assertEqual(int(by_method.iloc[0]["closed_trades"]), 1)
+            self.assertGreaterEqual(len(outputs), 10)
+
     def test_matrix_contains_all_nine_risk_rr_pairs(self):
         data, signals, obs = fixture_data()
-        summary, ledgers = run_matrix(data, signals, obs)
+        diagnostics = {}
+        summary, ledgers = run_matrix(
+            data, signals, obs, diagnostics_out=diagnostics
+        )
         self.assertEqual(len(summary), 9)
         self.assertEqual(len(ledgers), 9)
+        self.assertEqual(len(diagnostics), 18)
+        self.assertIn("risk_0.05_rr_1.5", diagnostics)
+        self.assertIn("open_risk_0.05_rr_1.5", diagnostics)
         self.assertEqual(
             set(summary["risk_percent"]),
             {0.05, 1.0, 1.5},
