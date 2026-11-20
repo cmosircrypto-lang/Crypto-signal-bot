@@ -78,6 +78,27 @@ The summary includes trade count, win rate, profit factor, average R,
 maximum realized-equity drawdown, ending equity, open positions, and skipped
 trade counts.
 
+## Post-backtest diagnostics
+
+After all nine scenarios finish, the runner also preserves signal attribution
+in each closed-trade ledger: entry method, source OB ID/timestamps, BOS time,
+touch number/score, 4h trend label, and the actual stop/target used. Separate
+CSV ledgers record skipped signal candidates (including the reason, method,
+symbol, and scenario) and positions still open at the end of the dataset.
+
+The analysis-only `analyze_results.py` module then creates:
+- Performance by entry method (DIRECT, ENGULFING, PIN_BAR,
+  M15_STRUCTURE_BREAK).
+- Performance by symbol, symbol + method, entry month, and exit month.
+- Performance by BUY/SELL direction, touch number, and exit reason.
+- Skipped-signal counts by reason, method, and symbol.
+- A cross-scenario ranking by Profit Factor and net PnL.
+
+These reports are derived from the existing simulated trades. They do not
+change signal generation, execution order, sizing, stop/target logic, or
+backtest results. The outputs are saved beside the nine trade ledgers under
+`Backtest/results/swing_engine/`.
+
 ## No-lookahead rule
 
 A candle is available to a decision only when its close time has passed:
