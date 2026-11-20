@@ -2,26 +2,43 @@ import unittest
 
 import pandas as pd
 
-from symbol_filter_experiment import FILTER_MODES, classify_symbols, _subset_signals
+from backtest_runner import FILTER_MODES
+from symbol_filter_experiment import classify_symbols, _subset_signals
 
 
 class SymbolFilterExperimentTests(unittest.TestCase):
-    def test_classification_requires_minimum_sample_in_every_filter(self):
+    def test_classification_uses_consistent_training_performance(self):
         training = {}
         for mode in FILTER_MODES:
             rows = []
-            for symbol, pf in (("GOOD", 1.5), ("BAD", 0.5), ("MIXED", 1.2)):
-                for index in range(6):
-                    rows.append({
-                        "symbol": symbol,
-                        "pnl": 1.0 if index < int(4 * pf / (1 + pf)) else -1.0,
-                    })
+            for symbol, values in (
+                ("GOOD", [2.0, 2.0, 2.0, 2.0, -1.0, -1.0]),
+                ("BAD", [1.0, 1.0, -2.0, -2.0, -2.0, -2.0]),
+                ("MIXED", [2.0, 2.0, 2.0, -1.0, -1.0, -1.0]),
+            ):
+                rows.extend({"symbol": symbol, "pnl": value} for value in values)
             training[mode] = pd.DataFrame(rows)
         strong, weak, details = classify_symbols(training, min_trades=5)
-        self.assertIn("GOOD", strong + weak + details["symbol"].tolist())
-        self.assertEqual(set(strong).intersection(weak), set())
+        self.assertEqual(strong, ["GOOD"])
+        self.assertEqual(weak, ["BAD"])
+        self.assertEqual(
+            details.set_index("symbol").loc["MIXED", "classification"],
+            "mixed",
+        )
 
-    def test_signals_are_split_strictly_after_cutoff(self):
+    def test_classification_excludes_insufficient_samples(self):
+        training = {}
+        for mode in FILTER_MODES:
+            training[mode] = pd.DataFrame([
+                {"symbol": "TOO_FEW", "pnl": 1.0},
+                {"symbol": "TOO_FEW", "pnl": -1.0},
+            ])
+        strong, weak, details = classify_symbols(training, min_trades=5)
+        self.assertEqual(strong, [])
+        self.assertEqual(weak, [])
+        self.assertTrue(details.empty)
+
+    def test_signals_are_split_without_boundary_overlap(self):
         signals = {"X": pd.DataFrame({"signal_ts": [10, 20, 30]})}
         train = _subset_signals(signals, 20, True)["X"]
         test = _subset_signals(signals, 20, False)["X"]
