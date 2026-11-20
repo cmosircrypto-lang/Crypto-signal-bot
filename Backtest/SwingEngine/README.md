@@ -1,4 +1,4 @@
-# Swing Engine — isolated OKX perpetual backtest
+# Swing Engine — isolated OKX perpetual backtest with BTC trend filters
 
 This engine is simulation-only. It does not submit live orders and does not
 modify the legacy scanner or live trading code.
@@ -15,7 +15,7 @@ Each file must contain `ts,open,high,low,close,volume`. The `ts` value is
 the candle OPEN time in Unix milliseconds. The default run validates all 76
 symbols across all three timeframes.
 
-## Run the full nine-combination backtest
+## Run the 36-scenario BTC-filtered backtest
 
 From the repository root:
 
@@ -36,8 +36,14 @@ For theoretical base-quantity sizing without exchange lot/minimum constraints:
 python Backtest/SwingEngine/backtest_runner.py --legacy-sizing
 ```
 
-The optional `--require-4h-alignment` flag enables the 4h trend filter. It is
-off by default.
+The full runner now tests three BTC trend filters at entry time: 1d+4h,
+1d+1h, and 1d+4h+1h. A signal is accepted only when BTC is aligned with its
+direction on every timeframe required by that filter. Neutral and unavailable
+states are rejected. Daily BTC candles are aggregated from exactly 24
+contiguous UTC 1h candles. Only candles fully closed by the signal timestamp
+are used; no future candle can influence the entry. The optional
+`--require-4h-alignment` remains off by default and is separate from these BTC
+filters.
 
 ## Test matrix
 
@@ -47,8 +53,12 @@ placement, with zero fees, zero slippage, and zero funding:
 | Risk per trade | RR values |
 |---|---|
 | 0.05% | 1.5, 2.0, 2.5 |
+| 0.5% | 1.5, 2.0, 2.5 |
 | 1.0% | 1.5, 2.0, 2.5 |
 | 1.5% | 1.5, 2.0, 2.5 |
+
+Each risk/RR pair is replayed independently under all three BTC filter modes,
+for 3 × 4 × 3 = 36 chronological portfolio simulations.
 
 The stop is placed at the far wick edge of the source 1h Order Block:
 below the lower wick for BUY and above the upper wick for SELL. The target is
@@ -71,8 +81,8 @@ calculated from the entry-to-stop distance multiplied by the selected RR.
 
 Files are written to `Backtest/results/swing_engine/`:
 
-- `summary_9_combinations.csv` and `.json`
-- One `trades_*.csv` ledger for each of the nine scenarios
+- `summary_btc_filters_36_scenarios.csv` and `summary_btc_filters_36_scenarios.json`
+- One `trades_*.csv` ledger for each of the 36 scenarios
 
 The summary includes trade count, win rate, profit factor, average R,
 maximum realized-equity drawdown, ending equity, open positions, and skipped
@@ -80,7 +90,7 @@ trade counts.
 
 ## Post-backtest diagnostics
 
-After all nine scenarios finish, the runner also preserves signal attribution
+After all 36 scenarios finish, the runner also preserves signal attribution
 in each closed-trade ledger: entry method, source OB ID/timestamps, BOS time,
 touch number/score, 4h trend label, and the actual stop/target used. Separate
 CSV ledgers record skipped signal candidates (including the reason, method,
@@ -96,7 +106,7 @@ The analysis-only `analyze_results.py` module then creates:
 
 These reports are derived from the existing simulated trades. They do not
 change signal generation, execution order, sizing, stop/target logic, or
-backtest results. The outputs are saved beside the nine trade ledgers under
+backtest results. The outputs are saved beside the 36 trade ledgers under
 `Backtest/results/swing_engine/`.
 
 ## No-lookahead rule
@@ -116,9 +126,9 @@ the nine portfolio simulations:
 - Signal preparation: current symbol, Order Block scan count, and 15m candle
   scan count. Long inner scans emit progress callbacks every 50,000 candles.
 - Timeline construction: symbols indexed for the global 15m close timeline.
-- Each of the nine scenarios: progress approximately every 5%, active UTC
+- Each of the 36 scenarios: progress approximately every 5%, active UTC
   month, elapsed time, and estimated remaining time.
-- Saving: completed trade ledgers out of nine.
+- Saving: completed trade ledgers out of 36.
 
 A `[HEARTBEAT]` line is emitted every 30 seconds and identifies the exact
 stage and current symbol/operation. If the same operation remains active for
