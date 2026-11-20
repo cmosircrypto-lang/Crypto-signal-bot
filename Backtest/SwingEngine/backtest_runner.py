@@ -475,8 +475,9 @@ def run_matrix(symbol_data, signals_by_symbol, order_blocks_by_symbol,
                     columns=[
                         "symbol", "direction", "method", "ob_id", "ob_ts",
                         "bos_ts", "signal_ts", "touch_number", "touch_score",
-                        "htf_trend", "risk_percent", "reward_ratio",
-                        "skip_reason", "error",
+                        "htf_trend", "ob_direction", "ob_body_low",
+                        "ob_body_high", "ob_wick_low", "ob_wick_high",
+                        "risk_percent", "reward_ratio", "skip_reason", "error",
                     ],
                 )
                 diagnostics_out[f"open_{scenario_name}"] = pd.DataFrame([
