@@ -118,14 +118,14 @@ class BacktestRunnerTests(unittest.TestCase):
         summary, ledgers = run_matrix(
             data, signals, obs, diagnostics_out=diagnostics
         )
-        self.assertEqual(len(summary), 9)
-        self.assertEqual(len(ledgers), 9)
-        self.assertEqual(len(diagnostics), 18)
+        self.assertEqual(len(summary), 12)
+        self.assertEqual(len(ledgers), 12)
+        self.assertEqual(len(diagnostics), 24)
         self.assertIn("risk_0.05_rr_1.5", diagnostics)
         self.assertIn("open_risk_0.05_rr_1.5", diagnostics)
         self.assertEqual(
             set(summary["risk_percent"]),
-            {0.05, 1.0, 1.5},
+            {0.05, 0.5, 1.0, 1.5},
         )
         self.assertEqual(
             set(summary["reward_ratio"]),
