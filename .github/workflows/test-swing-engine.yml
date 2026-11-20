@@ -164,6 +164,7 @@ jobs:
             --pattern "okx_data.tar" --dir /tmp
           mkdir -p Backtest/data/okx
           tar -xf /tmp/okx_data.tar -C Backtest/data/okx
+          tar -xf /tmp/okx_timeframes.tar -C Backtest/data/okx
           test -d Backtest/data/okx/1h
           test -d Backtest/data/okx/4h
           find Backtest/data/okx/1h -maxdepth 1 -iname '*BTC*USDT*SWAP*.csv.gz' -print
