@@ -14,7 +14,7 @@ class SymbolFilterExperimentTests(unittest.TestCase):
             for symbol, values in (
                 ("GOOD", [2.0, 2.0, 2.0, 2.0, -1.0, -1.0]),
                 ("BAD", [1.0, 1.0, -2.0, -2.0, -2.0, -2.0]),
-                ("MIXED", [2.0, 2.0, 2.0, -1.0, -1.0, -1.0]),
+                ("MIXED", [1.0, 1.0, 1.0, -1.0, -1.0, -1.0]),
             ):
                 rows.extend({"symbol": symbol, "pnl": value} for value in values)
             training[mode] = pd.DataFrame(rows)
