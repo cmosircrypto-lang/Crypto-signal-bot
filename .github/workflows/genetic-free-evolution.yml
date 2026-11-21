@@ -1,0 +1,88 @@
+name: Genetic Engine — Free Evolution
+
+on:
+  push:
+    branches:
+      - experiment/genetic-evolution-free
+    paths:
+      - ".github/workflows/genetic-free-evolution.yml"
+      - "Backtest/GeneticEngine/free_evolution_runner.py"
+      - "Backtest/GeneticEngine/tests/test_free_evolution.py"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  free-evolution:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    env:
+      GENETIC_OUTPUT_DIR: Backtest/results/genetic_free
+
+    steps:
+      - name: Checkout free evolution branch
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pandas numpy
+
+      - name: Compile runner and test genome operators
+        run: |
+          python -m py_compile Backtest/GeneticEngine/free_evolution_runner.py
+          python -m unittest Backtest.GeneticEngine.tests.test_genome Backtest.GeneticEngine.tests.test_default_parity Backtest.GeneticEngine.tests.test_free_evolution
+
+      - name: Download validated OKX datasets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download okx-data --repo "${GITHUB_REPOSITORY}" --pattern "okx_data.tar" --dir /tmp
+          gh release download okx-data --repo "${GITHUB_REPOSITORY}" --pattern "okx_timeframes.tar" --dir /tmp
+          mkdir -p Backtest/data/okx
+          tar -xf /tmp/okx_data.tar -C Backtest/data/okx
+          tar -xf /tmp/okx_timeframes.tar -C Backtest/data/okx
+          for timeframe in 15m 1h 4h; do
+            count=$(find "Backtest/data/okx/$timeframe" -maxdepth 1 -name '*.csv.gz' | wc -l)
+            echo "$timeframe: $count symbol files"
+            test "$count" -eq 76
+          done
+
+      - name: Run free genetic evolution and untouched OOS validation
+        run: |
+          set -o pipefail
+          python -u -m Backtest.GeneticEngine.free_evolution_runner | tee /tmp/genetic-free.log
+
+      - name: Add free evolution results to workflow summary
+        if: always()
+        run: |
+          echo "## Free Genetic Evolution" >> "$GITHUB_STEP_SUMMARY"
+          if [ -f Backtest/results/genetic_free/README.md ]; then
+            cat Backtest/results/genetic_free/README.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [ -f Backtest/results/genetic_free/genetic_free_oos_validation.csv ]; then
+            cat Backtest/results/genetic_free/genetic_free_oos_validation.csv >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [ -f /tmp/genetic-free.log ]; then
+            tail -n 100 /tmp/genetic-free.log >> "$GITHUB_STEP_SUMMARY"
+            mkdir -p Backtest/results/genetic_free
+            cp /tmp/genetic-free.log Backtest/results/genetic_free/genetic-free.log
+          fi
+
+      - name: Upload free evolution checkpoints and results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: genetic-free-evolution-checkpoint
+          path: |
+            Backtest/results/genetic_free/
+            /tmp/genetic-free.log
+          if-no-files-found: warn
+          retention-days: 90
