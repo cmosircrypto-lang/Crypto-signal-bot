@@ -28,6 +28,11 @@ on:
         required: true
         type: boolean
         default: false
+      run_recovery_cycle_experiment:
+        description: "Run Run #48 per-symbol one-position ATR/RR and recovery-cycle OOS matrix"
+        required: true
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -85,8 +90,11 @@ jobs:
       - name: Test chronological symbol-filter experiment
         run: python Backtest/SwingEngine/test_symbol_filter_experiment.py
 
+      - name: Test recovery-cycle experiment
+        run: python Backtest/SwingEngine/test_recovery_cycle_experiment.py
+
       - name: Download validated OKX datasets
-        if: ${{ inputs.run_full_backtest || inputs.run_symbol_filter_experiment }}
+        if: ${{ inputs.run_full_backtest || inputs.run_symbol_filter_experiment || inputs.run_recovery_cycle_experiment }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -121,6 +129,33 @@ jobs:
         run: |
           set -o pipefail
           python -u Backtest/SwingEngine/symbol_filter_experiment.py | tee /tmp/symbol-filter-experiment.log
+
+      - name: Run Run #48 recovery-cycle matrix
+        if: ${{ inputs.run_recovery_cycle_experiment }}
+        run: |
+          set -o pipefail
+          python -u Backtest/SwingEngine/recovery_cycle_experiment.py | tee /tmp/run48-recovery-cycle.log
+
+      - name: Add Run #48 recovery-cycle summary
+        if: ${{ always() && inputs.run_recovery_cycle_experiment }}
+        run: |
+          if [ -f Backtest/results/run48/README.md ]; then
+            cat Backtest/results/run48/README.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [ -f /tmp/run48-recovery-cycle.log ]; then
+            tail -n 80 /tmp/run48-recovery-cycle.log >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload Run #48 recovery-cycle results
+        if: ${{ always() && inputs.run_recovery_cycle_experiment }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: swing-engine-run48-recovery-cycle
+          path: |
+            Backtest/results/run48/
+            /tmp/run48-recovery-cycle.log
+          if-no-files-found: warn
+          retention-days: 30
 
       - name: Add symbol-filter experiment summary
         if: ${{ always() && inputs.run_symbol_filter_experiment }}
