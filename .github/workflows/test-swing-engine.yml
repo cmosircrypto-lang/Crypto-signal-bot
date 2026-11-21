@@ -33,6 +33,11 @@ on:
         required: true
         type: boolean
         default: false
+      run_genetic_data_parity:
+        description: "Run full 76-symbol cached-OKX parity gate for the Genetic Strategy Engine"
+        required: true
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -100,7 +105,7 @@ jobs:
         run: python Backtest/SwingEngine/test_recovery_cycle_experiment.py
 
       - name: Download validated OKX datasets
-        if: ${{ inputs.run_full_backtest || inputs.run_symbol_filter_experiment || inputs.run_recovery_cycle_experiment }}
+        if: ${{ inputs.run_full_backtest || inputs.run_symbol_filter_experiment || inputs.run_recovery_cycle_experiment || inputs.run_genetic_data_parity }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -116,6 +121,31 @@ jobs:
             echo "$timeframe: $count symbol files"
             test "$count" -eq 76
           done
+
+      - name: Run full cached OKX parity for Genetic Strategy Engine
+        if: ${{ inputs.run_genetic_data_parity }}
+        run: |
+          set -o pipefail
+          python -u Backtest/GeneticEngine/tests/test_cached_data_parity.py | tee /tmp/genetic-cached-data-parity.log
+
+      - name: Add Genetic Engine parity summary
+        if: ${{ always() && inputs.run_genetic_data_parity }}
+        run: |
+          if [ -f /tmp/genetic-cached-data-parity.log ]; then
+            {
+              echo "## Genetic Strategy Engine — full cached-data parity"
+              tail -n 100 /tmp/genetic-cached-data-parity.log
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload Genetic Engine parity log
+        if: ${{ always() && inputs.run_genetic_data_parity }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: genetic-engine-cached-data-parity
+          path: /tmp/genetic-cached-data-parity.log
+          if-no-files-found: warn
+          retention-days: 30
 
       - name: Run 36 BTC-filtered backtest scenarios
         if: ${{ inputs.run_full_backtest }}
