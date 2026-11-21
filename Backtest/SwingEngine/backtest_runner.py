@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import pickle
 import time
 import threading
 from datetime import datetime, timezone
@@ -97,12 +99,55 @@ class ProgressMonitor:
 
 def prepare_signals(symbol_data, methods=None, zone_type="body",
                     touch_rule="first", require_4h_alignment=False,
-                    progress_monitor=None):
-    """Precompute causal signals and their source 1h OB rows per symbol."""
+                    progress_monitor=None, checkpoint_dir=None):
+    """Precompute causal signals/OBs per symbol, optionally resuming saved symbols."""
     signals = {}
     order_blocks = {}
+    checkpoint_root = Path(checkpoint_dir) if checkpoint_dir else None
+    if checkpoint_root:
+        checkpoint_root.mkdir(parents=True, exist_ok=True)
+    effective_methods = methods or (
+        "DIRECT", "ENGULFING", "PIN_BAR", "M15_STRUCTURE_BREAK",
+    )
     symbols = sorted(symbol_data.items())
     for symbol_index, (symbol, item) in enumerate(symbols, start=1):
+        checkpoint_path = None
+        checkpoint_signature = None
+        if checkpoint_root:
+            safe_symbol = "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in symbol)
+            checkpoint_path = checkpoint_root / f"{safe_symbol}.pkl"
+            signature_payload = {
+                "symbol": symbol,
+                "methods": list(effective_methods),
+                "zone_type": zone_type,
+                "touch_rule": touch_rule,
+                "require_4h_alignment": bool(require_4h_alignment),
+                "frames": {
+                    name: (
+                        len(item.frames[name]),
+                        int(item.frames[name]["ts"].iloc[0]) if len(item.frames[name]) else None,
+                        int(item.frames[name]["ts"].iloc[-1]) if len(item.frames[name]) else None,
+                    )
+                    for name in ("15m", "1h", "4h")
+                },
+            }
+            checkpoint_signature = json.dumps(signature_payload, sort_keys=True, separators=(",", ":"))
+            if checkpoint_path.exists():
+                try:
+                    with checkpoint_path.open("rb") as handle:
+                        cached = pickle.load(handle)
+                    if cached.get("signature") == checkpoint_signature:
+                        signals[symbol] = cached["signals"]
+                        order_blocks[symbol] = cached["order_blocks"]
+                        if progress_monitor:
+                            progress_monitor.progress(
+                                "symbol_preparation", symbol_index, len(symbols),
+                                f"restored {symbol}; OBs={len(order_blocks[symbol])}; signals={len(signals[symbol])}",
+                            )
+                        print(f"[PREP CHECKPOINT] restored {symbol} ({symbol_index}/{len(symbols)})", flush=True)
+                        continue
+                except Exception as exc:
+                    print(f"[PREP CHECKPOINT] ignored unreadable cache for {symbol}: {exc}", flush=True)
         if progress_monitor:
             progress_monitor.set_stage("order_block_detection", f"symbol {symbol_index}/{len(symbols)}: {symbol}")
         one_hour = item.frames["1h"]
@@ -123,10 +168,7 @@ def prepare_signals(symbol_data, methods=None, zone_type="body",
             candles_15m=fifteen,
             order_blocks_1h=obs,
             candles_4h=four_hour,
-            methods=methods or (
-                "DIRECT", "ENGULFING", "PIN_BAR",
-                "M15_STRUCTURE_BREAK",
-            ),
+            methods=effective_methods,
             zone_type=zone_type,
             touch_rule=touch_rule,
             require_4h_alignment=require_4h_alignment,
@@ -144,6 +186,16 @@ def prepare_signals(symbol_data, methods=None, zone_type="body",
             signals[symbol] = found.drop(columns=["_priority"]).reset_index(drop=True)
         else:
             signals[symbol] = found
+        if checkpoint_path:
+            temporary = checkpoint_path.with_suffix(".pkl.tmp")
+            with temporary.open("wb") as handle:
+                pickle.dump({
+                    "signature": checkpoint_signature,
+                    "signals": signals[symbol],
+                    "order_blocks": order_blocks[symbol],
+                }, handle, protocol=pickle.HIGHEST_PROTOCOL)
+            os.replace(temporary, checkpoint_path)
+            print(f"[PREP CHECKPOINT] saved {symbol} ({symbol_index}/{len(symbols)})", flush=True)
         if progress_monitor:
             progress_monitor.progress("symbol_preparation", symbol_index, len(symbols), f"completed {symbol}; OBs={len(obs)}; signals={len(signals[symbol])}")
     return signals, order_blocks
