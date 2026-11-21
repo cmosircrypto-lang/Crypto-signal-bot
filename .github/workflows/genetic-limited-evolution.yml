@@ -1,0 +1,100 @@
+name: Genetic Engine — Limited Evolution
+
+on:
+  push:
+    branches:
+      - experiment/genetic-evolution-limited
+  workflow_dispatch:
+    inputs:
+      resume_run_id:
+        description: "Previous run ID to restore evolution checkpoints from (leave blank for a fresh run)"
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  limited-evolution:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    env:
+      GENETIC_OUTPUT_DIR: Backtest/results/genetic_limited
+
+    steps:
+      - name: Checkout genetic evolution branch
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pandas numpy
+
+      - name: Compile genetic runner
+        run: python -m py_compile Backtest/GeneticEngine/evolution_runner.py Backtest/GeneticEngine/evaluator.py
+
+      - name: Run genome contract tests
+        run: python -m unittest Backtest.GeneticEngine.tests.test_genome Backtest.GeneticEngine.tests.test_default_parity
+
+      - name: Download validated OKX datasets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download okx-data --repo "${GITHUB_REPOSITORY}" --pattern "okx_data.tar" --dir /tmp
+          gh release download okx-data --repo "${GITHUB_REPOSITORY}" --pattern "okx_timeframes.tar" --dir /tmp
+          mkdir -p Backtest/data/okx
+          tar -xf /tmp/okx_data.tar -C Backtest/data/okx
+          tar -xf /tmp/okx_timeframes.tar -C Backtest/data/okx
+          for timeframe in 15m 1h 4h; do
+            count=$(find "Backtest/data/okx/$timeframe" -maxdepth 1 -name '*.csv.gz' | wc -l)
+            echo "$timeframe: $count symbol files"
+            test "$count" -eq 76
+          done
+
+      - name: Restore previous genetic checkpoints
+        if: ${{ inputs.resume_run_id != '' }}
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.resume_run_id }}
+          name: genetic-limited-evolution-checkpoint
+          path: Backtest/results/genetic_limited
+
+      - name: Run bounded genetic evolution and OOS validation
+        run: |
+          set -o pipefail
+          python -u Backtest/GeneticEngine/evolution_runner.py | tee /tmp/genetic-limited.log
+
+      - name: Add genetic results to workflow summary
+        if: always()
+        run: |
+          echo "## Limited Genetic Evolution" >> "$GITHUB_STEP_SUMMARY"
+          if [ -f Backtest/results/genetic_limited/README.md ]; then
+            cat Backtest/results/genetic_limited/README.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [ -f Backtest/results/genetic_limited/genetic_limited_oos_validation.csv ]; then
+            cat Backtest/results/genetic_limited/genetic_limited_oos_validation.csv >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [ -f /tmp/genetic-limited.log ]; then
+            tail -n 80 /tmp/genetic-limited.log >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload genetic checkpoint and results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: genetic-limited-evolution-checkpoint
+          path: |
+            Backtest/results/genetic_limited/
+            /tmp/genetic-limited.log
+          if-no-files-found: warn
+          retention-days: 90
