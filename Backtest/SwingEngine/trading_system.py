@@ -75,6 +75,8 @@ class TradingSystem:
         take_profit,
         risk_percent,
         timestamp,
+        round_contracts_up=False,
+        max_risk_amount=None,
     ):
         """
         Registers portfolio capacity and opens the trade.
@@ -113,6 +115,8 @@ class TradingSystem:
                 take_profit=take_profit,
                 risk_percent=risk_percent,
                 timestamp=timestamp,
+                round_contracts_up=round_contracts_up,
+                max_risk_amount=max_risk_amount,
             )
 
             return position
