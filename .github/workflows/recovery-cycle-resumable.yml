@@ -1,0 +1,106 @@
+name: Recovery Cycle Resumable OOS Validation
+
+on:
+  workflow_dispatch:
+    inputs:
+      resume_run_id:
+        description: "Previous GitHub Actions run ID to restore checkpoints from (leave blank for a fresh run)"
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  recovery-resumable:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    env:
+      RECOVERY_TOP_SCENARIOS_ONLY: "true"
+      RECOVERY_OUTPUT_DIR: Backtest/results/recovery_resumable
+
+    steps:
+      - name: Checkout resumable recovery branch
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pandas numpy
+
+      - name: Compile resumable runner
+        run: python -m py_compile Backtest/SwingEngine/recovery_cycle_resumable.py
+
+      - name: Run recovery-cycle unit tests
+        run: python Backtest/SwingEngine/test_recovery_cycle_experiment.py
+
+      - name: Download validated OKX datasets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download okx-data --repo "${GITHUB_REPOSITORY}" --pattern "okx_data.tar" --dir /tmp
+          gh release download okx-data --repo "${GITHUB_REPOSITORY}" --pattern "okx_timeframes.tar" --dir /tmp
+          mkdir -p Backtest/data/okx
+          tar -xf /tmp/okx_data.tar -C Backtest/data/okx
+          tar -xf /tmp/okx_timeframes.tar -C Backtest/data/okx
+          for timeframe in 15m 1h 4h; do
+            count=$(find "Backtest/data/okx/$timeframe" -maxdepth 1 -name '*.csv.gz' | wc -l)
+            echo "$timeframe: $count symbol files"
+            test "$count" -eq 76
+          done
+
+      - name: Restore previous run checkpoints
+        if: ${{ inputs.resume_run_id != '' }}
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.resume_run_id }}
+          name: recovery-cycle-resumable-checkpoint
+          path: Backtest/results/recovery_resumable
+
+      - name: Run resumable recovery-cycle validation
+        run: |
+          set -o pipefail
+          python -u Backtest/SwingEngine/recovery_cycle_resumable.py | tee /tmp/recovery-resumable.log
+
+      - name: Add checkpoint and run summary
+        if: always()
+        run: |
+          echo "## Recovery Cycle — resumable top-scenario validation" >> "$GITHUB_STEP_SUMMARY"
+          if [ -f Backtest/results/recovery_resumable/checkpoint_manifest.json ]; then
+            python - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import json
+          from pathlib import Path
+          p = Path("Backtest/results/recovery_resumable/checkpoint_manifest.json")
+          m = json.loads(p.read_text())
+          done = m.get("completed_scenarios", {})
+          print(f"- Completed scenarios checkpointed: {len(done)}")
+          print(f"- Full run complete: {m.get('complete', False)}")
+          for name, item in done.items():
+              summary = item.get("summary", {})
+              print(f"- {name}: trades={item.get('trade_rows')}, cycles={item.get('cycle_rows')}, final_equity={summary.get('final_equity', summary.get('ending_equity', 'n/a'))}")
+          PY
+          fi
+          if [ -f /tmp/recovery-resumable.log ]; then
+            tail -n 80 /tmp/recovery-resumable.log >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload resumable checkpoint and results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: recovery-cycle-resumable-checkpoint
+          path: |
+            Backtest/results/recovery_resumable/
+            /tmp/recovery-resumable.log
+          if-no-files-found: warn
+          retention-days: 90
