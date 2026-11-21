@@ -91,13 +91,24 @@ def _levels(signal, atr_multiple, rr):
     return stop, target
 
 
-def recovery_risk_amount(losses, base_risk, base_target_profit, rr, objective, sizing_method, recovery_entries):
-    """Return requested risk dollars for the next recovery entry."""
+def recovery_risk_amount(losses, base_risk, base_target_profit, rr, objective, sizing_method, recovery_entries, *, stop_distance=None, base_quantity=None):
+    """Return requested risk dollars for the next recovery entry.
+
+    Exact recovery sizes risk from the cycle's outstanding cash target.
+    Double-size sizes the next position at 2x, 4x, 8x... the initial
+    position's base quantity; risk dollars therefore also depend on the
+    current signal's stop distance.
+    """
     if sizing_method == "exact_recovery":
         target = base_target_profit if objective == "initial_target_profit" else 0.0
         return (float(losses) + float(target)) / float(rr)
     if sizing_method == "double_size":
-        return float(base_risk) * (2 ** (int(recovery_entries) + 1))
+        if stop_distance is None or base_quantity is None:
+            raise ValueError("double_size requires stop_distance and base_quantity")
+        if float(stop_distance) <= 0 or float(base_quantity) <= 0:
+            raise ValueError("stop_distance and base_quantity must be positive")
+        target_quantity = float(base_quantity) * (2 ** (int(recovery_entries) + 1))
+        return target_quantity * float(stop_distance)
     raise ValueError("Unknown recovery sizing method")
 
 
@@ -201,6 +212,8 @@ def _simulate(data, signals, obs, specs, btc_frames, atr_multiple, rr,
                     state["base_target_profit"], rr,
                     cycle_config["objective"], cycle_config["sizing_method"],
                     state["recovery_entries"],
+                    stop_distance=abs(float(signal["entry_price"]) - float(stop)),
+                    base_quantity=state["base_quantity"],
                 )
                 if risk_amount <= 0 or risk_amount >= system.execution.equity:
                     state["status"] = "FAILED_RISK_CAP"
@@ -225,6 +238,8 @@ def _simulate(data, signals, obs, specs, btc_frames, atr_multiple, rr,
                         "symbol": symbol, "cycle_id": f"{symbol}-{cycle_serial[symbol]}",
                         "started_at": ts, "cycle_closed_at": None,
                         "base_risk_amount": float(pos.risk_amount),
+                        "base_quantity": float(pos.quantity),
+                        "base_contract_count": float(pos.contract_count or 0.0),
                         "base_target_profit": abs(float(pos.take_profit) - float(pos.entry_price)) * float(pos.quantity),
                         "losses": 0.0, "recovery_losses": 0,
                         "recovery_entries": 0, "trade_count": 0,
