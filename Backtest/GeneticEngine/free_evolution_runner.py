@@ -26,9 +26,9 @@ if SWING_ENGINE_DIR not in sys.path:
 from Backtest.GeneticEngine.config import INITIAL_EQUITY, EvolutionConfig
 from Backtest.GeneticEngine.evaluator import prepare_genome_inputs, evaluate_prepared_genome
 from Backtest.GeneticEngine.genome import StrategyGenome
-from Backtest.SwingEngine.backtest_runner import ProgressMonitor, build_btc_trend_frames
-from Backtest.SwingEngine.data_loader import TIMEFRAME_MS, load_okx_data
-from Backtest.SwingEngine.okx_contract_specs import OKXContractSpecs
+from backtest_runner import ProgressMonitor, build_btc_trend_frames
+from data_loader import TIMEFRAME_MS, load_okx_data
+from okx_contract_specs import OKXContractSpecs
 
 SELECTED_26 = (
     "ADA-USDT-SWAP", "APT-USDT-SWAP", "AVAX-USDT-SWAP", "BNB-USDT-SWAP",
