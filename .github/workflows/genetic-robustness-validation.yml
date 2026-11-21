@@ -1,0 +1,93 @@
+name: Genetic Engine — Run #6 Robustness Validation
+
+on:
+  push:
+    branches:
+      - experiment/genetic-robustness-validation
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  robustness-validation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    env:
+      ROBUSTNESS_OUTPUT_DIR: Backtest/results/genetic_robustness
+      RUN6_TRAIN_CUTOFF_MS: "1774397700000"
+
+    steps:
+      - name: Checkout robustness validation branch
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pandas numpy
+
+      - name: Compile robustness runner
+        run: |
+          python -m py_compile Backtest/GeneticEngine/robustness_validation.py
+          python -m unittest Backtest.GeneticEngine.tests.test_robustness_validation
+
+      - name: Download validated OKX datasets
+        env:
+          GH_TOKEN: \${{ github.token }}
+        run: |
+          gh release download okx-data --repo "\${GITHUB_REPOSITORY}" --pattern "okx_data.tar" --dir /tmp
+          gh release download okx-data --repo "\${GITHUB_REPOSITORY}" --pattern "okx_timeframes.tar" --dir /tmp
+          mkdir -p Backtest/data/okx
+          tar -xf /tmp/okx_data.tar -C Backtest/data/okx
+          tar -xf /tmp/okx_timeframes.tar -C Backtest/data/okx
+          for timeframe in 15m 1h 4h; do
+            count=$(find "Backtest/data/okx/$timeframe" -maxdepth 1 -name '*.csv.gz' | wc -l)
+            echo "$timeframe: $count symbol files"
+            test "$count" -eq 76
+          done
+
+      - name: Restore Run #6 signal checkpoints
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          github-token: \${{ github.token }}
+          repository: \${{ github.repository }}
+          run-id: 44959250472
+          name: genetic-limited-evolution-checkpoint
+          path: Backtest/results/genetic_limited
+
+      - name: Run robustness validation
+        run: |
+          set -o pipefail
+          python -u -m Backtest.GeneticEngine.robustness_validation | tee /tmp/genetic-robustness.log
+
+      - name: Add robustness results to workflow summary
+        if: always()
+        run: |
+          echo "## Run #6 Robustness Validation" >> "$GITHUB_STEP_SUMMARY"
+          if [ -f Backtest/results/genetic_robustness/README.md ]; then
+            cat Backtest/results/genetic_robustness/README.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [ -f Backtest/results/genetic_robustness/robustness_summary.csv ]; then
+            cat Backtest/results/genetic_robustness/robustness_summary.csv >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [ -f /tmp/genetic-robustness.log ]; then
+            tail -n 80 /tmp/genetic-robustness.log >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload robustness results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: genetic-run6-robustness
+          path: |
+            Backtest/results/genetic_robustness/
+            /tmp/genetic-robustness.log
+          if-no-files-found: warn
+          retention-days: 90
