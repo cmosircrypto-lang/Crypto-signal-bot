@@ -11,11 +11,18 @@ import json
 import math
 import os
 import random
+import sys
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
 import pandas as pd
+
+# The legacy SwingEngine is script-oriented; expose its modules explicitly
+# while keeping this runner executable as a proper repository package.
+SWING_ENGINE_DIR = str(Path(__file__).resolve().parents[1] / "SwingEngine")
+if SWING_ENGINE_DIR not in sys.path:
+    sys.path.insert(0, SWING_ENGINE_DIR)
 
 from Backtest.GeneticEngine.config import EvolutionConfig, INITIAL_EQUITY
 from Backtest.GeneticEngine.evaluator import evaluate_prepared_genome, prepare_genome_inputs
