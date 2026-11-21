@@ -59,6 +59,7 @@ def prepare_genome_inputs(
     symbol_data: dict,
     genome: StrategyGenome,
     progress_monitor: Any = None,
+    checkpoint_dir: str | Path | None = None,
 ):
     """Prepare signals using the existing runner with baseline-compatible genes."""
     assert_legacy_compatible(genome)
@@ -71,6 +72,7 @@ def prepare_genome_inputs(
         touch_rule=genome.touch_rule,
         require_4h_alignment=genome.require_4h_alignment,
         progress_monitor=progress_monitor,
+        checkpoint_dir=checkpoint_dir,
     )
 
 
@@ -82,6 +84,7 @@ def evaluate_prepared_genome(
     contract_specs=None,
     initial_capital: float = 100.0,
     progress_context=None,
+    btc_trend_frames=None,
 ):
     """Evaluate a prepared candidate through the original portfolio simulator."""
     assert_legacy_compatible(genome)
@@ -91,11 +94,9 @@ def evaluate_prepared_genome(
         selected_symbols = set(selected_data)
         signals_by_symbol = {key: value for key, value in signals_by_symbol.items() if key in selected_symbols}
         order_blocks_by_symbol = {key: value for key, value in order_blocks_by_symbol.items() if key in selected_symbols}
-    btc_frames = (
-        build_btc_trend_frames(selected_data)
-        if genome.btc_filter_mode is not None
-        else None
-    )
+    btc_frames = btc_trend_frames
+    if btc_frames is None and genome.btc_filter_mode is not None:
+        btc_frames = build_btc_trend_frames(selected_data)
     return simulate_scenario(
         selected_data,
         signals_by_symbol,
