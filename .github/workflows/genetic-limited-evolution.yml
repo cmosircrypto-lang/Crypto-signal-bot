@@ -72,7 +72,7 @@ jobs:
       - name: Run bounded genetic evolution and OOS validation
         run: |
           set -o pipefail
-          python -u Backtest/GeneticEngine/evolution_runner.py | tee /tmp/genetic-limited.log
+          python -u -m Backtest.GeneticEngine.evolution_runner | tee /tmp/genetic-limited.log
 
       - name: Add genetic results to workflow summary
         if: always()
