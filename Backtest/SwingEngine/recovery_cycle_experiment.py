@@ -91,6 +91,16 @@ def _levels(signal, atr_multiple, rr):
     return stop, target
 
 
+def recovery_risk_amount(losses, base_risk, base_target_profit, rr, objective, sizing_method, recovery_entries):
+    """Return requested risk dollars for the next recovery entry."""
+    if sizing_method == "exact_recovery":
+        target = base_target_profit if objective == "initial_target_profit" else 0.0
+        return (float(losses) + float(target)) / float(rr)
+    if sizing_method == "double_size":
+        return float(base_risk) * (2 ** (int(recovery_entries) + 1))
+    raise ValueError("Unknown recovery sizing method")
+
+
 def _simulate(data, signals, obs, specs, btc_frames, atr_multiple, rr,
               universe, cycle_config=None, progress=None):
     system = TradingSystem(
@@ -179,11 +189,12 @@ def _simulate(data, signals, obs, specs, btc_frames, atr_multiple, rr,
                 cycle_serial[symbol] = cycle_serial.get(symbol, 0) + 1
             if is_recovery:
                 state = cycles[symbol]
-                if cycle_config["sizing_method"] == "exact_recovery":
-                    objective = state["base_target_profit"] if cycle_config["objective"] == "initial_target_profit" else 0.0
-                    risk_amount = (state["losses"] + objective) / rr
-                else:
-                    risk_amount = state["base_risk_amount"] * (2 ** (state["recovery_entries"] + 1))
+                risk_amount = recovery_risk_amount(
+                    state["losses"], state["base_risk_amount"],
+                    state["base_target_profit"], rr,
+                    cycle_config["objective"], cycle_config["sizing_method"],
+                    state["recovery_entries"],
+                )
                 if risk_amount <= 0 or risk_amount >= system.execution.equity:
                     state["status"] = "FAILED_RISK_CAP"
                     completed_cycles.append(dict(state))
