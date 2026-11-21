@@ -21,9 +21,9 @@ if SWING_ENGINE_DIR not in sys.path:
 
 from Backtest.GeneticEngine.evaluator import evaluate_prepared_genome, prepare_genome_inputs
 from Backtest.GeneticEngine.genome import StrategyGenome
-from Backtest.SwingEngine.data_loader import TIMEFRAME_MS, load_okx_data
-from Backtest.SwingEngine.backtest_runner import ProgressMonitor, build_btc_trend_frames
-from Backtest.SwingEngine.okx_contract_specs import OKXContractSpecs
+from data_loader import TIMEFRAME_MS, load_okx_data
+from backtest_runner import ProgressMonitor, build_btc_trend_frames
+from okx_contract_specs import OKXContractSpecs
 
 
 SELECTED_26 = (
