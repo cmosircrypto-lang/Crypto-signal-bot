@@ -18,6 +18,8 @@ from okx_contract_specs import OKXContractSpecs
 from trading_system import TradingSystem
 
 RISK_PERCENT = 0.5
+# Six base-risk positions at 0.5% each define the portfolio-wide open-risk ceiling.
+MAX_PORTFOLIO_OPEN_RISK_PERCENT = 3.0
 FILTER_MODE = "1d_4h"
 ATR_MULTIPLIERS = (1.0, 1.5, 2.0)
 REWARD_RATIOS = (1.5, 2.0, 2.5)
@@ -74,6 +76,30 @@ def _split_oos(data, signals, cutoff):
             sig["signal_ts"].astype("int64") > cutoff
         ].reset_index(drop=True) if not sig.empty else sig.copy()
     return test_data, test_signals
+
+
+def _cycle_close_status(recovery_entries, cycle_net_pnl, base_target_profit):
+    """Classify a closed cycle using its realized net PnL, not its exit label."""
+    if not recovery_entries:
+        return "BASE_TP"
+    if cycle_net_pnl >= base_target_profit - 1e-9:
+        return "RECOVERED_TARGET"
+    if cycle_net_pnl >= -1e-9:
+        return "RECOVERED_BREAKEVEN"
+    return "CLOSED_SHORTFALL"
+
+
+def _available_portfolio_risk(system):
+    """Remaining cash risk before reaching the portfolio-wide open-risk cap."""
+    open_risk = sum(
+        float(position.risk_amount)
+        for position in system.execution.open_positions.values()
+    )
+    risk_ceiling = (
+        float(system.execution.equity)
+        * MAX_PORTFOLIO_OPEN_RISK_PERCENT / 100.0
+    )
+    return max(0.0, risk_ceiling - open_risk), open_risk
 
 
 def _levels(signal, atr_multiple, rr):
@@ -133,8 +159,14 @@ def _simulate(data, signals, obs, specs, btc_frames, atr_multiple, rr,
     closed, skips = [], []
     cycle_counts = {"cycles_started": 0, "cycles_recovered": 0,
                     "cycles_breakeven_met": 0, "cycles_initial_target_met": 0,
+                    "cycles_recovered_breakeven": 0,
+                    "cycles_recovered_target": 0,
+                    "cycles_closed_shortfall": 0,
                     "cycles_failed_limit": 0, "cycles_unresolved": 0,
-                    "cycles_sizing_failed": 0}
+                    "cycles_sizing_failed": 0,
+                    "cycles_portfolio_risk_failed": 0}
+    max_open_risk_amount = 0.0
+    max_open_risk_percent = 0.0
     for idx, ts in enumerate(times, 1):
         candles = candles_at_time.get(ts, {})
         # Close first; same-symbol capacity is available only after exit.
@@ -169,15 +201,21 @@ def _simulate(data, signals, obs, specs, btc_frames, atr_multiple, rr,
                         cap = cycle_config["max_recovery_trades"]
                         if cap is not None and state["recovery_entries"] >= cap:
                             state["status"] = "FAILED_LIMIT"
+                            state["cycle_closed_at"] = ts
+                            state["cycle_net_pnl"] = state["cycle_realized_pnl"]
                             completed_cycles.append(dict(state))
                             cycles.pop(symbol, None)
                             cycle_counts["cycles_failed_limit"] += 1
                     elif result.exit_reason == "TP":
-                        state["status"] = "RECOVERED" if state["recovery_entries"] else "BASE_TP"
                         state["cycle_closed_at"] = ts
                         state["cycle_net_pnl"] = state["cycle_realized_pnl"]
                         state["recovered_to_breakeven"] = state["cycle_net_pnl"] >= -1e-9
                         state["achieved_initial_target"] = state["cycle_net_pnl"] >= state["base_target_profit"] - 1e-9
+                        state["status"] = _cycle_close_status(
+                            state["recovery_entries"],
+                            state["cycle_net_pnl"],
+                            state["base_target_profit"],
+                        )
                         completed_cycles.append(dict(state))
                         cycles.pop(symbol, None)
                         if state["recovery_entries"]:
@@ -186,6 +224,13 @@ def _simulate(data, signals, obs, specs, btc_frames, atr_multiple, rr,
                             cycle_counts["cycles_breakeven_met"] += 1
                         if state["achieved_initial_target"]:
                             cycle_counts["cycles_initial_target_met"] += 1
+                        if state["recovery_entries"]:
+                            if state["status"] == "RECOVERED_TARGET":
+                                cycle_counts["cycles_recovered_target"] += 1
+                            elif state["status"] == "RECOVERED_BREAKEVEN":
+                                cycle_counts["cycles_recovered_breakeven"] += 1
+                            else:
+                                cycle_counts["cycles_closed_shortfall"] += 1
 
         entries = sorted(signals_at_time.get(ts, []), key=lambda x: x[0])
         for symbol, signal in entries:
@@ -205,6 +250,17 @@ def _simulate(data, signals, obs, specs, btc_frames, atr_multiple, rr,
             if cycle_config and not is_recovery:
                 # A new independent cycle starts with the base trade.
                 cycle_serial[symbol] = cycle_serial.get(symbol, 0) + 1
+            available_risk, open_risk = _available_portfolio_risk(system)
+            if available_risk <= 0:
+                if is_recovery:
+                    state = cycles.pop(symbol)
+                    state["status"] = "FAILED_PORTFOLIO_RISK_CAP"
+                    state["cycle_closed_at"] = ts
+                    state["cycle_net_pnl"] = state["cycle_realized_pnl"]
+                    completed_cycles.append(dict(state))
+                    cycle_counts["cycles_portfolio_risk_failed"] += 1
+                skips.append({"symbol": symbol, "signal_ts": ts, "reason": "portfolio_open_risk_cap"})
+                continue
             if is_recovery:
                 state = cycles[symbol]
                 risk_amount = recovery_risk_amount(
@@ -215,11 +271,14 @@ def _simulate(data, signals, obs, specs, btc_frames, atr_multiple, rr,
                     stop_distance=abs(float(signal["entry_price"]) - float(stop)),
                     base_quantity=state["base_quantity"],
                 )
-                if risk_amount <= 0 or risk_amount >= system.execution.equity:
-                    state["status"] = "FAILED_RISK_CAP"
+                if risk_amount <= 0 or risk_amount > available_risk:
+                    state["status"] = "FAILED_PORTFOLIO_RISK_CAP"
+                    state["cycle_closed_at"] = ts
+                    state["cycle_net_pnl"] = state["cycle_realized_pnl"]
                     completed_cycles.append(dict(state))
                     cycles.pop(symbol, None)
-                    cycle_counts["cycles_sizing_failed"] += 1
+                    cycle_counts["cycles_portfolio_risk_failed"] += 1
+                    skips.append({"symbol": symbol, "signal_ts": ts, "reason": "recovery_exceeds_available_portfolio_risk"})
                     continue
                 risk_pct = risk_amount / system.execution.equity * 100.0
             else:
@@ -230,9 +289,20 @@ def _simulate(data, signals, obs, specs, btc_frames, atr_multiple, rr,
                     entry_price=float(signal["entry_price"]),
                     stop_loss=stop, take_profit=target,
                     risk_percent=risk_pct, timestamp=ts,
+                    round_contracts_up=is_recovery,
+                    max_risk_amount=available_risk,
                 )
                 if pos is None:
                     continue
+                max_open_risk_amount = max(
+                    max_open_risk_amount,
+                    sum(float(p.risk_amount) for p in system.execution.open_positions.values()),
+                )
+                if system.execution.equity > 0:
+                    max_open_risk_percent = max(
+                        max_open_risk_percent,
+                        max_open_risk_amount / system.execution.equity * 100.0,
+                    )
                 if cycle_config and not is_recovery:
                     state = {
                         "symbol": symbol, "cycle_id": f"{symbol}-{cycle_serial[symbol]}",
@@ -262,11 +332,20 @@ def _simulate(data, signals, obs, specs, btc_frames, atr_multiple, rr,
                     "recovery_sizing": cycle_config["sizing_method"] if cycle_config else "none",
                 }
             except (ValueError, KeyError) as exc:
+                if is_recovery and "risk budget" in str(exc).lower():
+                    state = cycles.pop(symbol, None)
+                    if state:
+                        state["status"] = "FAILED_PORTFOLIO_RISK_CAP"
+                        state["cycle_closed_at"] = ts
+                        state["cycle_net_pnl"] = state["cycle_realized_pnl"]
+                        completed_cycles.append(dict(state))
+                        cycle_counts["cycles_portfolio_risk_failed"] += 1
                 skips.append({"symbol": symbol, "signal_ts": ts, "reason": "contract_or_size", "error": str(exc)})
         if progress and (idx % max(1, len(times)//20) == 0 or idx == len(times)):
             progress(idx, len(times), ts)
     for state in cycles.values():
         state["status"] = "UNRESOLVED_AT_END"
+        state["cycle_net_pnl"] = state["cycle_realized_pnl"]
         completed_cycles.append(dict(state))
         cycle_counts["cycles_unresolved"] += 1
     trades = pd.DataFrame(closed)
@@ -281,6 +360,9 @@ def _simulate(data, signals, obs, specs, btc_frames, atr_multiple, rr,
         "max_recovery_entries_observed": max((x["recovery_entries"] for x in completed_cycles), default=0),
         "max_cycle_loss": max((x["losses"] for x in completed_cycles), default=0.0),
         "max_cycle_net_exposure": max((x["base_risk_amount"] + x["losses"] for x in completed_cycles), default=0.0),
+        "max_open_risk_amount": max_open_risk_amount,
+        "max_open_risk_percent": max_open_risk_percent,
+        "max_portfolio_open_risk_percent_limit": MAX_PORTFOLIO_OPEN_RISK_PERCENT,
     })
     return summary, trades, pd.DataFrame(completed_cycles), pd.DataFrame(skips)
 
