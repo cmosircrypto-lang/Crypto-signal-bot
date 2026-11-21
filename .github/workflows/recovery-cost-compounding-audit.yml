@@ -1,0 +1,74 @@
+name: Recovery Cost and Compounding Stress Audit
+
+on:
+  push:
+    branches:
+      - experiment/recovery-cost-compounding-audit
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  recovery-cost-audit:
+    name: Cost profile - ${{ matrix.profile }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - profile: frictionless-control
+            fee: "0"
+            slippage: "0"
+            funding: "0"
+          - profile: base-cost
+            fee: "0.0005"
+            slippage: "0.0002"
+            funding: "0.0001"
+          - profile: stress-cost
+            fee: "0.0006"
+            slippage: "0.0005"
+            funding: "0.0003"
+    env:
+      RECOVERY_TOP_SCENARIOS_ONLY: "1"
+      RECOVERY_FEE_RATE: ${{ matrix.fee }}
+      RECOVERY_SLIPPAGE_RATE: ${{ matrix.slippage }}
+      RECOVERY_FUNDING_RATE_8H: ${{ matrix.funding }}
+      RECOVERY_OUTPUT_DIR: Backtest/results/recovery_cost_stress/${{ matrix.profile }}
+    steps:
+      - name: Checkout isolated audit branch
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pandas numpy
+
+      - name: Compile audit script
+        run: python -m py_compile Backtest/SwingEngine/recovery_cost_stress_experiment.py
+
+      - name: Run recovery sizing tests
+        run: python Backtest/SwingEngine/test_recovery_cycle_experiment.py
+
+      - name: Run execution, contract and portfolio tests
+        run: |
+          python Backtest/SwingEngine/test_execution_engine.py
+          python Backtest/SwingEngine/test_okx_contract_specs.py
+          python Backtest/SwingEngine/test_portfolio_engine.py
+          python Backtest/SwingEngine/test_trading_system.py
+
+      - name: Run four-scenario cost and funding audit
+        run: python Backtest/SwingEngine/recovery_cost_stress_experiment.py
+
+      - name: Upload audit results
+        uses: actions/upload-artifact@v4
+        with:
+          name: recovery-cost-audit-${{ matrix.profile }}
+          path: Backtest/results/recovery_cost_stress/${{ matrix.profile }}
+          if-no-files-found: error
