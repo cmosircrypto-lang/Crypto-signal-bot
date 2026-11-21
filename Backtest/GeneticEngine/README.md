@@ -37,3 +37,20 @@ A full data-backed parity test (signals, trades, equity and trade ledger) is
 a release gate before any genetic population is evaluated. It must compare
 the adapter against direct calls to the existing runner on the same cached
 dataset and contract specifications.
+
+
+## Full cached-data parity gate
+
+The opt-in GitHub Actions input `run_genetic_data_parity` downloads the same
+cached OKX release used by the SwingEngine and runs:
+
+    python Backtest/GeneticEngine/tests/test_cached_data_parity.py
+
+This gate validates all 76 symbols across 15m/1h/4h, loads current public OKX
+USDT-linear-SWAP contract specifications, and compares the direct SwingEngine
+pipeline with the Genetic Engine adapter using exact frame/ledger equality.
+It checks prepared order blocks, entry signals, the complete trade ledger, and
+the backtest summary (including equity and drawdown metrics). It does not run
+any genetic population or submit orders. It requires network access to the
+public OKX instruments endpoint and may take substantial time because both
+pipelines are evaluated across the full cached dataset.
