@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -396,7 +397,8 @@ def _simulate(data, signals, obs, specs, btc_frames, atr_multiple, rr,
     return summary, trades, pd.DataFrame(completed_cycles), pd.DataFrame(skips)
 
 
-def run(data_root="Backtest/data/okx", output_dir="Backtest/results/run48"):
+def run(data_root="Backtest/data/okx", output_dir=None):
+    output_dir = output_dir or os.environ.get("RECOVERY_OUTPUT_DIR", "Backtest/results/run48")
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
     monitor = ProgressMonitor(interval_seconds=30)
@@ -435,6 +437,23 @@ def run(data_root="Backtest/data/okx", output_dir="Backtest/results/run48"):
                             "objective": "both_evaluated", "sizing_method": "double_size",
                             "max_recovery_trades": limit,
                         }))
+        if os.environ.get("RECOVERY_TOP_SCENARIOS_ONLY", "").lower() in ("1", "true", "yes"):
+            # Recheck the two leading recovery configurations against their
+            # matching no-recovery baselines using the corrected risk reporting.
+            configs = [
+                ("all_76", 2.0, 2.0, None),
+                ("all_76", 2.0, 2.0, {
+                    "objective": "initial_target_profit",
+                    "sizing_method": "exact_recovery",
+                    "max_recovery_trades": 5,
+                }),
+                ("selected_26_training_strong", 2.0, 2.0, None),
+                ("selected_26_training_strong", 2.0, 2.0, {
+                    "objective": "breakeven",
+                    "sizing_method": "exact_recovery",
+                    "max_recovery_trades": None,
+                }),
+            ]
         summaries = []
         started = time.monotonic()
         total_events = len(configs)
