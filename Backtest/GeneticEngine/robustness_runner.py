@@ -194,7 +194,12 @@ def run(data_root="Backtest/data/okx", output_dir="Backtest/results/genetic_robu
             lo, hi = boundaries[p], boundaries[p + 1]
             p_data, p_signals = _period_data(data, signals, lo, hi)
             monitor.set_stage("period_validation", f"period {p + 1}/3")
-            genome = _make_genome(base, **CHAMPION)
+            genome = _make_genome(
+                base,
+                CHAMPION["risk_percent"],
+                CHAMPION["reward_ratio"],
+                CHAMPION["btc_filter_mode"],
+            )
             summary, trades, system = evaluate_prepared_genome(
                 p_data, p_signals, obs, genome, contract_specs=specs,
                 initial_capital=INITIAL_EQUITY, btc_trend_frames=btc_frames,
