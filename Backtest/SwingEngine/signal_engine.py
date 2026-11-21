@@ -334,6 +334,11 @@ def generate_entry_signals(
         structure_4h = None
 
     candles = candles_15m.reset_index(drop=True).copy()
+    # Cache primitive columns once; the per-OB scan is the hottest path.
+    candle_timestamps = candles["ts"].to_numpy(dtype="int64")
+    candle_highs = candles["high"].to_numpy(dtype="float64")
+    candle_lows = candles["low"].to_numpy(dtype="float64")
+    candle_closes = candles["close"].to_numpy(dtype="float64")
 
     structure_15m = analyze_market_structure(
         candles,
@@ -345,6 +350,7 @@ def generate_entry_signals(
         ),
     )
 
+    structure_events = structure_15m["structure_event"].to_numpy()
     results = []
 
     total_obs = len(order_blocks_1h)
@@ -379,19 +385,22 @@ def generate_entry_signals(
         bos_close_time = (
             int(ob["bos_ts"]) + TIMEFRAME_MS["1h"]
         )
+        # The original loop skipped every candle until the BOS candle closed.
+        # Jump directly to the first 15m candle whose close is strictly later.
+        first_eligible_index = int(candles["ts"].searchsorted(
+            bos_close_time - TIMEFRAME_MS["15m"], side="right"
+        ))
 
         inside = False
         touch_number = 0
         triggered_methods = set()
         pending_structure_touch = None
 
-        for i in range(len(candles)):
-            if progress_callback is not None and (i == 0 or (i + 1) % 50000 == 0 or i + 1 == len(candles)):
+        for i in range(first_eligible_index, len(candles)):
+            if progress_callback is not None and (i == first_eligible_index or (i + 1) % 50000 == 0 or i + 1 == len(candles)):
                 progress_callback("candles", i + 1, len(candles))
 
-            candle = candles.iloc[i]
-
-            candle_open_time = int(candle["ts"])
+            candle_open_time = int(candle_timestamps[i])
             decision_time = (
                 candle_open_time + TIMEFRAME_MS["15m"]
             )
@@ -400,10 +409,9 @@ def generate_entry_signals(
             if decision_time <= bos_close_time:
                 continue
 
-            overlaps = _candle_overlaps_zone(
-                candle,
-                zone_low,
-                zone_high,
+            overlaps = (
+                candle_lows[i] <= zone_high
+                and candle_highs[i] >= zone_low
             )
 
             is_new_touch = False
@@ -466,6 +474,9 @@ def generate_entry_signals(
 
                 if touch_alignment_ok:
                     confirmations = {}
+                    candle = None
+                    if "ENGULFING" in methods or "PIN_BAR" in methods:
+                        candle = candles.iloc[i]
 
                     if "DIRECT" in methods:
                         confirmations["DIRECT"] = True
@@ -521,7 +532,7 @@ def generate_entry_signals(
                             "touch_score": float(touch_score),
                             "signal_index": i,
                             "signal_ts": decision_time,
-                            "entry_price": float(candle["close"]),
+                            "entry_price": float(candle_closes[i]),
                             "htf_trend": touch_htf_trend,
                             "confirmation": method,
                         })
@@ -534,10 +545,7 @@ def generate_entry_signals(
                 and "M15_STRUCTURE_BREAK" not in triggered_methods
                 and i > pending_structure_touch["index"]
             ):
-                event = structure_15m.loc[
-                    i,
-                    "structure_event",
-                ]
+                event = structure_events[i]
 
                 if event in expected_event:
                     signal_htf_trend = "NOT_USED"
@@ -575,7 +583,7 @@ def generate_entry_signals(
                             ],
                             "signal_index": i,
                             "signal_ts": decision_time,
-                            "entry_price": float(candle["close"]),
+                            "entry_price": float(candle_closes[i]),
                             "htf_trend": signal_htf_trend,
                             "confirmation": "M15_STRUCTURE_BREAK",
                         })
