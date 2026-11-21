@@ -16,9 +16,9 @@ class RecoveryCycleExperimentTests(unittest.TestCase):
         self.assertAlmostEqual(risk, 1.2)
 
     def test_double_size_progression(self):
-        # With a 0.5 base quantity and a 1.0 stop distance, the
-        # first recovery is 1.0 quantity (2x) and the third is 2.0? 
-        # The requested risk equals target quantity times stop distance.
+        # With a 0.5 base quantity and a 1.0 stop distance, recovery
+        # entries target 1.0 (2x), 2.0 (4x), then 4.0 (8x) quantity.
+        # Requested risk equals target quantity times stop distance.
         first_recovery_risk = recovery_risk_amount(
             1, 0.5, 1.25, 2.5, "initial_target_profit", "double_size", 0,
             stop_distance=1.0, base_quantity=0.5,
@@ -28,7 +28,7 @@ class RecoveryCycleExperimentTests(unittest.TestCase):
             stop_distance=1.0, base_quantity=0.5,
         )
         self.assertEqual(first_recovery_risk, 1.0)  # 0.5 * 2
-        self.assertEqual(third_recovery_risk, 2.0)  # 0.5 * 4
+        self.assertEqual(third_recovery_risk, 4.0)  # 0.5 * 8
 
     def test_atr_stop_and_rr_levels(self):
         signal = {"entry_price": 100.0, "atr14": 2.0, "direction": "BUY"}
