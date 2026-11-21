@@ -1,6 +1,8 @@
 import unittest
 
-from recovery_cycle_experiment import _levels, recovery_risk_amount
+from recovery_cycle_experiment import (
+    _cycle_close_status, _levels, recovery_risk_amount,
+)
 
 
 class RecoveryCycleExperimentTests(unittest.TestCase):
@@ -29,6 +31,12 @@ class RecoveryCycleExperimentTests(unittest.TestCase):
         )
         self.assertEqual(first_recovery_risk, 1.0)  # 0.5 * 2
         self.assertEqual(third_recovery_risk, 4.0)  # 0.5 * 8
+
+    def test_cycle_status_requires_actual_breakeven_or_target(self):
+        self.assertEqual(_cycle_close_status(2, 2.50, 2.50), "RECOVERED_TARGET")
+        self.assertEqual(_cycle_close_status(2, 0.00, 2.50), "RECOVERED_BREAKEVEN")
+        self.assertEqual(_cycle_close_status(2, -0.02, 2.50), "CLOSED_SHORTFALL")
+        self.assertEqual(_cycle_close_status(0, 2.50, 2.50), "BASE_TP")
 
     def test_atr_stop_and_rr_levels(self):
         signal = {"entry_price": 100.0, "atr14": 2.0, "direction": "BUY"}
