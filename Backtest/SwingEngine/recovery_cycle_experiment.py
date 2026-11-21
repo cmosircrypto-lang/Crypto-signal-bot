@@ -365,6 +365,7 @@ def run(data_root="Backtest/data/okx", output_dir="Backtest/results/run48"):
             "- Portfolio caps retained: 6 total, 3 per direction; max one open position per symbol.\n"
             "- Recovery caps mean additional recovery entries after the initial trade; unlimited has no count cap.\n"
             "- Exact recovery aims to recover prior losses plus the initial trade TP target; breakeven aims only to recover prior losses.\n"
+            "- Double-size recovery doubles actual base quantity (2x, 4x, 8x...) from the initial trade; requested risk varies with the new stop distance and OKX lot rounding applies.\n"
             "- Double-size runs are unique (not duplicated for objectives); every completed cycle is scored for both breakeven and the initial trade target profit.\n"
             "- A recovery risk request at or above current equity is rejected and the cycle is marked failed; OKX min/lot rules still apply.\n"
             "- Unresolved cycles at the end remain reported, not assumed recovered.\n",
