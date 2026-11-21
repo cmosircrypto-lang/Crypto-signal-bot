@@ -41,8 +41,8 @@ jobs:
         env:
           GH_TOKEN: \${{ github.token }}
         run: |
-          gh release download okx-data --repo "\${GITHUB_REPOSITORY}" --pattern "okx_data.tar" --dir /tmp
-          gh release download okx-data --repo "\${GITHUB_REPOSITORY}" --pattern "okx_timeframes.tar" --dir /tmp
+          gh release download okx-data --repo "${GITHUB_REPOSITORY}" --pattern "okx_data.tar" --dir /tmp
+          gh release download okx-data --repo "${GITHUB_REPOSITORY}" --pattern "okx_timeframes.tar" --dir /tmp
           mkdir -p Backtest/data/okx
           tar -xf /tmp/okx_data.tar -C Backtest/data/okx
           tar -xf /tmp/okx_timeframes.tar -C Backtest/data/okx
@@ -91,6 +91,8 @@ jobs:
           fi
           if [ -f /tmp/genetic-robustness.log ]; then
             tail -n 80 /tmp/genetic-robustness.log >> "$GITHUB_STEP_SUMMARY"
+            mkdir -p Backtest/results/genetic_robustness
+            cp /tmp/genetic-robustness.log Backtest/results/genetic_robustness/genetic-robustness.log
           fi
 
       - name: Upload robustness results
@@ -98,8 +100,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: genetic-run6-robustness
-          path: |
-            Backtest/results/genetic_robustness/
-            /tmp/genetic-robustness.log
+          path: Backtest/results/genetic_robustness/
           if-no-files-found: warn
           retention-days: 90
