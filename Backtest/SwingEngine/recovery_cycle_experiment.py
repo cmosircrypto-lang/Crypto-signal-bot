@@ -117,7 +117,7 @@ def _levels(signal, atr_multiple, rr):
     return stop, target
 
 
-def recovery_risk_amount(losses, base_risk, base_target_profit, rr, objective, sizing_method, recovery_entries, *, stop_distance=None, base_quantity=None):
+def recovery_risk_amount(losses, base_risk, base_target_profit, rr, objective, sizing_method, recovery_entries, *, stop_distance=None, target_distance=None, base_quantity=None):
     """Return requested risk dollars for the next recovery entry.
 
     Exact recovery sizes risk from the cycle's outstanding cash target.
@@ -127,7 +127,15 @@ def recovery_risk_amount(losses, base_risk, base_target_profit, rr, objective, s
     """
     if sizing_method == "exact_recovery":
         target = base_target_profit if objective == "initial_target_profit" else 0.0
-        return (float(losses) + float(target)) / float(rr)
+        required_profit = float(losses) + float(target)
+        if target_distance is not None:
+            if stop_distance is None or float(stop_distance) <= 0 or float(target_distance) <= 0:
+                raise ValueError("exact recovery requires positive rounded stop and target distances")
+            # Use the actual tick-rounded reward/risk ratio so the required
+            # contract count reaches the cash target after OKX price rounding.
+            actual_rr = float(target_distance) / float(stop_distance)
+            return required_profit / actual_rr
+        return required_profit / float(rr)
     if sizing_method == "double_size":
         if stop_distance is None or base_quantity is None:
             raise ValueError("double_size requires stop_distance and base_quantity")
@@ -263,12 +271,22 @@ def _simulate(data, signals, obs, specs, btc_frames, atr_multiple, rr,
                 continue
             if is_recovery:
                 state = cycles[symbol]
+                entry_price = float(signal["entry_price"])
+                spec = system.execution.contract_specs[symbol]
+                rounded_stop, rounded_target = spec.round_exit_prices(
+                    direction=direction,
+                    stop_loss=stop,
+                    take_profit=target,
+                )
+                actual_stop_distance = abs(entry_price - float(rounded_stop))
+                actual_target_distance = abs(float(rounded_target) - entry_price)
                 risk_amount = recovery_risk_amount(
                     state["losses"], state["base_risk_amount"],
                     state["base_target_profit"], rr,
                     cycle_config["objective"], cycle_config["sizing_method"],
                     state["recovery_entries"],
-                    stop_distance=abs(float(signal["entry_price"]) - float(stop)),
+                    stop_distance=actual_stop_distance,
+                    target_distance=actual_target_distance,
                     base_quantity=state["base_quantity"],
                 )
                 if risk_amount <= 0 or risk_amount > available_risk:
