@@ -11,6 +11,8 @@ from pandas.testing import assert_frame_equal
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SWING_ENGINE_DIR = REPO_ROOT / "Backtest" / "SwingEngine"
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 if str(SWING_ENGINE_DIR) not in sys.path:
     sys.path.insert(0, str(SWING_ENGINE_DIR))
 
