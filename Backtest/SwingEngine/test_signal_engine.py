@@ -50,6 +50,21 @@ class SignalEngineStructureBreakTests(unittest.TestCase):
                 methods=("M15_STRUCTURE_BREAK",),
             )
 
+    def test_scan_starts_at_first_candle_closed_after_ob_bos(self):
+        order_blocks = self.order_blocks.copy()
+        # BOS candle closes at 4,500,000. Candle 0 closes exactly then
+        # and must be skipped; candle 1 is the first eligible touch.
+        order_blocks.loc[0, "bos_ts"] = 900_000
+        signals = generate_entry_signals(
+            symbol="BTC-USDT-SWAP",
+            candles_15m=self.candles,
+            order_blocks_1h=order_blocks,
+            methods=("DIRECT",),
+        )
+        self.assertEqual(len(signals), 1)
+        self.assertEqual(signals.iloc[0]["signal_index"], 1)
+        self.assertEqual(signals.iloc[0]["signal_ts"], 5_400_000)
+
     def test_delayed_structure_break_confirms_after_touch(self):
         signals = self._run(
             self._structure(3, "BOS_BULLISH")
