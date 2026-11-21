@@ -199,14 +199,17 @@ def run(data_root="Backtest/data/okx", output_dir=None):
             key = _key(genome)
             if key in cache:
                 return float(cache[key]["fitness"])
-            summary, trades, skips = _evaluate(
+            summary, trades, system = _evaluate(
                 genome, train_data, train_signals, obs, specs, btc_frames, INITIAL_EQUITY
             )
+            # simulate_scenario returns the TradingSystem; rejected signal
+            # diagnostics are attached to it by the legacy simulator.
+            skipped_rows = getattr(system, "_diagnostic_skips", [])
             result = {
                 "fitness": _fitness(summary),
                 "summary": summary,
                 "trade_rows": int(len(trades)),
-                "skip_rows": int(len(skips)),
+                "skip_rows": int(len(skipped_rows)),
             }
             cache[key] = result
             _atomic_json(cache_path, cache)
