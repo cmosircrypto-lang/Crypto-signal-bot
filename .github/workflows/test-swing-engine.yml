@@ -33,6 +33,11 @@ on:
         required: true
         type: boolean
         default: false
+      run_recovery_top_validation:
+        description: "Re-run the two leading recovery configurations and matching baselines with corrected risk reporting"
+        required: true
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -94,7 +99,7 @@ jobs:
         run: python Backtest/SwingEngine/test_recovery_cycle_experiment.py
 
       - name: Download validated OKX datasets
-        if: ${{ inputs.run_full_backtest || inputs.run_symbol_filter_experiment || inputs.run_recovery_cycle_experiment }}
+        if: ${{ inputs.run_full_backtest || inputs.run_symbol_filter_experiment || inputs.run_recovery_cycle_experiment || inputs.run_recovery_top_validation }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -136,6 +141,15 @@ jobs:
           set -o pipefail
           python -u Backtest/SwingEngine/recovery_cycle_experiment.py | tee /tmp/run48-recovery-cycle.log
 
+      - name: Re-run leading recovery scenarios with corrected risk reporting
+        if: ${{ inputs.run_recovery_top_validation }}
+        env:
+          RECOVERY_TOP_SCENARIOS_ONLY: "true"
+          RECOVERY_OUTPUT_DIR: Backtest/results/run53_top_validation
+        run: |
+          set -o pipefail
+          python -u Backtest/SwingEngine/recovery_cycle_experiment.py | tee /tmp/run53-top-validation.log
+
       - name: Add Run #48 recovery-cycle summary
         if: ${{ always() && inputs.run_recovery_cycle_experiment }}
         run: |
@@ -146,6 +160,16 @@ jobs:
             tail -n 80 /tmp/run48-recovery-cycle.log >> "$GITHUB_STEP_SUMMARY"
           fi
 
+      - name: Add Run #53 top-scenario validation summary
+        if: ${{ always() && inputs.run_recovery_top_validation }}
+        run: |
+          if [ -f Backtest/results/run53_top_validation/README.md ]; then
+            cat Backtest/results/run53_top_validation/README.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [ -f /tmp/run53-top-validation.log ]; then
+            tail -n 80 /tmp/run53-top-validation.log >> "$GITHUB_STEP_SUMMARY"
+          fi
+
       - name: Upload Run #48 recovery-cycle results
         if: ${{ always() && inputs.run_recovery_cycle_experiment }}
         uses: actions/upload-artifact@v4
@@ -154,6 +178,17 @@ jobs:
           path: |
             Backtest/results/run48/
             /tmp/run48-recovery-cycle.log
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Upload Run #53 top-scenario validation
+        if: ${{ always() && inputs.run_recovery_top_validation }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: run53-top-recovery-validation
+          path: |
+            Backtest/results/run53_top_validation/
+            /tmp/run53-top-validation.log
           if-no-files-found: warn
           retention-days: 30
 
