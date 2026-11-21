@@ -237,6 +237,11 @@ class ContractSpec:
             if round_up
             else self.round_contracts_down(raw_contracts)
         )
+        if round_up and contracts > 0 and contracts < self.min_size:
+            minimum_steps = (
+                self.min_size / self.lot_size
+            ).to_integral_value(rounding=ROUND_CEILING)
+            contracts = minimum_steps * self.lot_size
 
         if not self.validate_order_size(contracts):
             return Decimal("0")
