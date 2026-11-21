@@ -102,6 +102,19 @@ def _available_portfolio_risk(system):
     return max(0.0, risk_ceiling - open_risk), open_risk
 
 
+def _update_open_risk_peaks(system, max_amount, max_percent):
+    """Update peak open risk from one consistent portfolio/equity snapshot."""
+    open_risk = sum(
+        float(position.risk_amount)
+        for position in system.execution.open_positions.values()
+    )
+    max_amount = max(float(max_amount), open_risk)
+    equity = float(system.execution.equity)
+    if equity > 0:
+        max_percent = max(float(max_percent), open_risk / equity * 100.0)
+    return max_amount, max_percent
+
+
 def _levels(signal, atr_multiple, rr):
     entry = float(signal["entry_price"])
     atr = float(signal["atr14"])
@@ -197,6 +210,10 @@ def _simulate(data, signals, obs, specs, btc_frames, atr_multiple, rr,
                 "closed_at": result.closed_at,
             }
             closed.append(row)
+            # A losing close can reduce equity while other positions remain open.
+            max_open_risk_amount, max_open_risk_percent = _update_open_risk_peaks(
+                system, max_open_risk_amount, max_open_risk_percent
+            )
             if cycle_config:
                 state = cycles.get(symbol)
                 if state:
@@ -312,15 +329,9 @@ def _simulate(data, signals, obs, specs, btc_frames, atr_multiple, rr,
                 )
                 if pos is None:
                     continue
-                max_open_risk_amount = max(
-                    max_open_risk_amount,
-                    sum(float(p.risk_amount) for p in system.execution.open_positions.values()),
+                max_open_risk_amount, max_open_risk_percent = _update_open_risk_peaks(
+                    system, max_open_risk_amount, max_open_risk_percent
                 )
-                if system.execution.equity > 0:
-                    max_open_risk_percent = max(
-                        max_open_risk_percent,
-                        max_open_risk_amount / system.execution.equity * 100.0,
-                    )
                 if cycle_config and not is_recovery:
                     state = {
                         "symbol": symbol, "cycle_id": f"{symbol}-{cycle_serial[symbol]}",
