@@ -38,6 +38,11 @@ on:
         required: true
         type: boolean
         default: false
+      run_signal_engine_reference_parity:
+        description: "Compare frozen old vs optimized signal engine exactly on all 76 cached OKX symbols"
+        required: true
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -105,7 +110,7 @@ jobs:
         run: python Backtest/SwingEngine/test_recovery_cycle_experiment.py
 
       - name: Download validated OKX datasets
-        if: ${{ inputs.run_full_backtest || inputs.run_symbol_filter_experiment || inputs.run_recovery_cycle_experiment || inputs.run_genetic_data_parity }}
+        if: ${{ inputs.run_full_backtest || inputs.run_symbol_filter_experiment || inputs.run_recovery_cycle_experiment || inputs.run_genetic_data_parity || inputs.run_signal_engine_reference_parity }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -144,6 +149,31 @@ jobs:
         with:
           name: genetic-engine-cached-data-parity
           path: /tmp/genetic-cached-data-parity.log
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Run frozen-reference vs optimized signal engine parity
+        if: ${{ inputs.run_signal_engine_reference_parity }}
+        run: |
+          set -o pipefail
+          python -u Backtest/GeneticEngine/tests/test_cached_signal_engine_reference_parity.py | tee /tmp/signal-engine-reference-parity.log
+
+      - name: Add signal engine reference parity summary
+        if: ${{ always() && inputs.run_signal_engine_reference_parity }}
+        run: |
+          if [ -f /tmp/signal-engine-reference-parity.log ]; then
+            {
+              echo "## Swing Engine — frozen-reference vs optimized signal parity"
+              tail -n 100 /tmp/signal-engine-reference-parity.log
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload signal engine reference parity log
+        if: ${{ always() && inputs.run_signal_engine_reference_parity }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: swing-engine-frozen-reference-parity
+          path: /tmp/signal-engine-reference-parity.log
           if-no-files-found: warn
           retention-days: 30
 
