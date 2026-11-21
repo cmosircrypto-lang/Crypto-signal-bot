@@ -32,6 +32,8 @@ def assert_legacy_compatible(genome: StrategyGenome) -> None:
         "ob_threshold": 1.0,
         "atr_period": 14,
         "ob_lookback": 10,
+        "stop_mode": "OB_WICK",
+        "atr_stop_multiplier": 1.5,
     }
     for field, expected in fixed.items():
         actual = getattr(genome, field)
