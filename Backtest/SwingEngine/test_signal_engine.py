@@ -118,10 +118,6 @@ class SignalEngineStructureBreakTests(unittest.TestCase):
         self.assertTrue(signals.empty)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 # Differential regression tests for the signal-scan optimization.
 import numpy as np
 import signal_engine as optimized_signal_engine
@@ -279,3 +275,6 @@ class SignalEngineOptimizationParityTests(unittest.TestCase):
                 touch_rule="progressive",
             )
         self.assertGreater(len(smoke), 0)
+
+if __name__ == "__main__":
+    unittest.main()
