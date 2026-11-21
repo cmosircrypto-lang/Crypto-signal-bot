@@ -148,6 +148,8 @@ class ExecutionEngine:
         entry_price: float,
         stop_loss: float,
         risk_percent: float,
+        round_contracts_up: bool = False,
+        max_risk_amount: Optional[float] = None,
     ) -> tuple[float, float, float]:
         """
         Returns:
@@ -204,6 +206,7 @@ class ExecutionEngine:
             entry_price=entry_price,
             stop_loss=stop_loss,
             risk_amount=risk_amount,
+            round_up=round_contracts_up,
         )
 
         if contracts <= 0:
@@ -234,10 +237,19 @@ class ExecutionEngine:
                 "Invalid calculated contract position size"
             )
 
-        if actual_risk > Decimal(str(risk_amount)):
+        if not round_contracts_up and actual_risk > Decimal(str(risk_amount)):
             raise ValueError(
                 "Calculated risk exceeds requested risk"
             )
+
+        if max_risk_amount is not None:
+            maximum = Decimal(str(max_risk_amount))
+            if not maximum.is_finite() or maximum < 0:
+                raise ValueError("Invalid maximum risk amount")
+            if actual_risk > maximum:
+                raise ValueError(
+                    "Rounded contract risk exceeds available risk budget"
+                )
 
         return (
             contract_count,
@@ -254,6 +266,8 @@ class ExecutionEngine:
         take_profit: float,
         risk_percent: float,
         timestamp: int,
+        round_contracts_up: bool = False,
+        max_risk_amount: Optional[float] = None,
     ) -> Position:
 
         if not isinstance(symbol, str) or not symbol.strip():
@@ -357,6 +371,8 @@ class ExecutionEngine:
                 entry_price=entry_price,
                 stop_loss=final_stop_loss,
                 risk_percent=risk_percent,
+                round_contracts_up=round_contracts_up,
+                max_risk_amount=max_risk_amount,
             )
 
         else:
