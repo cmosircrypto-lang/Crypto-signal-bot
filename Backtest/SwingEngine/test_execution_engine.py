@@ -299,6 +299,30 @@ def test_recovery_rounds_contracts_up_within_explicit_cap():
     print("PASS: recovery lot rounding up stays within explicit risk cap")
 
 
+def test_recovery_rounding_up_respects_minimum_contract_size():
+    spec = make_spec(lot_size="0.1", min_size="0.5")
+    engine = ExecutionEngine(
+        initial_capital=100,
+        contract_specs={"BTC-USDT-SWAP": spec},
+    )
+
+    position = engine.open_trade(
+        symbol="BTC-USDT-SWAP",
+        direction="BUY",
+        entry_price=50000,
+        stop_loss=49000,
+        take_profit=52000,
+        risk_percent=1.5,
+        timestamp=1000,
+        round_contracts_up=True,
+        max_risk_amount=5.0,
+    )
+
+    assert abs(position.contract_count - 0.5) < 1e-9
+    assert abs(position.risk_amount - 5.0) < 1e-9
+    print("PASS: recovery upward rounding honors minSz within risk cap")
+
+
 def test_recovery_rounding_up_rejected_above_explicit_cap():
     engine = make_contract_engine()
 
@@ -544,6 +568,7 @@ def main():
     test_contract_based_position_size()
     test_contract_rounding_keeps_risk_below_target()
     test_recovery_rounds_contracts_up_within_explicit_cap()
+    test_recovery_rounding_up_respects_minimum_contract_size()
     test_recovery_rounding_up_rejected_above_explicit_cap()
     test_below_minimum_contract_size_rejected()
     test_contract_pnl_uses_base_quantity()
