@@ -465,7 +465,10 @@ def run(data_root="Backtest/data/okx", output_dir=None):
 
         if not cached:
             monitor.set_stage("signal_preparation", "preparing causal OB signals")
-            signals, obs = prepare_signals(data, progress_monitor=monitor)
+            signals, obs = prepare_signals(
+                data, progress_monitor=monitor,
+                checkpoint_dir=out / "signal_symbol_checkpoints",
+            )
             signals = _attach_atr(signals, data)
             monitor.set_stage("btc_trends", "building causal BTC 1d/4h/1h trend frames")
             btc_frames = build_btc_trend_frames(data)
