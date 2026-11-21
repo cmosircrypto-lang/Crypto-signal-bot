@@ -1,7 +1,9 @@
 import unittest
+from types import SimpleNamespace
 
 from recovery_cycle_experiment import (
-    _cycle_close_status, _levels, recovery_risk_amount,
+    _cycle_close_status, _levels, _update_open_risk_peaks,
+    recovery_risk_amount,
 )
 
 
@@ -45,6 +47,25 @@ class RecoveryCycleExperimentTests(unittest.TestCase):
         self.assertEqual(_cycle_close_status(2, 0.00, 2.50), "RECOVERED_BREAKEVEN")
         self.assertEqual(_cycle_close_status(2, -0.02, 2.50), "CLOSED_SHORTFALL")
         self.assertEqual(_cycle_close_status(0, 2.50, 2.50), "BASE_TP")
+
+    def test_open_risk_peak_uses_same_timestamp_equity_snapshot(self):
+        system = SimpleNamespace(execution=SimpleNamespace(
+            equity=100.0,
+            open_positions={"BTC": SimpleNamespace(risk_amount=2.5)},
+        ))
+        peak_amount, peak_percent = _update_open_risk_peaks(system, 0.0, 0.0)
+        self.assertAlmostEqual(peak_amount, 2.5)
+        self.assertAlmostEqual(peak_percent, 2.5)
+
+        # Another position closes at a loss while BTC remains open.
+        # The open-risk amount is unchanged, but its percentage must use
+        # the reduced equity from this same portfolio snapshot.
+        system.execution.equity = 80.0
+        peak_amount, peak_percent = _update_open_risk_peaks(
+            system, peak_amount, peak_percent
+        )
+        self.assertAlmostEqual(peak_amount, 2.5)
+        self.assertAlmostEqual(peak_percent, 3.125)
 
     def test_atr_stop_and_rr_levels(self):
         signal = {"entry_price": 100.0, "atr14": 2.0, "direction": "BUY"}
