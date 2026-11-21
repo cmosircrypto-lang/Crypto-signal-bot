@@ -44,6 +44,17 @@ def assert_legacy_compatible(genome: StrategyGenome) -> None:
             )
 
 
+def _select_symbols(symbol_data: dict, genome: StrategyGenome) -> dict:
+    if not genome.symbols:
+        return symbol_data
+    requested = {symbol.strip().upper() for symbol in genome.symbols}
+    available = {symbol.strip().upper(): symbol for symbol in symbol_data}
+    missing = sorted(requested - set(available))
+    if missing:
+        raise ValueError(f"Genome references symbols absent from dataset: {missing}")
+    return {available[symbol]: symbol_data[available[symbol]] for symbol in sorted(requested)}
+
+
 def prepare_genome_inputs(
     symbol_data: dict,
     genome: StrategyGenome,
@@ -52,8 +63,9 @@ def prepare_genome_inputs(
     """Prepare signals using the existing runner with baseline-compatible genes."""
     assert_legacy_compatible(genome)
     prepare_signals, _, _ = _legacy_runner()
+    selected_data = _select_symbols(symbol_data, genome)
     return prepare_signals(
-        symbol_data,
+        selected_data,
         methods=genome.entry_methods,
         zone_type=genome.zone_type,
         touch_rule=genome.touch_rule,
@@ -74,13 +86,18 @@ def evaluate_prepared_genome(
     """Evaluate a prepared candidate through the original portfolio simulator."""
     assert_legacy_compatible(genome)
     _, simulate_scenario, build_btc_trend_frames = _legacy_runner()
+    selected_data = _select_symbols(symbol_data, genome)
+    if genome.symbols:
+        selected_symbols = set(selected_data)
+        signals_by_symbol = {key: value for key, value in signals_by_symbol.items() if key in selected_symbols}
+        order_blocks_by_symbol = {key: value for key, value in order_blocks_by_symbol.items() if key in selected_symbols}
     btc_frames = (
-        build_btc_trend_frames(symbol_data)
+        build_btc_trend_frames(selected_data)
         if genome.btc_filter_mode is not None
         else None
     )
     return simulate_scenario(
-        symbol_data,
+        selected_data,
         signals_by_symbol,
         order_blocks_by_symbol,
         risk_percent=genome.risk_percent,
