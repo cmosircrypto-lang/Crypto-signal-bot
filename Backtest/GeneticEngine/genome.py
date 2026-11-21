@@ -32,6 +32,8 @@ class StrategyGenome:
     require_4h_alignment: bool = False
     risk_percent: float = 0.5
     reward_ratio: float = 2.0
+    stop_mode: str = "OB_WICK"
+    atr_stop_multiplier: float = 1.5
     symbols: tuple[str, ...] = field(default_factory=tuple)
 
     def validate(self) -> None:
@@ -64,6 +66,10 @@ class StrategyGenome:
             raise GenomeValidationError("risk_percent is outside the configured search domain")
         if self.reward_ratio not in config.REWARD_RATIO_VALUES:
             raise GenomeValidationError("reward_ratio is outside the configured search domain")
+        if self.stop_mode not in config.STOP_MODES:
+            raise GenomeValidationError(f"Unsupported stop_mode: {self.stop_mode}")
+        if self.atr_stop_multiplier not in config.ATR_STOP_MULTIPLIER_VALUES:
+            raise GenomeValidationError("atr_stop_multiplier is outside the configured search domain")
         normalized = tuple(symbol.strip().upper() for symbol in self.symbols)
         if any(not symbol for symbol in normalized):
             raise GenomeValidationError("symbols cannot contain blank values")
