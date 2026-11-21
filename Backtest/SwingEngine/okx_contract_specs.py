@@ -156,6 +156,16 @@ class ContractSpec:
 
         return steps * self.lot_size
 
+    def round_contracts_up(self, contracts):
+        """Round a positive contract count up to the next lotSz increment."""
+        count = Decimal(str(contracts))
+        if not count.is_finite() or count <= 0:
+            return Decimal("0")
+        steps = (count / self.lot_size).to_integral_value(
+            rounding=ROUND_CEILING
+        )
+        return steps * self.lot_size
+
     def validate_order_size(self, contracts):
         count = Decimal(str(contracts))
 
@@ -174,7 +184,8 @@ class ContractSpec:
         self,
         entry_price,
         stop_loss,
-        risk_amount
+        risk_amount,
+        round_up=False,
     ):
         entry = to_decimal(
             entry_price,
@@ -221,8 +232,10 @@ class ContractSpec:
             risk / risk_per_contract
         )
 
-        contracts = self.round_contracts_down(
-            raw_contracts
+        contracts = (
+            self.round_contracts_up(raw_contracts)
+            if round_up
+            else self.round_contracts_down(raw_contracts)
         )
 
         if not self.validate_order_size(contracts):
