@@ -157,8 +157,10 @@ class ExecutionEngine:
             base_quantity,
             actual_risk_amount
 
-        Contract count is rounded down according to lotSz.
-        A size below minSz is rejected.
+        Contract count is rounded down by default. Recovery sizing may
+        request upward rounding, but the resulting risk must remain within
+        max_risk_amount when that ceiling is supplied. A size below minSz
+        is rejected.
         """
 
         if self.contract_specs is None:
