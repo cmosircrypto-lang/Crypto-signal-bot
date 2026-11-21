@@ -121,6 +121,7 @@ def _simulate(data, signals, obs, specs, btc_frames, atr_multiple, rr,
     cycle_serial = {}
     closed, skips = [], []
     cycle_counts = {"cycles_started": 0, "cycles_recovered": 0,
+                    "cycles_breakeven_met": 0, "cycles_initial_target_met": 0,
                     "cycles_failed_limit": 0, "cycles_unresolved": 0,
                     "cycles_sizing_failed": 0}
     for idx, ts in enumerate(times, 1):
@@ -164,10 +165,16 @@ def _simulate(data, signals, obs, specs, btc_frames, atr_multiple, rr,
                         state["status"] = "RECOVERED" if state["recovery_entries"] else "BASE_TP"
                         state["cycle_closed_at"] = ts
                         state["cycle_net_pnl"] = state["cycle_realized_pnl"]
+                        state["recovered_to_breakeven"] = state["cycle_net_pnl"] >= -1e-9
+                        state["achieved_initial_target"] = state["cycle_net_pnl"] >= state["base_target_profit"] - 1e-9
                         completed_cycles.append(dict(state))
                         cycles.pop(symbol, None)
                         if state["recovery_entries"]:
                             cycle_counts["cycles_recovered"] += 1
+                        if state["recovered_to_breakeven"]:
+                            cycle_counts["cycles_breakeven_met"] += 1
+                        if state["achieved_initial_target"]:
+                            cycle_counts["cycles_initial_target_met"] += 1
 
         entries = sorted(signals_at_time.get(ts, []), key=lambda x: x[0])
         for symbol, signal in entries:
@@ -292,13 +299,16 @@ def run(data_root="Backtest/data/okx", output_dir="Backtest/results/run48"):
             for atr in ATR_MULTIPLIERS:
                 for rr in REWARD_RATIOS:
                     configs.append((universe, atr, rr, None))
-                    for objective in OBJECTIVES:
-                        for sizing in SIZING_METHODS:
-                            for limit in RECOVERY_LIMITS:
-                                configs.append((universe, atr, rr, {
-                                    "objective": objective, "sizing_method": sizing,
-                                    "max_recovery_trades": limit,
-                                }))
+                    for limit in RECOVERY_LIMITS:
+                        for objective in OBJECTIVES:
+                            configs.append((universe, atr, rr, {
+                                "objective": objective, "sizing_method": "exact_recovery",
+                                "max_recovery_trades": limit,
+                            }))
+                        configs.append((universe, atr, rr, {
+                            "objective": "both_evaluated", "sizing_method": "double_size",
+                            "max_recovery_trades": limit,
+                        }))
         summaries = []
         started = time.monotonic()
         total_events = len(configs)
@@ -340,7 +350,7 @@ def run(data_root="Backtest/data/okx", output_dir="Backtest/results/run48"):
             "- Portfolio caps retained: 6 total, 3 per direction; max one open position per symbol.\n"
             "- Recovery caps mean additional recovery entries after the initial trade; unlimited has no count cap.\n"
             "- Exact recovery aims to recover prior losses plus the initial trade TP target; breakeven aims only to recover prior losses.\n"
-            "- Double-size is tested independently and is not guaranteed to recover losses.\n"
+            "- Double-size runs are unique (not duplicated for objectives); every completed cycle is scored for both breakeven and the initial trade target profit.\n"
             "- A recovery risk request at or above current equity is rejected and the cycle is marked failed; OKX min/lot rules still apply.\n"
             "- Unresolved cycles at the end remain reported, not assumed recovered.\n",
             encoding="utf-8",
