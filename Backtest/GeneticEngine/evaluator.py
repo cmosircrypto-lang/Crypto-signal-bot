@@ -7,9 +7,20 @@ for genetic genes is a separate, test-gated change to the legacy engine.
 
 from __future__ import annotations
 
+import sys
+from pathlib import Path
 from typing import Any
 
 from .genome import StrategyGenome, GenomeValidationError
+
+
+def _legacy_runner():
+    """Import the script-oriented SwingEngine modules from a package context."""
+    swing_engine_dir = str(Path(__file__).resolve().parents[1] / "SwingEngine")
+    if swing_engine_dir not in sys.path:
+        sys.path.insert(0, swing_engine_dir)
+    from backtest_runner import prepare_signals, simulate_scenario, build_btc_trend_frames
+    return prepare_signals, simulate_scenario, build_btc_trend_frames
 
 
 def assert_legacy_compatible(genome: StrategyGenome) -> None:
@@ -38,10 +49,7 @@ def prepare_genome_inputs(
 ):
     """Prepare signals using the existing runner with baseline-compatible genes."""
     assert_legacy_compatible(genome)
-
-    # Import lazily because the legacy runner uses script-style local imports.
-    from backtest_runner import prepare_signals
-
+    prepare_signals, _, _ = _legacy_runner()
     return prepare_signals(
         symbol_data,
         methods=genome.entry_methods,
@@ -63,8 +71,7 @@ def evaluate_prepared_genome(
 ):
     """Evaluate a prepared candidate through the original portfolio simulator."""
     assert_legacy_compatible(genome)
-    from backtest_runner import simulate_scenario, build_btc_trend_frames
-
+    _, simulate_scenario, build_btc_trend_frames = _legacy_runner()
     btc_frames = (
         build_btc_trend_frames(symbol_data)
         if genome.btc_filter_mode is not None
