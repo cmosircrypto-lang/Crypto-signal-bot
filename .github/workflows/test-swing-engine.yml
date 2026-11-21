@@ -57,6 +57,12 @@ jobs:
           python -m pip install --upgrade pip
           pip install pandas numpy
 
+      - name: Test Genetic Strategy Engine genome schema
+        run: python -m unittest Backtest.GeneticEngine.tests.test_genome
+
+      - name: Test Genetic Strategy Engine baseline parity
+        run: python Backtest/GeneticEngine/tests/test_default_parity.py
+
       - name: Run Market Structure Tests
         run: python Backtest/SwingEngine/test_market_structure.py
 
