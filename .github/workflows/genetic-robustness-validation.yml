@@ -60,7 +60,19 @@ jobs:
           repository: \${{ github.repository }}
           run-id: 44959250472
           name: genetic-limited-evolution-checkpoint
-          path: Backtest/results/genetic_limited
+          path: /tmp/run6-checkpoint
+
+      - name: Place restored signal checkpoints
+        if: always()
+        run: |
+          checkpoint_dir="$(find /tmp/run6-checkpoint -type d -name signal_symbol_checkpoints -print -quit 2>/dev/null || true)"
+          if [ -n "$checkpoint_dir" ]; then
+            mkdir -p Backtest/results/genetic_limited
+            cp -a "$checkpoint_dir" Backtest/results/genetic_limited/
+            echo "Restored Run #6 signal checkpoints from $checkpoint_dir"
+          else
+            echo "Run #6 signal checkpoints not found; the runner will prepare them afresh."
+          fi
 
       - name: Run robustness validation
         run: |
