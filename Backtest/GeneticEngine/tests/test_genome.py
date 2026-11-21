@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 
 from Backtest.GeneticEngine.config import EvolutionConfig
+from Backtest.GeneticEngine.evaluator import assert_legacy_compatible
 from Backtest.GeneticEngine.genome import (
     GenomeValidationError,
     StrategyGenome,
@@ -29,6 +30,15 @@ class StrategyGenomeTests(unittest.TestCase):
         )
         self.assertFalse(genome.require_4h_alignment)
         self.assertIsNone(genome.btc_filter_mode)
+        self.assertEqual(genome.stop_mode, "OB_WICK")
+        self.assertEqual(genome.atr_stop_multiplier, 1.5)
+
+    def test_legacy_adapter_blocks_unwired_genes(self):
+        assert_legacy_compatible(StrategyGenome.baseline())
+        with self.assertRaises(GenomeValidationError):
+            assert_legacy_compatible(StrategyGenome(swing_left=3))
+        with self.assertRaises(GenomeValidationError):
+            assert_legacy_compatible(StrategyGenome(stop_mode="ATR"))
 
     def test_rejects_unknown_method(self):
         with self.assertRaises(GenomeValidationError):
