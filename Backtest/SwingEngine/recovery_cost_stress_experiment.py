@@ -217,7 +217,7 @@ def _simulate(data, signals, obs, specs, btc_frames, atr_multiple, rr,
                 "entry_price": result.entry_price, "exit_price": result.exit_price,
                 "quantity": result.quantity, "contract_count": result.contract_count,
                 "risk_percent": result.risk_percent, "risk_amount": pos.risk_amount,
-                "pnl": result.pnl, "result": result.result,
+                "pnl": result.pnl, "funding_cost": funding_cost, "result": result.result,
                 "exit_reason": result.exit_reason, "opened_at": result.opened_at,
                 "closed_at": result.closed_at,
             }
@@ -409,7 +409,10 @@ def _simulate(data, signals, obs, specs, btc_frames, atr_multiple, rr,
 
 
 def run(data_root="Backtest/data/okx", output_dir=None):
-    output_dir = output_dir or os.environ.get("RECOVERY_OUTPUT_DIR", "Backtest/results/run48")
+    output_dir = output_dir or os.environ.get("RECOVERY_OUTPUT_DIR", "Backtest/results/recovery_cost_stress")
+    fee_rate = float(os.environ.get("RECOVERY_FEE_RATE", "0.0005"))
+    slippage_rate = float(os.environ.get("RECOVERY_SLIPPAGE_RATE", "0.0002"))
+    funding_rate_8h = float(os.environ.get("RECOVERY_FUNDING_RATE_8H", "0.0001"))
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
     monitor = ProgressMonitor(interval_seconds=30)
@@ -504,12 +507,13 @@ def run(data_root="Backtest/data/okx", output_dir=None):
         frame = pd.DataFrame(summaries)
         frame.to_csv(out / "recovery_cost_stress_summary.csv", index=False)
         (out / "README.md").write_text(
-            "# Run #48 — per-symbol one-position and recovery cycles\n\n"
+            "# Recovery cost, funding and compounding stress audit\n\n"
             f"- OOS cutoff UTC: {CUTOFF_UTC}\n- BTC filter: {FILTER_MODE}\n"
             "- OOS data only; selected set comes from Run #47 training-strong classification.\n"
             "- Base risk: 0.5% of current equity; actual OKX contract sizing.\n"
             "- ATR stop multiples: 1.0, 1.5, 2.0; RR: 1.5, 2.0, 2.5.\n"
-            "- Fees, slippage and funding: zero.\n"
+            f"- Fee per side: {fee_rate:.5%}; slippage per side: {slippage_rate:.5%}.\n"
+            f"- Funding stress: always-paid {funding_rate_8h:.5%} per crossed 8-hour UTC settlement on entry notional.\n"
             "- Portfolio caps retained: 6 total, 3 per direction; max one open position per symbol.\n"
             f"- Aggregate open-risk ceiling: {MAX_PORTFOLIO_OPEN_RISK_PERCENT:.2f}% of current equity.\n"
             "- Recovery caps mean additional recovery entries after the initial trade; unlimited has no count cap.\n"
