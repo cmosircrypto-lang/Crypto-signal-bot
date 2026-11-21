@@ -17,6 +17,14 @@ class RecoveryCycleExperimentTests(unittest.TestCase):
                                     "breakeven", "exact_recovery", 1)
         self.assertAlmostEqual(risk, 1.2)
 
+    def test_exact_recovery_uses_tick_rounded_reward_risk(self):
+        risk = recovery_risk_amount(
+            5.0, 1.0, 2.0, 2.0,
+            "initial_target_profit", "exact_recovery", 1,
+            stop_distance=1.1, target_distance=2.09,
+        )
+        self.assertAlmostEqual(risk, 7.0 * 1.1 / 2.09)
+
     def test_double_size_progression(self):
         # With a 0.5 base quantity and a 1.0 stop distance, recovery
         # entries target 1.0 (2x), 2.0 (4x), then 4.0 (8x) quantity.
