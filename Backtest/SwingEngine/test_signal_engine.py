@@ -283,5 +283,63 @@ class SignalEngineOptimizationParityTests(unittest.TestCase):
             )
         self.assertGreater(len(smoke), 0)
 
+
+    def test_optimized_scan_matches_legacy_at_timestamp_and_input_boundaries(self):
+        candles_15m, _, order_blocks, _, _ = self._fixtures()
+        interval_15m = 15 * 60 * 1000
+        interval_1h = 60 * 60 * 1000
+
+        def compare(candles, obs):
+            structure = pd.DataFrame({
+                "structure_event": [None] * len(candles)
+            })
+            with patch.object(
+                signal_engine_reference, "analyze_market_structure",
+                return_value=structure,
+            ), patch.object(
+                optimized_signal_engine, "analyze_market_structure",
+                return_value=structure,
+            ):
+                kwargs = dict(
+                    symbol="ETH-USDT-SWAP",
+                    candles_15m=candles,
+                    order_blocks_1h=obs,
+                    methods=("DIRECT",),
+                    zone_type="body",
+                    touch_rule="progressive",
+                )
+                legacy = signal_engine_reference.generate_entry_signals(**kwargs)
+                optimized = optimized_signal_engine.generate_entry_signals(**kwargs)
+            assert_frame_equal(legacy, optimized, check_exact=True)
+
+        # A candle closing exactly when the BOS candle closes is ineligible.
+        exact_boundary = order_blocks.iloc[[0]].copy()
+        exact_boundary.loc[:, "bos_ts"] = (
+            int(candles_15m.iloc[42]["ts"]) + interval_15m - interval_1h
+        )
+        compare(candles_15m, exact_boundary)
+
+        # One millisecond earlier makes that same candle eligible.
+        just_before = exact_boundary.copy()
+        just_before.loc[:, "bos_ts"] -= 1
+        compare(candles_15m, just_before)
+
+        # A BOS that closes after the final 15m candle must yield no signals.
+        after_data = exact_boundary.copy()
+        after_data.loc[:, "bos_ts"] = (
+            int(candles_15m.iloc[-1]["ts"]) + interval_15m
+        )
+        compare(candles_15m, after_data)
+
+        # Gaps in timestamps and a non-default DataFrame index must not
+        # change the scan result or the exact legacy output.
+        sparse = candles_15m.drop(index=[20, 21, 22, 89, 90]).copy()
+        sparse.index = range(1000, 1000 + 3 * len(sparse), 3)
+        compare(sparse, order_blocks.iloc[[0]].copy())
+
+        # Empty and multiple/reordered OB inputs exercise loop boundaries.
+        compare(candles_15m, order_blocks.iloc[0:0].copy())
+        compare(candles_15m, order_blocks.iloc[::-1].copy())
+
 if __name__ == "__main__":
     unittest.main()
