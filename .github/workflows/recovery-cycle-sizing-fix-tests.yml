@@ -1,0 +1,43 @@
+name: Recovery Cycle Sizing Fix Tests
+
+on:
+  push:
+    branches:
+      - experiment/recovery-cycle-sizing-fix
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  recovery-sizing-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout isolated recovery sizing branch
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pandas numpy
+
+      - name: Run execution engine tests
+        run: python Backtest/SwingEngine/test_execution_engine.py
+
+      - name: Run OKX contract specification tests
+        run: python Backtest/SwingEngine/test_okx_contract_specs.py
+
+      - name: Run portfolio engine tests
+        run: python Backtest/SwingEngine/test_portfolio_engine.py
+
+      - name: Run integrated trading system tests
+        run: python Backtest/SwingEngine/test_trading_system.py
+
+      - name: Run recovery cycle experiment tests
+        run: python Backtest/SwingEngine/test_recovery_cycle_experiment.py
