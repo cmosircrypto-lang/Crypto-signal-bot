@@ -277,6 +277,51 @@ def test_contract_rounding_keeps_risk_below_target():
     print("PASS: contract lot rounding does not exceed risk")
 
 
+def test_recovery_rounds_contracts_up_within_explicit_cap():
+    engine = make_contract_engine()
+
+    position = engine.open_trade(
+        symbol="BTC-USDT-SWAP",
+        direction="BUY",
+        entry_price=50000,
+        stop_loss=49000,
+        take_profit=52000,
+        risk_percent=1.5,
+        timestamp=1000,
+        round_contracts_up=True,
+        max_risk_amount=2.0,
+    )
+
+    assert abs(position.contract_count - 0.2) < 1e-9
+    assert abs(position.quantity - 0.002) < 1e-9
+    assert abs(position.risk_amount - 2.0) < 1e-9
+
+    print("PASS: recovery lot rounding up stays within explicit risk cap")
+
+
+def test_recovery_rounding_up_rejected_above_explicit_cap():
+    engine = make_contract_engine()
+
+    try:
+        engine.open_trade(
+            symbol="BTC-USDT-SWAP",
+            direction="BUY",
+            entry_price=50000,
+            stop_loss=49000,
+            take_profit=52000,
+            risk_percent=1.5,
+            timestamp=1000,
+            round_contracts_up=True,
+            max_risk_amount=1.5,
+        )
+        raise AssertionError("Up-rounded risk exceeded the supplied cap")
+    except ValueError as exc:
+        assert "risk budget" in str(exc).lower()
+
+    assert "BTC-USDT-SWAP" not in engine.open_positions
+    print("PASS: recovery lot rounding up cannot exceed explicit risk cap")
+
+
 def test_below_minimum_contract_size_rejected():
     engine = make_contract_engine()
 
@@ -498,6 +543,8 @@ def main():
 
     test_contract_based_position_size()
     test_contract_rounding_keeps_risk_below_target()
+    test_recovery_rounds_contracts_up_within_explicit_cap()
+    test_recovery_rounding_up_rejected_above_explicit_cap()
     test_below_minimum_contract_size_rejected()
     test_contract_pnl_uses_base_quantity()
     test_missing_contract_spec_rejected()
