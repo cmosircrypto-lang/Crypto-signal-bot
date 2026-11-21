@@ -5,6 +5,7 @@ The next evolution stage can expand them after these results are validated.
 """
 from __future__ import annotations
 
+import ast
 import itertools
 import json
 import math
@@ -148,6 +149,11 @@ def run(data_root="Backtest/data/okx", output_dir=None):
             cache = {}
 
     rng = random.Random(EvolutionConfig().random_seed)
+    if checkpoint.get("random_state"):
+        try:
+            rng.setstate(ast.literal_eval(checkpoint["random_state"]))
+        except (ValueError, SyntaxError, TypeError):
+            pass
     monitor = ProgressMonitor(interval_seconds=30)
     monitor.start()
     try:
@@ -241,6 +247,7 @@ def run(data_root="Backtest/data/okx", output_dir=None):
                 "history": history,
                 "split_ts": split_ts,
                 "completed_generations": generation + 1,
+                "random_state": repr(rng.getstate()),
             })
 
         candidates = sorted(
