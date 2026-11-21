@@ -452,7 +452,7 @@ def run(data_root="Backtest/data/okx", output_dir="Backtest/results/run48"):
             "- Closed recovery cycles are classified as RECOVERED_TARGET, RECOVERED_BREAKEVEN or CLOSED_SHORTFALL using realized cycle PnL.\n"
             "- Double-size recovery doubles actual base quantity (2x, 4x, 8x...) from the initial trade; requested risk varies with the new stop distance and OKX lot rounding applies.\n"
             "- Double-size runs are unique (not duplicated for objectives); every completed cycle is scored for both breakeven and the initial trade target profit.\n"
-            "- A recovery risk request at or above current equity is rejected and the cycle is marked failed; OKX min/lot rules still apply.\n"
+            "- A recovery request that exceeds remaining aggregate open-risk capacity is rejected and the cycle is marked failed; OKX min/lot rules still apply.\n"
             "- Unresolved cycles at the end remain reported, not assumed recovered.\n",
             encoding="utf-8",
         )
