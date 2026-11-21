@@ -281,16 +281,17 @@ def run(data_root="Backtest/data/okx", output_dir=None):
         monitor.set_stage("genetic_oos_validation", "validating top evolved candidates on untouched chronological holdout")
         validation_rows = []
         for index, genome in enumerate(top_genomes, 1):
-            summary, trades, skips = _evaluate(
+            summary, trades, system = _evaluate(
                 genome, data, test_signals, obs, specs, btc_frames, INITIAL_EQUITY
             )
+            skipped_rows = getattr(system, "_diagnostic_skips", [])
             validation_rows.append({
                 "rank": index,
                 "genome": _key(genome),
                 "fitness_train": cache.get(_key(genome), {}).get("fitness", None),
                 **summary,
                 "oos_trade_rows": int(len(trades)),
-                "oos_skip_rows": int(len(skips)),
+                "oos_skip_rows": int(len(skipped_rows)),
             })
             trades.to_csv(out / f"oos_trades_rank_{index}.csv", index=False)
             print(
