@@ -19,11 +19,12 @@ It is simulation-only and does not submit exchange orders.
 - genome.py: versioned candidate representation with validation and serialization
 - evaluator.py: compatibility adapter that calls the existing SwingEngine
 
-The adapter intentionally refuses non-default swing/OB parameters for now.
+The adapter intentionally refuses non-default swing/OB and ATR-stop parameters for now.
 The current SwingEngine hardcodes swing 5/5 in signal generation and the
-OB detector defaults to threshold 1.0, ATR 14 and lookback 10. Those parameters
-must be made injectable with default-preserving changes before the genetic
-search is allowed to mutate them.
+OB detector defaults to threshold 1.0, ATR 14 and lookback 10. Its stop is
+currently derived from the OB wick; ATR-based stops are not yet implemented.
+Those parameters and stop models must be wired through default-preserving,
+parity-tested changes before the genetic search is allowed to mutate them.
 
 ## Tests
 
