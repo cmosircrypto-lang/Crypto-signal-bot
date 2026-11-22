@@ -117,6 +117,18 @@ def _update_open_risk_peaks(system, max_amount, max_percent):
     return max_amount, max_percent
 
 
+def _btc_filter_matches(trend, direction, filter_mode):
+    """Causal BTC trend gate for the selected closed-timeframe combination."""
+    mode = filter_mode or FILTER_MODE
+    if mode == "1d_4h":
+        required = ("1d", "4h")
+    elif mode == "1d_4h_1h":
+        required = ("1d", "4h", "1h")
+    else:
+        raise ValueError(f"Unsupported BTC filter mode: {mode}")
+    return all(trend.get(timeframe) == direction for timeframe in required)
+
+
 def _levels(signal, atr_multiple, rr):
     entry = float(signal["entry_price"])
     atr = float(signal["atr14"])
@@ -323,8 +335,7 @@ def _simulate(data, signals, obs, specs, btc_frames, atr_multiple, rr,
             if not system.can_search_symbol(symbol):
                 continue
             trend = btc_trends_at_time(btc_frames, ts)
-            required_trends = ("1d", "4h") if (filter_mode or FILTER_MODE) == "1d_4h" else ("1d", "4h", "1h")
-            if any(trend.get(tf) != direction for tf in required_trends):
+            if not _btc_filter_matches(trend, direction, filter_mode):
                 continue
             levels = _levels(signal, atr_multiple, rr)
             if levels is None:
