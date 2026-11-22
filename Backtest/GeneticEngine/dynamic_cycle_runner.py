@@ -118,6 +118,9 @@ def run_symbol_cycle(
         raise ValueError("candidate_id values must be unique within a symbol cycle")
 
     pool_hash = _canonical_hash(specs)
+    missing_metadata = {"code_hash", "config_hash", "dataset_hash"} - set(checkpoint_metadata)
+    if missing_metadata:
+        raise ValueError(f"checkpoint_metadata missing required keys: {sorted(missing_metadata)}")
     metadata = {
         **dict(checkpoint_metadata),
         "symbol": symbol,
@@ -130,7 +133,7 @@ def run_symbol_cycle(
         restored = load_checkpoint(path, expected_metadata=metadata)
         completed = dict(restored["payload"].get("completed", {}))
 
-    for spec in specs:
+    for index, spec in enumerate(specs):
         candidate_id = _candidate_id(spec)
         if candidate_id in completed:
             continue
@@ -144,7 +147,9 @@ def run_symbol_cycle(
             path,
             metadata=metadata,
             payload={"completed": completed, "status": "RUNNING",
-                     "next_candidate_id": None},
+                     "next_candidate_id": (
+                         _candidate_id(specs[index + 1]) if index + 1 < len(specs) else None
+                     )},
         )
 
     signal_candidates = [
