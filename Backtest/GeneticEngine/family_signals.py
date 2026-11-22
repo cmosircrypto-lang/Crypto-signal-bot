@@ -150,7 +150,7 @@ def _evaluate_one(family: str, frames: Mapping[str, Any], genome: StrategyGenome
         if age is None or not aligned or not slope_ok or float(l4.adx) < genome.ema_min_adx_4h or float(l1.adx) < genome.ema_min_adx_1h or vol < genome.ema_volume_mult or not rsi_ok:
             return None
         q = 0.35 + 0.2*min(float(l4.adx)/35,1) + 0.2*min(vol/3,1) + 0.15*(1-age/genome.ema_cross_lookback) + 0.1
-        return _result(family,direction,h1,genome.ema_sl_atr*float(l1.atr),genome.ema_tp_atr*float(l1.atr),q,"recent 4h EMA cross with 1h confirmation")
+        return _result(family,direction,m15,genome.ema_sl_atr*float(l1.atr),genome.ema_tp_atr*float(l1.atr),q,"recent 4h EMA cross with 1h confirmation and 15m entry")
 
     if family == "BTC_ALIGNED_PULLBACK":
         btc_frames = btc_frames or {}
@@ -160,6 +160,12 @@ def _evaluate_one(family: str, frames: Mapping[str, Any], genome: StrategyGenome
         b1,b4,bd = (_indicators(x) for x in (b1raw,b4raw,bdraw))
         bias4 = "LONG" if b4.ema9.iloc[-1] > b4.ema21.iloc[-1] else "SHORT"
         biasd = "LONG" if bd.ema9.iloc[-1] > bd.ema21.iloc[-1] else "SHORT"
+        btc_atr=float(b4.atr.iloc[-1])
+        btc_gap=abs(float(b4.ema9.iloc[-1]-b4.ema21.iloc[-1]))/btc_atr if btc_atr>0 else 0.0
+        btc_adx=float(b4.adx.iloc[-1]) if _valid(b4.adx.iloc[-1]) else 0.0
+        btc_extension=abs(float(b4.close.iloc[-1]-b4.ema21.iloc[-1]))/btc_atr if btc_atr>0 else float("inf")
+        if (btc_gap < 0.28 and btc_adx < 20.0) or btc_extension > 6.0:
+            return None
         l4 = _indicators(_frame(frames,"4h",40)) if _frame(frames,"4h",40) is not None else None
         if bias4 != direction or biasd != direction or l4 is None:
             return None
@@ -171,7 +177,9 @@ def _evaluate_one(family: str, frames: Mapping[str, Any], genome: StrategyGenome
         ema = float(last["ema21"])
         touched = (float(last["low"]) <= ema+genome.btc_touch_atr*atr and close > ema and close > float(last["open"])) if direction=="LONG" else (float(last["high"]) >= ema-genome.btc_touch_atr*atr and close < ema and close < float(last["open"]))
         extension = abs(close-ema)/atr
-        if not touched or extension > genome.btc_max_extension_atr or vol < genome.btc_pullback_volume:
+        rsi=float(last.rsi)
+        rsi_ok=(40.0 <= rsi <= 60.0)
+        if not touched or not rsi_ok or extension > genome.btc_max_extension_atr or vol < genome.btc_pullback_volume:
             return None
         q = 0.45 + 0.2*min(gap/0.8,1) + 0.2*min(vol/2.5,1) + 0.15
         return _result(family,direction,df,genome.btc_pullback_sl_atr*atr,genome.btc_pullback_tp_atr*atr,q,"BTC 1d/4h bias and 1h EMA21 pullback")
@@ -192,13 +200,19 @@ def _evaluate_one(family: str, frames: Mapping[str, Any], genome: StrategyGenome
             wick = float(last.high)-max(float(last.open),close)
             stop_dist = max((float(last.high)+genome.smc_sl_buffer_atr*atr)-close,genome.smc_min_sl_atr*atr)
         target_dist = genome.smc_tp_atr*atr
-        if not swept or not trend or stop_dist > genome.smc_max_sl_atr*atr or target_dist/stop_dist < genome.smc_min_rr or vol < genome.smc_min_volume:
+        rsi=float(last.rsi) if _valid(last.rsi) else 50.0
+        rsi_extreme=(direction=="LONG" and rsi>72.0) or (direction=="SHORT" and rsi<28.0)
+        if (not swept or not trend or rsi_extreme or stop_dist > genome.smc_max_sl_atr*atr
+                or stop_dist/close > 0.07 or stop_dist/close < 0.0035
+                or target_dist/stop_dist < genome.smc_min_rr or vol < genome.smc_min_volume):
             return None
         q = 0.3+0.25*min(abs(float(last.ema21-last.ema50))/atr,1)+0.2*min(vol/2,1)+0.25*min(wick/atr,1)
         return _result(family,direction,df,stop_dist,target_dist,q,"4h liquidity sweep and trend confirmation")
 
     if family == "MOMENTUM_BREAKOUT":
         n=genome.momentum_lookback
+        if len(df)<n+1:
+            return None
         prior=df.iloc[-n-1:-1]
         buffer=genome.momentum_breakout_buffer_atr*atr
         breakout = close > float(prior.high.max())+buffer if direction=="LONG" else close < float(prior.low.min())-buffer
