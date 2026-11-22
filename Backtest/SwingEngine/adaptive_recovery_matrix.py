@@ -17,8 +17,8 @@ from recovery_cycle_resumable import CUTOFF_UTC, INITIAL_CAPITAL, _simulate
 from okx_contract_specs import OKXContractSpecs
 
 
-RISK_CAPS = (None, 3.0, 5.0)
-METHODS = ("unlimited_until_tp_or_equity_wipeout", "smart_balance_adaptive_cap")
+RISK_CAPS = (3.0, 5.0)
+METHODS = ("unlimited_until_tp_or_equity_wipeout",)
 
 
 def run():
@@ -64,9 +64,10 @@ def run():
                 "sizing_method": "exact_recovery",
                 "max_recovery_trades": None,
                 "portfolio_open_risk_cap_percent": cap,
-                "max_total_positions": 76,
-                "max_buy_positions": 76,
-                "max_sell_positions": 76,
+                "max_total_positions": 1,
+                "max_buy_positions": 1,
+                "max_sell_positions": 1,
+                "single_position_global": True,
                 # If an entry cannot fit the aggregate open-risk ceiling,
                 # retain the cycle and wait for a later eligible signal.
                 "keep_cycle_when_risk_blocked": True,
@@ -91,7 +92,8 @@ def run():
                 "recovery_objective": "initial_target_profit",
                 "recovery_sizing": "exact_recovery",
                 "portfolio_open_risk_cap_percent": cap,
-                "max_simultaneous_positions": 76,
+                "max_simultaneous_positions_limit": 1,
+                "single_position_global": True,
                 "fee_rate": 0.0,
                 "slippage_rate": 0.0,
                 "funding_cost": 0.0,
@@ -125,13 +127,13 @@ def run():
     frame = pd.DataFrame(summaries)
     frame.to_csv(out / "adaptive_recovery_summary.csv", index=False)
     (out / "README.md").write_text(
-        "# Adaptive recovery matrix — 76-symbol OOS\n\n"
+        "# Serialized unlimited recovery — 76-symbol OOS\n\n"
         f"- OOS cutoff: {CUTOFF_UTC}\n"
         "- Same 76-symbol universe, signals, BTC 1d+4h filter, ATR 2.0, RR 2.0 and base risk 0.5%.\n"
         "- Recovery objective: initial-trade target profit; exact recovery sizing.\n"
-        "- Six scenarios: two recovery methods × aggregate open-risk caps of none, 3%, 5%.\n"
-        "- Both methods remove the previous 6-position portfolio limit; max one open position per symbol remains.\n"
-        "- Smart cap: 5/4/3/2/1/0 recovery entries as current equity falls through >80/>60/>40/>20/>10/≤10% of initial capital.\n"
+        "- Two scenarios: unlimited recovery with aggregate open-risk caps of 3% and 5%.\n"
+        "- Exactly one open position across the entire portfolio. The active symbol owns the portfolio lock until its full recovery cycle reaches a terminal outcome.\n"
+        "- No independent trade from another symbol may open while the active recovery cycle is in progress.\n"
         "- When a recovery entry does not fit the 3%/5% open-risk budget, the cycle is retained and waits for a later eligible signal.\n"
         "- Fees, slippage and funding are zero.\n"
         "- Equity wipeout is a conservative proxy based on aggregate open stop-risk plus the next recovery stop-risk reaching current equity; it is not OKX maintenance-margin liquidation.\n"
