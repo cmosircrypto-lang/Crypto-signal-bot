@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from Backtest.GeneticEngine.dynamic_cycle_runner import run_symbol_cycle
+from Backtest.GeneticEngine.dynamic_cycle_runner import (\n    build_symbol_candidate_pool, run_symbol_cycle,\n)\nfrom Backtest.GeneticEngine.genome import StrategyGenome
 
 
 def valid_result(setup=0.85):
@@ -27,6 +27,22 @@ def valid_result(setup=0.85):
 
 
 class DynamicCycleRunnerTests(unittest.TestCase):
+    def test_genome_population_expands_to_single_method_symbol_candidates(self):
+        genome = StrategyGenome(
+            entry_methods=("DIRECT", "ENGULFING", "PIN_BAR"),
+            zone_type="wick",
+            touch_rule="max_two",
+            btc_filter_mode="1d_4h",
+            require_4h_alignment=True,
+        )
+        pool = build_symbol_candidate_pool("bnb", [genome])
+        self.assertEqual(len(pool), 3)
+        self.assertEqual({item["method"] for item in pool},
+                         {"DIRECT", "ENGULFING", "PIN_BAR"})
+        for item in pool:
+            self.assertEqual(item["genome"]["symbols"], ["BNB"])
+            self.assertEqual(len(item["genome"]["entry_methods"]), 1)
+
     def test_resumes_after_interruption_without_repeating_finished_candidate(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "BNB-cycle.json"
