@@ -14,8 +14,9 @@ import pandas as pd
 from .family_signals import evaluate_genome_signals
 from .genome import StrategyGenome
 
-TF_MS = {"15m": 900_000, "1h": 3_600_000, "4h": 14_400_000}
 DAY_MS = 86_400_000
+TF_MS = {"15m": 900_000, "1h": 3_600_000, "4h": 14_400_000, "1d": DAY_MS}
+SYMBOL_TIMEFRAMES = ("15m", "1h", "4h")
 
 
 @dataclass(frozen=True)
@@ -269,9 +270,9 @@ def evaluate_candidate_walk_forward(
     if symbol not in all_symbol_data:
         raise KeyError(f"symbol not found in dataset: {symbol}")
     raw = _frames_of(all_symbol_data[symbol])
-    if not all(tf in raw for tf in TF_MS):
+    if not all(tf in raw for tf in SYMBOL_TIMEFRAMES):
         raise ValueError("symbol data must contain 15m, 1h and 4h frames")
-    normalized = {tf: _normalize(raw[tf]) for tf in TF_MS}
+    normalized = {tf: _normalize(raw[tf]) for tf in SYMBOL_TIMEFRAMES}
     folds, development_end = _fold_ranges(
         len(normalized["15m"]), oos_fraction=oos_fraction,
         warmup_fraction=warmup_fraction, fold_count=fold_count,
