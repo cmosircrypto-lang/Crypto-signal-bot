@@ -124,7 +124,9 @@ def _simulate_fold(
     fifteen = raw_frames["15m"]
     hourly = raw_frames["1h"]
     four_hour = raw_frames["4h"]
-    decision_times = hourly["timestamp"].to_numpy(dtype="int64") + TF_MS["1h"]
+    # Evaluate at every 15m close so 15m-confirmation families (notably EMA
+    # Cross PRO and Swing/OB) are not restricted to the top of each hour.
+    decision_times = fifteen["timestamp"].to_numpy(dtype="int64") + TF_MS["15m"]
     event_signals: dict[int, dict[str, Any]] = {}
     seen_signatures: set[tuple] = set()
 
@@ -140,7 +142,8 @@ def _simulate_fold(
         if any(len(frames[tf]) < 40 for tf in ("15m", "1h")):
             continue
         # Do not let a data gap turn an old candle into a fresh signal.
-        if int(frames["1h"].iloc[-1]["timestamp"]) + TF_MS["1h"] != decision_ms:
+        latest_1h_close = int(frames["1h"].iloc[-1]["timestamp"]) + TF_MS["1h"]
+        if latest_1h_close > decision_ms or decision_ms-latest_1h_close >= TF_MS["1h"]:
             continue
         if int(frames["15m"].iloc[-1]["timestamp"]) + TF_MS["15m"] != decision_ms:
             continue
@@ -151,7 +154,7 @@ def _simulate_fold(
         )
         if needs_four_hour and (
             frames["4h"].empty or
-            decision_ms - (int(frames["4h"].iloc[-1]["timestamp"]) + TF_MS["4h"]) > TF_MS["4h"]
+            decision_ms - (int(frames["4h"].iloc[-1]["timestamp"]) + TF_MS["4h"]) >= TF_MS["4h"]
         ):
             continue
         if btc_frames:
@@ -162,10 +165,11 @@ def _simulate_fold(
             }
             if "BTC_ALIGNED_PULLBACK" in genome.signal_families:
                 if (not btc["1h"].empty and
-                    int(btc["1h"].iloc[-1]["timestamp"]) + TF_MS["1h"] == decision_ms and
+                    int(btc["1h"].iloc[-1]["timestamp"]) + TF_MS["1h"] <= decision_ms and
+                    decision_ms-(int(btc["1h"].iloc[-1]["timestamp"])+TF_MS["1h"]) < TF_MS["1h"] and
                     not btc["4h"].empty and not btc["1d"].empty and
-                    decision_ms-(int(btc["4h"].iloc[-1]["timestamp"])+TF_MS["4h"]) <= TF_MS["4h"] and
-                    decision_ms-(int(btc["1d"].iloc[-1]["timestamp"])+TF_MS["1d"]) <= TF_MS["1d"]):
+                    decision_ms-(int(btc["4h"].iloc[-1]["timestamp"])+TF_MS["4h"]) < TF_MS["4h"] and
+                    decision_ms-(int(btc["1d"].iloc[-1]["timestamp"])+TF_MS["1d"]) < TF_MS["1d"]):
                     pass
                 else:
                     btc = None
