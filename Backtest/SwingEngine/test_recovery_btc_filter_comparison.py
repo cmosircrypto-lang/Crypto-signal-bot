@@ -1,5 +1,6 @@
 import unittest
-from recovery_cycle_resumable import _btc_filter_matches
+from types import SimpleNamespace
+from recovery_cycle_resumable import _btc_filter_matches, _unrealized_position_pnl
 
 class BTCFilterComparisonTests(unittest.TestCase):
     def test_strict_requires_both_timeframes(self):
@@ -16,6 +17,17 @@ class BTCFilterComparisonTests(unittest.TestCase):
         self.assertTrue(_btc_filter_matches({"1d":"BUY","4h":"NEUTRAL"},"BUY","either_nonopposing"))
         self.assertFalse(_btc_filter_matches({"1d":"SELL","4h":"BUY"},"BUY","either_nonopposing"))
         self.assertFalse(_btc_filter_matches({"1d":"NEUTRAL","4h":"NEUTRAL"},"BUY","either_nonopposing"))
+
+
+    def test_linear_buy_unrealized_pnl_uses_latest_close(self):
+        position = SimpleNamespace(direction="BUY", entry_price=100.0, quantity=2.5)
+        self.assertAlmostEqual(_unrealized_position_pnl(position, 104.0), 10.0)
+        self.assertAlmostEqual(_unrealized_position_pnl(position, 96.0), -10.0)
+
+    def test_linear_sell_unrealized_pnl_uses_latest_close(self):
+        position = SimpleNamespace(direction="SELL", entry_price=100.0, quantity=2.5)
+        self.assertAlmostEqual(_unrealized_position_pnl(position, 96.0), 10.0)
+        self.assertAlmostEqual(_unrealized_position_pnl(position, 104.0), -10.0)
 
 if __name__ == "__main__":
     unittest.main()
