@@ -53,6 +53,37 @@ jobs:
             Backtest.GeneticEngine.tests.test_dynamic_selection \
             Backtest.GeneticEngine.tests.test_forward_validation
 
+      - name: Freeze and verify the exact 11 source champions
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN_ID: ${{ inputs.genetic_source_run_id || '45054615629' }}
+          SOURCE_COMMIT_SHA: ${{ inputs.genetic_source_commit_sha || '16544a09a07ce024f07037cb0ca65c1fbd18cf57' }}
+        run: |
+          set -euo pipefail
+          source_meta="$(gh run view "$SOURCE_RUN_ID" --repo "$GITHUB_REPOSITORY" --json headBranch,headSha,status,conclusion)"
+          test "$(echo "$source_meta" | python -c 'import json,sys; print(json.load(sys.stdin)["headBranch"])')" = "experiment/dynamic-signal-selection-design"
+          test "$(echo "$source_meta" | python -c 'import json,sys; print(json.load(sys.stdin)["headSha"])')" = "$SOURCE_COMMIT_SHA"
+          test "$(echo "$source_meta" | python -c 'import json,sys; print(json.load(sys.stdin)["status"])')" = "completed"
+          test "$(echo "$source_meta" | python -c 'import json,sys; print(json.load(sys.stdin)["conclusion"])')" = "success"
+          mkdir -p /tmp/genetic-source
+          gh run download "$SOURCE_RUN_ID" --repo "$GITHUB_REPOSITORY" --dir /tmp/genetic-source
+          summary_count="$(find /tmp/genetic-source -type f -name 'genetic_family_summary_*.json' | wc -l)"
+          test "$summary_count" -eq 12
+          python -m Backtest.GeneticEngine.freeze_candidates \
+            --artifact-root /tmp/genetic-source \
+            --source-run-id "$SOURCE_RUN_ID" \
+            --source-commit-sha "$SOURCE_COMMIT_SHA" \
+            --output Backtest/GeneticEngine/frozen_candidates.json
+          python -c 'import json; p=json.load(open("Backtest/GeneticEngine/frozen_candidates.json")); assert len(p["candidates"]) == 11; assert len(p["excluded"]) == 1; print("Frozen candidate manifest: 11 eligible, 1 excluded")'
+
+      - name: Publish frozen candidate manifest for downstream validation
+        uses: actions/upload-artifact@v4
+        with:
+          name: frozen-candidate-manifest
+          path: Backtest/GeneticEngine/frozen_candidates.json
+          if-no-files-found: error
+          retention-days: 2
+
   frozen-forward-validation:
     name: Validate 11 frozen candidates on new forward data
     if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[run-forward]')
@@ -71,23 +102,11 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install numpy pandas
 
-      - name: Verify and download the exact source genetic run
-        env:
-          GH_TOKEN: ${{ github.token }}
-          SOURCE_RUN_ID: ${{ inputs.genetic_source_run_id || '45054615629' }}
-          SOURCE_COMMIT_SHA: ${{ inputs.genetic_source_commit_sha || '16544a09a07ce024f07037cb0ca65c1fbd18cf57' }}
-        run: |
-          set -euo pipefail
-          source_meta="$(gh run view "$SOURCE_RUN_ID" --repo "$GITHUB_REPOSITORY" --json headBranch,headSha,status,conclusion)"
-          echo "$source_meta"
-          test "$(echo "$source_meta" | python -c 'import json,sys; print(json.load(sys.stdin)["headBranch"])')" = "experiment/dynamic-signal-selection-design"
-          test "$(echo "$source_meta" | python -c 'import json,sys; print(json.load(sys.stdin)["headSha"])')" = "$SOURCE_COMMIT_SHA"
-          test "$(echo "$source_meta" | python -c 'import json,sys; print(json.load(sys.stdin)["status"])')" = "completed"
-          test "$(echo "$source_meta" | python -c 'import json,sys; print(json.load(sys.stdin)["conclusion"])')" = "success"
-          mkdir -p /tmp/genetic-source
-          gh run download "$SOURCE_RUN_ID" --repo "$GITHUB_REPOSITORY" --dir /tmp/genetic-source
-          summary_count="$(find /tmp/genetic-source -type f -name 'genetic_family_summary_*.json' | wc -l)"
-          test "$summary_count" -eq 12
+      - name: Retrieve preflight-frozen candidate manifest
+        uses: actions/download-artifact@v4
+        with:
+          name: frozen-candidate-manifest
+          path: Backtest/GeneticEngine
 
       - name: Verify and download the validated forward dataset
         env:
@@ -108,14 +127,6 @@ jobs:
           cp -a /tmp/forward-data/Backtest/data/okx/. Backtest/data/okx/
           cp /tmp/forward-data/reports/forward_data_quality.json reports/forward_data_quality.json
           cp /tmp/forward-data/reports/forward_data_quality.csv reports/forward_data_quality.csv
-
-      - name: Freeze eligible source champions without changing genomes
-        run: |
-          python -m Backtest.GeneticEngine.freeze_candidates \
-            --artifact-root /tmp/genetic-source \
-            --source-run-id "${{ inputs.genetic_source_run_id || '45054615629' }}" \
-            --source-commit-sha "${{ inputs.genetic_source_commit_sha || '16544a09a07ce024f07037cb0ca65c1fbd18cf57' }}" \
-            --output Backtest/GeneticEngine/frozen_candidates.json
 
       - name: Run frozen forward-only validation
         run: |
