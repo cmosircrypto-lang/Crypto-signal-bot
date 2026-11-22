@@ -21,6 +21,12 @@ from .historical_evaluator import (
 
 EXPECTED_SYMBOLS = 76
 EXPECTED_15M_ROWS = 568
+EXPECTED_CANDIDATE_IDS = {
+    f"{symbol}__{direction}"
+    for symbol in ("ADA-USDT-SWAP", "BNB-USDT-SWAP", "BTC-USDT-SWAP",
+                   "ETH-USDT-SWAP", "SOL-USDT-SWAP", "XRP-USDT-SWAP")
+    for direction in ("LONG", "SHORT")
+} - {"BNB-USDT-SWAP__LONG"}
 WINDOW_START = "2026-11-17T00:00:00Z"
 WINDOW_END_EXCLUSIVE = "2026-11-22T22:00:00Z"
 
@@ -35,6 +41,8 @@ def _utc_ms(value: str) -> int:
 def validate_quality_report(report: Mapping[str, Any]) -> tuple[int, int]:
     if report.get("status") != "PASS" or report.get("errors"):
         raise ValueError("Forward data quality report is not PASS or contains errors")
+    if report.get("baseline_release") != "okx-data":
+        raise ValueError("Unexpected baseline dataset release in forward data report")
     if report.get("forward_window_start_utc") != "2026-11-17T00:00:00+00:00":
         raise ValueError("Unexpected forward-window start in data quality report")
     if report.get("validated_through_exclusive_utc") != "2026-11-22T22:00:00+00:00":
@@ -96,6 +104,8 @@ def load_frozen_manifest(path: str | Path) -> tuple[dict[str, Any], bytes]:
         if direction not in ("LONG", "SHORT"):
             raise ValueError(f"Invalid candidate direction: {direction}")
     excluded = manifest.get("excluded", [])
+    if ids != EXPECTED_CANDIDATE_IDS:
+        raise ValueError("Frozen manifest does not contain the exact 11 expected symbol-direction candidates")
     if len(excluded) != 1 or excluded[0].get("candidate_id") != "BNB-USDT-SWAP__LONG":
         raise ValueError("Frozen manifest must preserve the single BNB LONG exclusion")
     return manifest, raw
@@ -114,6 +124,9 @@ def run_forward_validation(
         raise ValueError("Frozen candidate manifest window end does not match")
     if len(all_symbol_data) != EXPECTED_SYMBOLS:
         raise ValueError(f"Expected {EXPECTED_SYMBOLS} loaded symbols, found {len(all_symbol_data)}")
+    quality_symbols = {str(item["symbol"]) for item in quality_report["symbols"]}
+    if set(all_symbol_data) != quality_symbols:
+        raise ValueError("Loaded dataset symbols do not match the forward quality report")
 
     # Verify the actual loaded 15m candles, not only the sidecar quality report.
     for symbol, item in all_symbol_data.items():
