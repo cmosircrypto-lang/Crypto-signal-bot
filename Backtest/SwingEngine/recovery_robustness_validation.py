@@ -10,7 +10,7 @@ from data_loader import TIMEFRAME_MS
 from okx_contract_specs import OKXContractSpecs
 
 RISK_CAP=3.0
-TARGET_PROFITS=(0.5,1.0)
+SCENARIOS=(("no_recovery",None),("recovery_target_0p50",0.5),("recovery_target_1p00",1.0))
 PERIODS=12
 ATR_MULTIPLE=2.0
 REWARD_RATIO=2.0
@@ -72,16 +72,15 @@ def run():
     start,end=_dataset_time_bounds(data)
     ranges=_segment_ranges(start,end,PERIODS)
     specs=OKXContractSpecs(); specs.load()
-    rows=[]; started=time.monotonic(); total=PERIODS*len(TARGET_PROFITS); run_no=0
+    rows=[]; started=time.monotonic(); total=PERIODS*len(SCENARIOS); run_no=0
     for period,(a,b) in enumerate(ranges,1):
         d,s,counts=_slice_period(data,signals,a,b)
         if counts["segment_candle_count"]==0: raise ValueError(f"Period {period} has no candles")
-        for target_profit in TARGET_PROFITS:
+        for scenario_name,target_profit in SCENARIOS:
             run_no+=1
-            target_label = str(target_profit).replace(".", "p")
-            label=f"period_{period}_{_utc(a)[:10]}_to_{_utc(b-1)[:10]}_target_{target_label}_risk_3pct"
+            label=f"period_{period}_{_utc(a)[:10]}_to_{_utc(b-1)[:10]}_{scenario_name}_risk_3pct"
             cfg={"objective":"initial_target_profit","sizing_method":"exact_recovery",
-                "max_recovery_trades":None,"portfolio_open_risk_cap_percent":RISK_CAP,
+                "max_recovery_trades":0 if target_profit is None else None,"portfolio_open_risk_cap_percent":RISK_CAP,
                 "max_total_positions":1,"max_buy_positions":1,"max_sell_positions":1,
                 "single_position_global":True,"keep_cycle_when_risk_blocked":True,
                 "smart_balance_cap":False,"recovery_target_profit":target_profit}
@@ -95,9 +94,11 @@ def run():
                 "segment_duration_days":(b-a)/86400000,**counts,
                 "segment_symbols":len(selected),"segment_initial_equity":INITIAL_CAPITAL,
                 "periods_are_independent":True,
-                "recovery_method":"unlimited_until_tp_or_equity_wipeout",
-                "recovery_objective":"fixed_target_profit_per_cycle","recovery_target_profit_usd":target_profit,
-                "recovery_sizing":"exact_recovery",
+                "scenario":scenario_name,"period_label":label,"recovery_enabled":target_profit is not None,
+                "recovery_method":"disabled_after_initial_trade" if target_profit is None else "unlimited_until_tp_or_equity_wipeout",
+                "recovery_objective":"none" if target_profit is None else "fixed_target_profit_per_cycle",
+                "recovery_target_profit_usd":target_profit,
+                "recovery_sizing":"none" if target_profit is None else "exact_recovery",
                 "portfolio_open_risk_cap_percent":RISK_CAP,"tested_cycle_profit_target_usd":target_profit,
                 "max_simultaneous_positions_limit":1,"single_position_global":True,
                 "atr_multiple":ATR_MULTIPLE,"reward_ratio":REWARD_RATIO,
@@ -106,10 +107,11 @@ def run():
             trades.to_csv(out/f"trades_{label}.csv",index=False)
             cycles.to_csv(out/f"cycles_{label}.csv",index=False)
             skips.to_csv(out/f"skips_{label}.csv",index=False)
-            (out/f"summary_{label}.json").write_text(
-                json.dumps(summary,indent=2,default=str),encoding="utf-8")
             summary["trades"] = len(trades)
             summary["cycles"] = len(cycles)
+            summary["recovery_trades"] = int(trades["is_recovery"].astype(bool).sum()) if not trades.empty and "is_recovery" in trades else 0
+            (out/f"summary_{label}.json").write_text(
+                json.dumps(summary,indent=2,default=str),encoding="utf-8")
             rows.append(summary)
             print(f"[PERIOD COMPLETE] {run_no}/{total} {label} equity={summary.get('final_equity')} "
                 f"pnl={summary.get('net_pnl')} dd={summary.get('max_drawdown_pct')} "
@@ -117,8 +119,8 @@ def run():
                 f"elapsed={(time.monotonic()-started)/60:.1f}m",flush=True)
     df=pd.DataFrame(rows)
     df.to_csv(out/"recovery_robustness_summary.csv",index=False)
-    agg=(df.groupby("tested_cycle_profit_target_usd")
-        .agg(scenarios=("scenario","count"),mean_net_pnl=("net_pnl","mean"),
+    agg=(df.groupby("scenario",dropna=False)
+        .agg(periods=("period_index","nunique"),mean_net_pnl=("net_pnl","mean"),
              median_net_pnl=("net_pnl","median"),worst_net_pnl=("net_pnl","min"),
              mean_final_equity=("final_equity","mean"),
              mean_max_drawdown_pct=("max_drawdown_pct","mean"),
@@ -129,7 +131,7 @@ def run():
         .reset_index())
     agg.to_csv(out/"target_aggregate_comparison.csv",index=False)
     manifest={"oos_cutoff_utc":CUTOFF_UTC,"periods":PERIODS,
-        "risk_cap_percent":RISK_CAP,"cycle_profit_targets_usd":list(TARGET_PROFITS),"runs":total,
+        "risk_cap_percent":RISK_CAP,"scenarios":[{"name":n,"recovery_target_profit_usd":v} for n,v in SCENARIOS],"runs":total,
         "period_ranges_utc":[{"start":_utc(a),"end_exclusive":_utc(b)} for a,b in ranges],
         "independent_periods":True,"one_global_open_position":True,
         "costs":{"fees":0.0,"slippage":0.0,"funding":0.0},"live_trading":False}
@@ -140,12 +142,12 @@ def run():
         "- Same validated 76-symbol universe and prepared OOS signals.\n"
         "- Twelve adjacent equal-duration subperiods; each starts with identical initial capital and a flat portfolio.\n"
         "- Positions/recovery cycles cannot cross period boundaries; unresolved cycles are reported at period end.\n"
-        "- Each subperiod tests unlimited exact recovery at a fixed 3% aggregate open-risk cap, comparing $0.50 and $1.00 net cycle-profit targets.\n"
-        "- After any losing trade, next requested stop-risk = (all accumulated cycle losses + the selected fixed cycle-profit target) / actual rounded RR.\n"
-        "- One open position globally; after SL, any eligible symbol may continue the active portfolio-wide recovery cycle.\n"
+        "- Three scenarios per subperiod: no recovery (zero recovery attempts), exact recovery with a $0.50 cycle target, and exact recovery with a $1.00 cycle target.\n"
+        "- All scenarios use the same initial trade risk (0.5%), 3% aggregate open-risk cap, and one global open position.\n- Recovery scenarios size the next stop-risk as (all accumulated cycle losses + fixed cycle-profit target) / actual rounded RR.\n- In the no-recovery baseline, after an initial SL the cycle ends and the next eligible signal starts a fresh base-risk trade.\n"
+        "- One open position globally in all scenarios; recovery may continue on any eligible symbol after a losing trade.\n"
         "- BTC 1d+4h, ATR 2.0, RR 2.0, base risk 0.5%; fees/slippage/funding zero.\n"
         "- Equity wipeout is a conservative proxy, not exchange maintenance-margin liquidation.\n"
-        "- Twenty-four independent historical OOS simulations (two profit targets at the same 3% risk cap for each of twelve subperiods); no live trading.\n",encoding="utf-8")
+        "- Thirty-six independent historical OOS simulations (three scenarios at the same 3% risk cap for each of twelve subperiods); no live trading.\n",encoding="utf-8")
     print(df.to_string(index=False),flush=True)
     print(f"[COMPLETE] {len(rows)}/{total} simulations",flush=True)
 

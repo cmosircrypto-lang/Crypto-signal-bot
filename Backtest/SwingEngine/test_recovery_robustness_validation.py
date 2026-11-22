@@ -1,9 +1,11 @@
 import unittest
 import pandas as pd
-from recovery_robustness_validation import _segment_ranges,_slice_period
+from recovery_robustness_validation import _segment_ranges,_slice_period,SCENARIOS
 from data_loader import TIMEFRAME_MS
 
 class RobustnessTests(unittest.TestCase):
+    def test_scenarios_include_baseline_and_two_recovery_targets(self):
+        self.assertEqual(SCENARIOS, (("no_recovery", None), ("recovery_target_0p50", 0.5), ("recovery_target_1p00", 1.0)))
     def test_ranges_cover_without_gaps_or_overlap(self):
         r=_segment_ranges(100,1000,3)
         self.assertEqual(r[0][0],100); self.assertEqual(r[-1][1],1000)
