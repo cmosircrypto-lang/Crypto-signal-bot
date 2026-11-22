@@ -36,9 +36,9 @@ class DynamicCycleRunnerTests(unittest.TestCase):
             require_4h_alignment=True,
         )
         pool = build_symbol_candidate_pool("bnb", [genome])
-        self.assertEqual(len(pool), 3)
+        self.assertEqual(len(pool), 4)
         self.assertEqual({item["method"] for item in pool},
-                         {"DIRECT", "ENGULFING", "PIN_BAR"})
+                         {"DIRECT", "ENGULFING", "PIN_BAR", "M15_STRUCTURE_BREAK"})
         for item in pool:
             self.assertEqual(item["genome"]["symbols"], ["BNB"])
             self.assertEqual(len(item["genome"]["entry_methods"]), 1)
