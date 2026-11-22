@@ -69,3 +69,10 @@ The initial score weights and eligibility thresholds are research defaults, not 
 Run the focused tests with:
 
     python -m unittest Backtest.GeneticEngine.tests.test_dynamic_selection
+
+
+### Resumable per-symbol cycle runner
+
+`dynamic_cycle_runner.py` evaluates a supplied candidate pool for one symbol and one scan-cycle ID. It checkpoints after every completed candidate, validates the candidate-pool fingerprint plus caller-supplied code/config and dataset hashes, resumes without re-evaluating completed candidates, and stores the cycle winner (or no-signal result). Each symbol/cycle should use its own checkpoint path. The candidate evaluator is injected by the research adapter; this keeps the runner decoupled from the legacy SwingEngine and allows a future genetic candidate generator to supply its approved candidate pool.
+
+The current runner is an orchestration primitive, not yet a full 76-symbol live integration. A caller must provide candidates and an evaluator that returns historical training/rolling-validation metrics and the current closed-candle setup. Do not feed final OOS outcomes into those metrics. The CI tests include a simulated interruption and verify that completed candidates are not repeated.
