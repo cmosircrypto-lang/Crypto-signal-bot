@@ -54,3 +54,18 @@ the backtest summary (including equity and drawdown metrics). It does not run
 any genetic population or submit orders. It requires network access to the
 public OKX instruments endpoint and may take substantial time because both
 pipelines are evaluated across the full cached dataset.
+
+
+## Dynamic cycle-by-cycle signal selection (research implementation)
+
+The isolated research branch also contains:
+
+- `dynamic_selector.py`: scores each candidate using historical training/rolling-validation metrics plus current setup quality, then selects at most one valid current signal per symbol for that cycle. It is stateless across cycles, so the winning method may change on the next scan. No eligible setup means `NO_SIGNAL`.
+- `checkpoint.py`: atomically saves JSON checkpoints with SHA-256 integrity verification and strict metadata compatibility checks (for example code/config and dataset hashes).
+- `tests/test_dynamic_selection.py`: unit tests for ranking, no-signal gates, deterministic ties, checkpoint round-trip, stale metadata and tamper detection.
+
+The initial score weights and eligibility thresholds are research defaults, not proven trading parameters. Historical scoring consumes training/rolling-validation metrics only; the final untouched OOS set must not be used to evolve candidates, tune weights, or select a method. Current-candle eligibility requires a closed candle. The modules are not wired into the production or live signal pipeline and do not place orders.
+
+Run the focused tests with:
+
+    python -m unittest Backtest.GeneticEngine.tests.test_dynamic_selection
