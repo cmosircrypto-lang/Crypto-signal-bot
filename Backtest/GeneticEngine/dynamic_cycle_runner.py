@@ -66,7 +66,7 @@ def build_symbol_candidate_pool(symbol: str, genomes: Iterable[StrategyGenome]) 
     seen: set[str] = set()
     for genome in seeds:
         genome.validate()
-        methods = genome.entry_methods if "SWING_OB" in genome.signal_families else ("FAMILY_NATIVE",)
+        methods = genome.entry_methods if "SWING_OB" in genome.signal_families else (genome.entry_methods[0],)
         for method in methods:
             one = replace(genome, entry_methods=(method,), symbols=(symbol,))
             payload = one.to_dict()
@@ -77,7 +77,7 @@ def build_symbol_candidate_pool(symbol: str, genomes: Iterable[StrategyGenome]) 
                     continue
                 seen.add(candidate_id)
                 pool.append({
-                    "candidate_id": candidate_id, "method": method,
+                    "candidate_id": candidate_id, "method": method if "SWING_OB" in one.signal_families else "FAMILY_NATIVE",
                     "signal_families": list(one.signal_families),
                     "family_combination": one.family_combination,
                     "direction": direction, "genome": payload,
