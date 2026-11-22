@@ -7,7 +7,9 @@ on:
     paths:
       - "Backtest/GeneticEngine/dynamic_selector.py"
       - "Backtest/GeneticEngine/checkpoint.py"
+      - "Backtest/GeneticEngine/dynamic_cycle_runner.py"
       - "Backtest/GeneticEngine/tests/test_dynamic_selection.py"
+      - "Backtest/GeneticEngine/tests/test_dynamic_cycle_runner.py"
       - "Backtest/GeneticEngine/README.md"
       - ".github/workflows/dynamic-signal-selection-tests.yml"
   workflow_dispatch:
@@ -30,7 +32,8 @@ jobs:
         run: |
           python -m py_compile \
             Backtest/GeneticEngine/dynamic_selector.py \
-            Backtest/GeneticEngine/checkpoint.py
+            Backtest/GeneticEngine/checkpoint.py \\
+            Backtest/GeneticEngine/dynamic_cycle_runner.py
       - name: Test dynamic selector and checkpointing
         run: python -m unittest Backtest.GeneticEngine.tests.test_dynamic_selection
       - name: Test resumable per-symbol cycle runner
