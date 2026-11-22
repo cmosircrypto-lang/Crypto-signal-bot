@@ -98,3 +98,6 @@ The genome now carries parameter genes for seven signal families: existing Swing
 Families can be combined using SINGLE, ANY, ALL, or VOTE with a configurable agreement threshold. The candidate-pool builder provides baseline coverage of all families, pairwise hybrids, the four Swing entry methods, and independent LONG/SHORT candidates. The runner validates serialized genomes and checkpoints each candidate.
 
 **This is a genome/schema and orchestration expansion, not yet a completed family-aware signal engine.** The existing legacy SwingEngine adapter still does not consume the new family genes. A deterministic, causal OKX implementation for each family, parameter injection, mutation/crossover coverage, and fixture/parity tests remain required before performance runs or live-cycle use. All work remains isolated to this research branch.
+
+
+CI now compiles the expanded config/genome modules and runs the strategy-family genome tests alongside selector, checkpoint and legacy contract tests.
