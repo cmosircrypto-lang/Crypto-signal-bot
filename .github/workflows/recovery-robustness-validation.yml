@@ -99,3 +99,5 @@ jobs:
           path: Backtest/results/recovery_target_subperiods/
           if-no-files-found: warn
           retention-days: 90
+
+# Trigger the recovery-value baseline comparison.
