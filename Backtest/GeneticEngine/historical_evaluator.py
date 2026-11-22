@@ -127,9 +127,17 @@ def _simulate_fold(
     fifteen = raw_frames["15m"]
     hourly = raw_frames["1h"]
     four_hour = raw_frames["4h"]
-    # Evaluate at every 15m close so 15m-confirmation families (notably EMA
-    # Cross PRO and Swing/OB) are not restricted to the top of each hour.
-    decision_times = fifteen["timestamp"].to_numpy(dtype="int64") + TF_MS["15m"]
+    # Use the finest timeframe required by the selected families. This preserves
+    # 15m confirmations for EMA/Swing, while avoiding redundant 15m recalculation
+    # for strategies whose decisions are strictly 1h or 4h based.
+    families = set(genome.signal_families)
+    if families & {"EMA_CROSS_PRO", "SWING_OB"}:
+        event_tf = "15m"
+    elif families == {"SMC_LIQUIDITY_SWEEP"}:
+        event_tf = "4h"
+    else:
+        event_tf = "1h"
+    decision_times = raw_frames[event_tf]["timestamp"].to_numpy(dtype="int64") + TF_MS[event_tf]
     event_signals: dict[int, dict[str, Any]] = {}
     seen_signatures: set[tuple] = set()
 
