@@ -4,7 +4,11 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from Backtest.GeneticEngine.dynamic_cycle_runner import (\n    build_symbol_candidate_pool, run_symbol_cycle,\n)\nfrom Backtest.GeneticEngine.genome import StrategyGenome\nfrom Backtest.GeneticEngine.checkpoint import CheckpointCompatibilityError
+from Backtest.GeneticEngine.dynamic_cycle_runner import (
+    build_symbol_candidate_pool, run_symbol_cycle,
+)
+from Backtest.GeneticEngine.genome import StrategyGenome
+from Backtest.GeneticEngine.checkpoint import CheckpointCompatibilityError
 
 
 def valid_result(setup=0.85):
@@ -12,12 +16,9 @@ def valid_result(setup=0.85):
         "direction": "LONG",
         "signal_timestamp": "2026-11-22T12:00:00Z",
         "historical": {
-            "average_r": 0.4,
-            "max_drawdown_pct": 8.0,
-            "profit_factor": 1.6,
-            "positive_window_ratio": 0.8,
-            "trade_count": 80,
-            "validation_score": 0.7,
+            "average_r": 0.4, "max_drawdown_pct": 8.0,
+            "profit_factor": 1.6, "positive_window_ratio": 0.8,
+            "trade_count": 80, "validation_score": 0.7,
             "complexity_penalty": 0.1,
         },
         "current_setup_quality": setup,
@@ -30,10 +31,8 @@ class DynamicCycleRunnerTests(unittest.TestCase):
     def test_genome_population_expands_to_single_method_symbol_candidates(self):
         genome = StrategyGenome(
             entry_methods=("DIRECT", "ENGULFING", "PIN_BAR"),
-            zone_type="wick",
-            touch_rule="max_two",
-            btc_filter_mode="1d_4h",
-            require_4h_alignment=True,
+            zone_type="wick", touch_rule="max_two",
+            btc_filter_mode="1d_4h", require_4h_alignment=True,
         )
         pool = build_symbol_candidate_pool("bnb", [genome])
         self.assertEqual(len(pool), 4)
@@ -52,28 +51,22 @@ class DynamicCycleRunnerTests(unittest.TestCase):
                 {"candidate_id": "pin", "method": "PIN_BAR"},
             ]
             calls = []
-
             def interrupted(spec):
                 calls.append(spec["candidate_id"])
                 if spec["candidate_id"] == "engulf":
                     raise RuntimeError("simulated interruption")
                 return valid_result()
-
-            metadata = {"code_hash": "code-v1", "config_hash": "cfg-v1", "dataset_hash": "ohlcv-v1"}
+            metadata = {"code_hash": "code-v1", "config_hash": "cfg-v1",
+                        "dataset_hash": "ohlcv-v1"}
             with self.assertRaises(RuntimeError):
-                run_symbol_cycle(
-                    symbol="BNB", cycle_id="cycle-001", candidates=candidates,
-                    evaluator=interrupted, checkpoint_path=path,
-                    checkpoint_metadata=metadata,
-                )
+                run_symbol_cycle(symbol="BNB", cycle_id="cycle-001",
+                                 candidates=candidates, evaluator=interrupted,
+                                 checkpoint_path=path, checkpoint_metadata=metadata)
             self.assertEqual(calls, ["direct", "engulf"])
-
             resumed_calls = []
-
             def resumed(spec):
                 resumed_calls.append(spec["candidate_id"])
                 return valid_result(0.95 if spec["candidate_id"] == "pin" else 0.8)
-
             decision = run_symbol_cycle(
                 symbol="BNB", cycle_id="cycle-001", candidates=candidates,
                 evaluator=resumed, checkpoint_path=path,
@@ -90,7 +83,8 @@ class DynamicCycleRunnerTests(unittest.TestCase):
             kwargs = dict(
                 symbol="XRP", cycle_id="cycle-1", candidates=candidates,
                 evaluator=lambda _: valid_result(), checkpoint_path=path,
-                checkpoint_metadata={"code_hash": "code-v1", "config_hash": "cfg-v1", "dataset_hash": "data-v1"},
+                checkpoint_metadata={"code_hash": "code-v1", "config_hash": "cfg-v1",
+                                     "dataset_hash": "data-v1"},
             )
             run_symbol_cycle(**kwargs)
             with self.assertRaises(CheckpointCompatibilityError):
@@ -105,7 +99,8 @@ class DynamicCycleRunnerTests(unittest.TestCase):
                 candidates=[{"candidate_id": "direct", "method": "DIRECT"}],
                 evaluator=lambda _: result,
                 checkpoint_path=Path(directory) / "ADA.json",
-                checkpoint_metadata={"code_hash": "c1", "config_hash": "cfg1", "dataset_hash": "d1"},
+                checkpoint_metadata={"code_hash": "c1", "config_hash": "cfg1",
+                                     "dataset_hash": "d1"},
             )
             self.assertEqual(decision.status, "NO_SIGNAL")
             self.assertIsNone(decision.winner)
