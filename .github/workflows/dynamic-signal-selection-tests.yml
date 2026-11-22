@@ -6,7 +6,8 @@ on:
       - experiment/dynamic-signal-selection-design
     paths:
       - "Backtest/GeneticEngine/**"
-      - ".github/workflows/dynamic-signal-selection-tests.yml"\n      - ".github/workflows/genetic-family-smoke.yml"
+      - ".github/workflows/dynamic-signal-selection-tests.yml"
+      - ".github/workflows/genetic-family-smoke.yml"
   workflow_dispatch:
 
 permissions:
