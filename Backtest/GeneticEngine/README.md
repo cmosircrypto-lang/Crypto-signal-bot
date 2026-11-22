@@ -34,9 +34,10 @@ Run from the repository root:
 
 This initial test module validates the genome contract and baseline defaults.
 A full data-backed parity test (signals, trades, equity and trade ledger) is
-a release gate before any genetic population is evaluated. It must compare
-the adapter against direct calls to the existing runner on the same cached
-dataset and contract specifications.
+a release gate before evolving or selecting legacy Swing/OB candidates through
+the existing SwingEngine adapter. The new family evaluators have their own
+causal fixtures and walk-forward simulator; they do not claim parity with the
+legacy SwingEngine.
 
 
 ## Full cached-data parity gate
@@ -78,7 +79,7 @@ Run the focused tests with:
 The current runner is an orchestration primitive for per-symbol scan cycles. The family signal adapter and walk-forward historical evaluator now provide the current closed-candle setup and historical training/rolling-validation metrics. The final OOS tail remains excluded. The CI tests include a simulated interruption and verify that completed candidates are not repeated.
 
 
-The runner's `build_symbol_candidate_pool` helper expands each genome into one-method candidates scoped to the requested symbol. It uses the existing adapter's compatibility guard, so unsupported legacy parameters are rejected rather than silently treated as active genes. Checkpoint metadata must include `code_hash`, `config_hash`, and `dataset_hash`; the runner also fingerprints the symbol, cycle ID, and complete candidate pool. The checkpoint records the next candidate cursor after each completed evaluation.
+The runner's `build_symbol_candidate_pool` helper expands each genome into one-method candidates scoped to the requested symbol. It deliberately does not route family candidates through the legacy SwingEngine compatibility adapter. Checkpoint metadata must include `code_hash`, `config_hash`, and `dataset_hash`; the runner also fingerprints the symbol, cycle ID, and complete candidate pool. The checkpoint records the next candidate cursor after each completed evaluation.
 
 
 The per-symbol pool builder also injects a baseline candidate for every configured entry method, so a small or skewed genetic population cannot accidentally omit an enabled method from a scan-cycle comparison. Evolved genomes add their distinct filter/zone/touch/risk/RR combinations alongside this guaranteed method coverage.
@@ -97,10 +98,10 @@ The genome now carries parameter genes for seven signal families: existing Swing
 
 Families can be combined using SINGLE, ANY, ALL, or VOTE with a configurable agreement threshold. The candidate-pool builder provides baseline coverage of all families, pairwise hybrids, the four Swing entry methods, and independent LONG/SHORT candidates. The runner validates serialized genomes and checkpoints each candidate.
 
-**This is a genome/schema and orchestration expansion, not yet a completed family-aware signal engine.** The existing legacy SwingEngine adapter still does not consume the new family genes. A deterministic, causal OKX implementation for each family, parameter injection, mutation/crossover coverage, and fixture/parity tests remain required before performance runs or live-cycle use. All work remains isolated to this research branch.
+**The family-aware research signal engine and walk-forward genetic loop are now implemented on this branch.** The legacy SwingEngine adapter remains separate and does not consume new family genes; Swing/OB requires an explicit validated signal provider. Performance conclusions still require the cached-data smoke run, full per-symbol research, portfolio-level champion validation, and a final untouched OOS evaluation. All work remains isolated to this research branch.
 
 
-CI now compiles the expanded config/genome modules and runs the strategy-family genome tests alongside selector, checkpoint and legacy contract tests.
+CI compiles the signal, historical-evaluation, genetic-runner and CLI modules, then runs selector, checkpoint, family-signal, walk-forward, genetic-resume, mutation/crossover and legacy genome tests.
 
 
 ## Genetic mutation and crossover
