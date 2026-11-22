@@ -42,7 +42,7 @@ def main(argv: list[str] | None = None) -> None:
         "average_r", "profit_factor", "max_drawdown_pct", "gross_profit", "gross_loss",
     ]
     with csv_path.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fields)
+        writer = csv.DictWriter(handle, fieldnames=fields, extrasaction="ignore")
         writer.writeheader()
         for row in report["results"]:
             writer.writerow({
