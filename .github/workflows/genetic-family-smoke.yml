@@ -46,23 +46,25 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install pandas numpy
-      - name: Restore prior symbol checkpoints
+      - name: Restore optional prior symbol checkpoint
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           mkdir -p Backtest/results/genetic_family_checkpoints /tmp/prior-artifact
-          gh run download 45019727484 \
+          if gh run download 45019727484 \
             --repo "${GITHUB_REPOSITORY}" \
             --name "genetic-family-${{ matrix.symbol }}-pop10-gen3" \
-            --dir /tmp/prior-artifact
-          checkpoint="$(find /tmp/prior-artifact -type f \
-            -name "${{ matrix.symbol }}_${{ matrix.direction }}.json" -print -quit)"
-          if [ -n "$checkpoint" ]; then
-            cp "$checkpoint" "Backtest/results/genetic_family_checkpoints/${{ matrix.symbol }}_${{ matrix.direction }}.json"
-            echo "Restored checkpoint for ${{ matrix.symbol }} ${{ matrix.direction }}"
+            --dir /tmp/prior-artifact; then
+            checkpoint="$(find /tmp/prior-artifact -type f \
+              -name "${{ matrix.symbol }}_${{ matrix.direction }}.json" -print -quit)"
+            if [ -n "$checkpoint" ]; then
+              cp "$checkpoint" "Backtest/results/genetic_family_checkpoints/${{ matrix.symbol }}_${{ matrix.direction }}.json"
+              echo "Restored checkpoint for ${{ matrix.symbol }} ${{ matrix.direction }}"
+            else
+              echo "::warning::No prior checkpoint for ${{ matrix.symbol }} ${{ matrix.direction }}; starting this direction from generation 1"
+            fi
           else
-            echo "::error::No compatible prior checkpoint found for ${{ matrix.symbol }} ${{ matrix.direction }}"
-            exit 1
+            echo "::warning::Prior artifact unavailable for ${{ matrix.symbol }}; starting ${{ matrix.direction }} from generation 1"
           fi
       - name: Download validated 76-symbol OKX dataset
         env:
