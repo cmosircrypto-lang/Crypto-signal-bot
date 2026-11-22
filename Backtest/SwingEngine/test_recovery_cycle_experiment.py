@@ -12,11 +12,19 @@ from recovery_cycle_resumable import (
 
 
 class RecoveryCycleExperimentTests(unittest.TestCase):
-    def test_exact_recovery_includes_initial_trade_target_profit(self):
-        # Prior losses 3, initial target profit 2.5, RR 2.5 => risk 2.2.
+    def test_fixed_one_dollar_cycle_target_after_losses(self):
+        # The recovery cycle always targets $1 net profit, regardless of
+        # the initial trade's own TP amount: (losses + $1) / RR.
         risk = recovery_risk_amount(3.0, 1.0, 2.5, 2.5,
-                                    "initial_target_profit", "exact_recovery", 1)
-        self.assertAlmostEqual(risk, 2.2)
+                                    "initial_target_profit", "exact_recovery", 1,
+                                    target_profit_override=1.0)
+        self.assertAlmostEqual(risk, 1.6)
+
+    def test_recovery_formula_uses_total_accumulated_losses(self):
+        risk = recovery_risk_amount(2.0, 1.0, 2.5, 2.0,
+                                    "initial_target_profit", "exact_recovery", 2,
+                                    target_profit_override=1.0)
+        self.assertAlmostEqual(risk, 1.5)
 
     def test_breakeven_recovery_only_covers_prior_losses(self):
         risk = recovery_risk_amount(3.0, 1.0, 2.5, 2.5,
@@ -28,8 +36,9 @@ class RecoveryCycleExperimentTests(unittest.TestCase):
             5.0, 1.0, 2.0, 2.0,
             "initial_target_profit", "exact_recovery", 1,
             stop_distance=1.1, target_distance=2.09,
+            target_profit_override=1.0,
         )
-        self.assertAlmostEqual(risk, 7.0 * 1.1 / 2.09)
+        self.assertAlmostEqual(risk, 6.0 * 1.1 / 2.09)
 
     def test_double_size_progression(self):
         # With a 0.5 base quantity and a 1.0 stop distance, recovery
