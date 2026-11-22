@@ -1,0 +1,130 @@
+"""Resumable per-symbol evaluation of a candidate pool for one scan cycle.
+
+The caller supplies a candidate pool (typically produced by offline genetic
+search) and an evaluator adapter. The runner does not import or modify the
+production SwingEngine and never places orders.
+"""
+from __future__ import annotations
+
+import hashlib
+import json
+from pathlib import Path
+from typing import Any, Callable, Iterable, Mapping
+
+from .checkpoint import load_checkpoint, save_checkpoint
+from .dynamic_selector import (
+    HistoricalMetrics,
+    ScoringPolicy,
+    SignalCandidate,
+    SelectionDecision,
+    select_cycle_signals,
+)
+
+
+def _canonical_hash(value: Any) -> str:
+    encoded = json.dumps(value, sort_keys=True, separators=(",", ":"),
+                         ensure_ascii=False, allow_nan=False).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _candidate_id(candidate: Mapping[str, Any]) -> str:
+    value = candidate.get("candidate_id")
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError("each candidate requires a non-empty candidate_id")
+    return value
+
+
+def _to_signal_candidate(
+    symbol: str, spec: Mapping[str, Any], result: Mapping[str, Any]
+) -> SignalCandidate:
+    historical = result.get("historical")
+    if not isinstance(historical, Mapping):
+        raise ValueError("evaluator result must include historical metrics mapping")
+    return SignalCandidate(
+        symbol=symbol,
+        candidate_id=_candidate_id(spec),
+        method=str(spec.get("method", "UNKNOWN")),
+        direction=str(result.get("direction", "LONG")),
+        signal_timestamp=str(result.get("signal_timestamp", "")),
+        historical=HistoricalMetrics(**dict(historical)),
+        current_setup_quality=float(result.get("current_setup_quality", 0.0)),
+        has_current_signal=bool(result.get("has_current_signal", False)),
+        candle_closed=bool(result.get("candle_closed", False)),
+        rejection_reason=result.get("rejection_reason"),
+    )
+
+
+def run_symbol_cycle(
+    *,
+    symbol: str,
+    cycle_id: str,
+    candidates: Iterable[Mapping[str, Any]],
+    evaluator: Callable[[Mapping[str, Any]], Mapping[str, Any]],
+    checkpoint_path: str | Path,
+    checkpoint_metadata: Mapping[str, Any],
+    policy: ScoringPolicy = ScoringPolicy(),
+) -> SelectionDecision:
+    """Evaluate/resume candidates and choose one signal for this symbol/cycle.
+
+    A checkpoint is written after each candidate. If evaluation is interrupted,
+    the next invocation skips completed candidate IDs and continues. The
+    metadata must identify the code/config and dataset snapshot; candidate
+    pool hash and cycle ID are added and validated automatically.
+    """
+    symbol = symbol.strip().upper()
+    if not symbol or not cycle_id.strip():
+        raise ValueError("symbol and cycle_id are required")
+    specs = [dict(item) for item in candidates]
+    ids = [_candidate_id(item) for item in specs]
+    if len(ids) != len(set(ids)):
+        raise ValueError("candidate_id values must be unique within a symbol cycle")
+
+    pool_hash = _canonical_hash(specs)
+    metadata = {
+        **dict(checkpoint_metadata),
+        "symbol": symbol,
+        "cycle_id": cycle_id,
+        "candidate_pool_hash": pool_hash,
+    }
+    path = Path(checkpoint_path)
+    completed: dict[str, dict[str, Any]] = {}
+    if path.exists():
+        restored = load_checkpoint(path, expected_metadata=metadata)
+        completed = dict(restored["payload"].get("completed", {}))
+
+    for spec in specs:
+        candidate_id = _candidate_id(spec)
+        if candidate_id in completed:
+            continue
+        result = evaluator(spec)
+        if not isinstance(result, Mapping):
+            raise TypeError("candidate evaluator must return a mapping")
+        # Validate before committing so malformed metrics are never checkpointed.
+        _to_signal_candidate(symbol, spec, result)
+        completed[candidate_id] = dict(result)
+        save_checkpoint(
+            path,
+            metadata=metadata,
+            payload={"completed": completed, "status": "RUNNING",
+                     "next_candidate_id": None},
+        )
+
+    signal_candidates = [
+        _to_signal_candidate(symbol, spec, completed[_candidate_id(spec)])
+        for spec in specs
+    ]
+    decision = select_cycle_signals(signal_candidates, policy=policy)[symbol]
+    save_checkpoint(
+        path,
+        metadata=metadata,
+        payload={
+            "completed": completed,
+            "status": "COMPLETED",
+            "winner_candidate_id": (
+                decision.winner.candidate_id if decision.winner else None
+            ),
+            "winner_method": decision.winner.method if decision.winner else None,
+            "winner_score": decision.winner.final_score if decision.winner else None,
+        },
+    )
+    return decision
