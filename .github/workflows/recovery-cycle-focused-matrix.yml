@@ -93,7 +93,7 @@ jobs:
                               "cycles_recovered_target", "cycles_recovered_breakeven",
                               "cycles_closed_shortfall", "cycles_failed_limit",
                               "cycles_unresolved", "cycles_portfolio_risk_failed"] if c in df.columns]
-          print(df[cols].to_markdown(index=False))
+          print(df[cols].to_string(index=False))
           PY
           fi
           if [ -f /tmp/recovery-focused-matrix.log ]; then
