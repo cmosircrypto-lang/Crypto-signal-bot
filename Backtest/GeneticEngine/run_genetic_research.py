@@ -21,7 +21,9 @@ def _source_hash(root: Path) -> str:
         root/"Backtest/GeneticEngine/family_signals.py",
         root/"Backtest/GeneticEngine/historical_evaluator.py",
         root/"Backtest/GeneticEngine/genetic_runner.py",
+        root/"Backtest/GeneticEngine/run_genetic_research.py",
         root/"Backtest/GeneticEngine/checkpoint.py",
+        root/"Backtest/SwingEngine/data_loader.py",
     ]
     digest=hashlib.sha256()
     for path in paths:
