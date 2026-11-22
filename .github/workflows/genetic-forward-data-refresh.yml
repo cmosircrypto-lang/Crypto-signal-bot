@@ -142,10 +142,25 @@ jobs:
           bar_ms = 900_000
           start_ms = int(datetime(2026, 11, 17, tzinfo=timezone.utc).timestamp() * 1000)
           now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
-          cutoff_ms = (now_ms // bar_ms) * bar_ms
+          # Only validate fully closed candles. The exchange may publish the
+          # latest closed candle with a short delay, so derive one shared cutoff
+          # from the latest timestamp actually present across all six core symbols.
+          latest_fully_closed_open_ms = (now_ms // bar_ms) * bar_ms - bar_ms
           core = ["BTC-USDT-SWAP", "ETH-USDT-SWAP", "BNB-USDT-SWAP",
                   "SOL-USDT-SWAP", "XRP-USDT-SWAP", "ADA-USDT-SWAP"]
           files = sorted((base / "15m").glob("*.csv.gz"))
+          if len(files) != 76:
+              raise SystemExit(f"Expected 76 updated 15m files, found {len(files)}")
+
+          core_latest = []
+          for symbol in core:
+              core_path = base / "15m" / f"{symbol}.csv.gz"
+              if not core_path.exists():
+                  raise SystemExit(f"Missing core symbol file: {symbol}")
+              core_df = pd.read_csv(core_path, compression="gzip", usecols=["ts"])
+              core_latest.append(int(pd.to_numeric(core_df["ts"], errors="raise").max()))
+          common_latest_closed_ms = min(min(core_latest), latest_fully_closed_open_ms)
+          cutoff_ms = common_latest_closed_ms + bar_ms
           if len(files) != 76:
               raise SystemExit(f"Expected 76 updated 15m files, found {len(files)}")
 
