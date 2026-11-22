@@ -183,3 +183,26 @@ Before admitting them to genetic evolution:
 - Keep all bot-specific capital management, recovery, notification, file I/O, and order/state handling outside the strategy evaluator.
 
 The three main.py strategies are promising additional candidate families, but they are not yet wired into the genetic evaluator and no performance claim is made about them.
+
+
+## 2.3 Composable genetic strategy families (expanded gene space)
+
+The genome is a composition of independently evolvable signal families and their parameter genes, not a hard-coded mapping from a coin to one strategy. Every symbol receives the same research family catalogue; each symbol/cycle can rank different evolved combinations. The initial catalogue is:
+
+- `SWING_OB`: existing DIRECT, ENGULFING, PIN_BAR and M15_STRUCTURE_BREAK methods, with zone/touch/structure genes.
+- `EMA_CROSS_PRO`: recent-cross window, fast/slow EMA periods, 4h/1h ADX thresholds, volume multiplier, EMA slope threshold, ATR stop and target multipliers.
+- `BTC_ALIGNED_PULLBACK`: BTC regime/timeframe mode, minimum EMA gap in ATR, EMA touch tolerance, maximum extension, volume threshold, ATR stop and target.
+- `SMC_LIQUIDITY_SWEEP`: sweep lookback, stop buffer, min/max stop distance, ATR target, minimum RR and minimum volume ratio.
+- New research families: `MOMENTUM_BREAKOUT` (breakout lookback/buffer, ADX and volume), `MEAN_REVERSION` (directional RSI bounds and z-score threshold), and `VOLATILITY_SQUEEZE` (Bollinger period/width percentile and expansion threshold).
+
+The parameter domains are bounded in `config.py` and validated/serialized by `StrategyGenome`. The main.py values are included as baseline points in those domains, not treated as optimal values. Other genes may mutate away from those baselines.
+
+Combination modes:
+- `SINGLE`: exactly one family.
+- `ANY`: any active family may independently produce the candidate signal.
+- `ALL`: all active families must agree on direction and signal timestamp/window.
+- `VOTE`: at least `min_family_agreement` families must agree.
+
+The cycle-pool builder guarantees baseline coverage of every family, every legacy Swing entry method, and pairwise family hybrids, in both LONG and SHORT. Evolved genomes may add further combinations and parameter variants. The pairwise seed set is a coverage floor, not a restriction on genetic search; mutation/crossover may form larger combinations within configured complexity limits.
+
+**Important implementation boundary:** schema and candidate-pool support do not themselves implement the family signal evaluators or the genetic mutation/crossover operators for every new gene. The existing SwingEngine adapter still cannot evaluate the new families or most newly exposed parameter genes. A family-aware causal OKX evaluator must be built and fixture-tested before any of these candidates are treated as measured or eligible. No candidate is currently proven profitable by merely appearing in the pool.
