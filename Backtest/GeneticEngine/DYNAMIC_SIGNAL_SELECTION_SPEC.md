@@ -153,3 +153,33 @@ Implement in isolated research steps:
 7. Only after research results and explicit user review should any production/live integration be proposed.
 
 No production integration, live order placement, or changes to the existing signal logic are authorized by this specification.
+
+
+## 2.1 Direction is an independent evolutionary dimension
+
+LONG and SHORT must not be generated as a single undirected strategy and assigned a direction only after optimization. For every symbol and every eligible method/genome, create separate LONG and SHORT candidate evaluations and maintain direction-specific historical metrics, rolling-validation folds, mutation/selection outcomes, and current-setup quality. A LONG candidate's trades and metrics must never be pooled into its SHORT counterpart, or vice versa. Each candidate's evaluator must confirm that its result direction matches its declared direction; mismatches are invalid, not silently relabeled.
+
+The final per-symbol cycle selector may compare eligible LONG and SHORT candidates on a common normalized score scale and choose the best single signal for that symbol. This final comparison does not replace the independent direction-specific evolution and validation. If neither side passes the gates, return NO_SIGNAL. Portfolio-level limits (including the existing three-open-per-direction cap) are applied after per-symbol selection and must not contaminate candidate fitness with outcomes from another direction.
+
+## 2.2 Additional strategy families to research from main.py
+
+The current `main.py` on the repository's `main` branch was reviewed as a source of candidate strategy families. It contains three distinct signal logics (the three managed variants reuse those same logics; they are not three additional strategies):
+
+1. **EMA Cross PRO (`analyze_cross`)** — recent 4h EMA9/EMA21 cross; 4h ADX, EMA gap, EMA slope and EMA21/EMA50 alignment; 1h trend/ADX/gap and volume confirmation; 15m RSI band; ATR-based stop/target multipliers and a weighted setup score. LONG and SHORT have separate RSI bands and directional checks.
+2. **BTC-aligned 1h pullback (`analyze_btc_aligned`)** — BTC 1d/4h directional agreement and strength/extension checks; symbol 4h bias agreement; 1h EMA21 pullback/touch and reclaim/rejection candle; direction-specific RSI and volume confirmation; ATR-based SL/TP. The code also has a fallback to symbol 4h bias when BTC context is unavailable, which must be represented as a separate explicit mode if tested, never silently conflated with BTC-filtered behavior.
+3. **SMC Winner (`analyze_smc_winner`)** — 4h liquidity sweep of prior lookback high/low followed by close back inside; EMA21/EMA50 trend confirmation; wick/ATR stop distance bounds; ATR target and minimum RR; volume and direction-specific RSI extreme checks; score based on trend, volume, wick and RR.
+
+The managed bot variants (`v0a`, `v60a`, `v70a`) reuse these three signal functions and add sizing/recovery/account-state behavior. Only their signal-generation logic is a candidate source here. Their 3% risk, 2% SL sizing, recovery-loss accounting, Telegram workflow, signal persistence, and bot-specific cooldown/dispatch rules are not strategy genes and must not be copied into this research engine.
+
+These three strategy families should be ported as isolated, deterministic research evaluators against the cached OKX dataset, not imported from `main.py` at runtime. Their current implementation uses Toobit/CCXT data access, different symbol coverage and timeframes, live-time candle trimming, external messaging/state, and some execution-time ticker checks. Reusing the file directly would couple the research engine to production side effects and create exchange/timeframe/causality mismatches.
+
+Before admitting them to genetic evolution:
+- Port the signal rules only, preserving a documented baseline parameter set.
+- Map every rule to causal 15m/1h/4h/1d bars from the cached OKX dataset; do not assume a current live candle or future higher-timeframe close is available.
+- Recompute historical signals using only information available at each decision timestamp.
+- Build direction-specific LONG and SHORT candidate populations and metrics.
+- Add parity/fixture tests for known candles and expected signal/no-signal decisions, plus SL/TP level calculations.
+- Test each family standalone against the current SwingEngine and against each other before combining their genes with existing DIRECT/ENGULFING/PIN_BAR/M15_STRUCTURE_BREAK candidates.
+- Keep all bot-specific capital management, recovery, notification, file I/O, and order/state handling outside the strategy evaluator.
+
+The three main.py strategies are promising additional candidate families, but they are not yet wired into the genetic evaluator and no performance claim is made about them.
