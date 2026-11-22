@@ -189,10 +189,13 @@ def _simulate(data, signals, obs, specs, btc_frames, atr_multiple, rr,
                     "cycles_closed_shortfall": 0,
                     "cycles_failed_limit": 0, "cycles_unresolved": 0,
                     "cycles_sizing_failed": 0,
-                    "cycles_portfolio_risk_failed": 0}
+                    "cycles_portfolio_risk_failed": 0,
+                    "cycles_liquidated_equity_proxy": 0}
     max_open_risk_amount = 0.0
     max_open_risk_percent = 0.0
     for idx, ts in enumerate(times, 1):
+        if float(system.execution.equity) <= 0:
+            break
         candles = candles_at_time.get(ts, {})
         # Close first; same-symbol capacity is available only after exit.
         for symbol in list(system.execution.open_positions):
@@ -364,6 +367,7 @@ def _simulate(data, signals, obs, specs, btc_frames, atr_multiple, rr,
                     cycles.pop(symbol, None)
                     system.execution.equity = 0.0
                     cycle_counts["cycles_portfolio_risk_failed"] += 1
+                    cycle_counts["cycles_liquidated_equity_proxy"] += 1
                     skips.append({"symbol": symbol, "signal_ts": ts, "reason": "liquidation_equity_proxy"})
                     break
                 risk_pct = risk_amount / system.execution.equity * 100.0
@@ -442,7 +446,10 @@ def _simulate(data, signals, obs, specs, btc_frames, atr_multiple, rr,
         "max_cycle_net_exposure": max((x["base_risk_amount"] + x["losses"] for x in completed_cycles), default=0.0),
         "max_open_risk_amount": max_open_risk_amount,
         "max_open_risk_percent": max_open_risk_percent,
-        "max_portfolio_open_risk_percent_limit": MAX_PORTFOLIO_OPEN_RISK_PERCENT,
+        "max_portfolio_open_risk_percent_limit": (
+            cycle_config.get("portfolio_open_risk_cap_percent", MAX_PORTFOLIO_OPEN_RISK_PERCENT)
+            if cycle_config else MAX_PORTFOLIO_OPEN_RISK_PERCENT
+        ),
     })
     return summary, trades, pd.DataFrame(completed_cycles), pd.DataFrame(skips)
 
