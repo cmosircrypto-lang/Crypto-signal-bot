@@ -1,0 +1,110 @@
+name: Focused Recovery Cap and Objective Matrix
+
+on:
+  push:
+    branches:
+      - experiment/recovery-cycle-resumable
+    paths:
+      - "Backtest/SwingEngine/recovery_cycle_focused_matrix.py"
+      - ".github/workflows/recovery-cycle-focused-matrix.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  focused-recovery-matrix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    env:
+      RECOVERY_FOCUSED_OUTPUT_DIR: Backtest/results/recovery_focused_matrix
+      RECOVERY_PREPARED_CACHE: Backtest/results/recovery_focused_matrix/prepared_oos_cache.pkl
+
+    steps:
+      - name: Checkout research branch
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pandas numpy
+
+      - name: Restore validated prepared OOS cache
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: 44987822498
+          name: recovery-cycle-resumable-checkpoint
+          path: /tmp/recovery-baseline
+
+      - name: Download validated OKX dataset
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download okx-data --repo "${GITHUB_REPOSITORY}" --pattern "okx_data.tar" --dir /tmp
+          gh release download okx-data --repo "${GITHUB_REPOSITORY}" --pattern "okx_timeframes.tar" --dir /tmp
+          mkdir -p Backtest/data/okx
+          tar -xf /tmp/okx_data.tar -C Backtest/data/okx
+          tar -xf /tmp/okx_timeframes.tar -C Backtest/data/okx
+          for timeframe in 15m 1h 4h; do
+            count=$(find "Backtest/data/okx/$timeframe" -maxdepth 1 -name '*.csv.gz' | wc -l)
+            echo "$timeframe: $count symbol files"
+            test "$count" -eq 76
+          done
+
+      - name: Place prepared cache in isolated output directory
+        run: |
+          set -e
+          cache=$(find /tmp/recovery-baseline -name prepared_oos_cache.pkl -print -quit)
+          test -n "$cache"
+          mkdir -p Backtest/results/recovery_focused_matrix
+          cp "$cache" Backtest/results/recovery_focused_matrix/prepared_oos_cache.pkl
+          ls -lh Backtest/results/recovery_focused_matrix/prepared_oos_cache.pkl
+
+      - name: Compile and run recovery unit tests
+        run: |
+          python -m py_compile Backtest/SwingEngine/recovery_cycle_resumable.py Backtest/SwingEngine/recovery_cycle_focused_matrix.py
+          python Backtest/SwingEngine/test_recovery_cycle_experiment.py
+
+      - name: Run focused OOS recovery matrix
+        run: |
+          set -o pipefail
+          python -u Backtest/SwingEngine/recovery_cycle_focused_matrix.py | tee /tmp/recovery-focused-matrix.log
+
+      - name: Publish run summary
+        if: always()
+        run: |
+          echo "## Focused recovery cap/objective matrix" >> "$GITHUB_STEP_SUMMARY"
+          if [ -f Backtest/results/recovery_focused_matrix/focused_recovery_summary.csv ]; then
+            python - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import pandas as pd
+          from pathlib import Path
+          p = Path("Backtest/results/recovery_focused_matrix/focused_recovery_summary.csv")
+          df = pd.read_csv(p)
+          cols = [c for c in ["scenario", "final_equity", "net_pnl", "profit_factor",
+                              "max_drawdown_pct", "cycles_started",
+                              "cycles_recovered_target", "cycles_recovered_breakeven",
+                              "cycles_closed_shortfall", "cycles_failed_limit",
+                              "cycles_unresolved", "cycles_portfolio_risk_failed"] if c in df.columns]
+          print(df[cols].to_markdown(index=False))
+          PY
+          fi
+          if [ -f /tmp/recovery-focused-matrix.log ]; then
+            tail -n 100 /tmp/recovery-focused-matrix.log >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload focused matrix results and checkpoints
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: recovery-focused-matrix
+          path: Backtest/results/recovery_focused_matrix/
+          if-no-files-found: warn
+          retention-days: 90
