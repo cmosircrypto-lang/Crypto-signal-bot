@@ -83,7 +83,7 @@ def run():
                 "max_recovery_trades":None,"portfolio_open_risk_cap_percent":cap,
                 "max_total_positions":1,"max_buy_positions":1,"max_sell_positions":1,
                 "single_position_global":True,"keep_cycle_when_risk_blocked":True,
-                "smart_balance_cap":False}
+                "smart_balance_cap":False,"recovery_target_profit":1.0}
             def report(done,count,ts):
                 if done==count or done%max(1,count//10)==0:
                     print(f"[PROGRESS] {run_no}/{total} {label}: {done}/{count}",flush=True)
@@ -95,7 +95,8 @@ def run():
                 "segment_symbols":len(selected),"segment_initial_equity":INITIAL_CAPITAL,
                 "periods_are_independent":True,
                 "recovery_method":"unlimited_until_tp_or_equity_wipeout",
-                "recovery_objective":"initial_target_profit","recovery_sizing":"exact_recovery",
+                "recovery_objective":"fixed_1_usd_cycle_profit","recovery_target_profit_usd":1.0,
+                "recovery_sizing":"exact_recovery",
                 "portfolio_open_risk_cap_percent":cap,
                 "max_simultaneous_positions_limit":1,"single_position_global":True,
                 "atr_multiple":ATR_MULTIPLE,"reward_ratio":REWARD_RATIO,
@@ -125,7 +126,8 @@ def run():
         "- Same validated 76-symbol universe and prepared OOS signals.\n"
         "- Three adjacent equal-duration periods; each starts with identical initial capital and a flat portfolio.\n"
         "- Positions/recovery cycles cannot cross period boundaries; unresolved cycles are reported at period end.\n"
-        "- Each period tests unlimited exact recovery to initial target-profit with 3%, 5%, and no aggregate open-risk cap.\n"
+        "- Each period tests unlimited exact recovery to a fixed $1 net cycle profit with 3%, 5%, and no aggregate open-risk cap.\n"
+        "- After any losing trade, next requested stop-risk = (all accumulated cycle losses + $1) / actual rounded RR.\n"
         "- One open position globally; after SL, any eligible symbol may continue the active portfolio-wide recovery cycle.\n"
         "- BTC 1d+4h, ATR 2.0, RR 2.0, base risk 0.5%; fees/slippage/funding zero.\n"
         "- Equity wipeout is a conservative proxy, not exchange maintenance-margin liquidation.\n"
