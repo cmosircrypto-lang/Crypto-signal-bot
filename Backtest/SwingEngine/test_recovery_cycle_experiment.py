@@ -1,9 +1,13 @@
 import unittest
+import tempfile
+from pathlib import Path
 from types import SimpleNamespace
+
+import pandas as pd
 
 from recovery_cycle_resumable import (
     _cycle_close_status, _levels, _update_open_risk_peaks,
-    recovery_risk_amount, _btc_filter_matches,
+    recovery_risk_amount, _btc_filter_matches, _simulate,
 )
 
 
@@ -82,6 +86,50 @@ class RecoveryCycleExperimentTests(unittest.TestCase):
     def test_unknown_btc_filter_mode_is_rejected(self):
         with self.assertRaises(ValueError):
             _btc_filter_matches({"1d": "BUY", "4h": "BUY"}, "BUY", "1d_4h_15m")
+
+
+    def test_simulation_checkpoint_resumes_from_last_saved_event(self):
+        symbol = "BTC-USDT-SWAP"
+        data = {
+            symbol: SimpleNamespace(
+                symbol=symbol,
+                frames={"15m": pd.DataFrame({"ts": [1_000, 2_000, 3_000]})},
+            )
+        }
+        signals = {symbol: pd.DataFrame()}
+        with tempfile.TemporaryDirectory() as directory:
+            checkpoint = Path(directory) / "resume.pkl"
+
+            def interrupt_after_first_checkpoint(done, total, timestamp):
+                if done == 1:
+                    raise RuntimeError("intentional interruption")
+
+            with self.assertRaisesRegex(RuntimeError, "intentional interruption"):
+                _simulate(
+                    data, signals, {}, {}, {}, 2.0, 2.0, "checkpoint_test",
+                    progress=interrupt_after_first_checkpoint,
+                    filter_mode="1d_4h",
+                    checkpoint_path=checkpoint,
+                    checkpoint_interval=1,
+                )
+
+            self.assertTrue(checkpoint.exists())
+            resumed = _simulate(
+                data, signals, {}, {}, {}, 2.0, 2.0, "checkpoint_test",
+                filter_mode="1d_4h",
+                checkpoint_path=checkpoint,
+                checkpoint_interval=1,
+            )
+            uninterrupted = _simulate(
+                data, signals, {}, {}, {}, 2.0, 2.0, "checkpoint_test",
+                filter_mode="1d_4h",
+            )
+
+            self.assertEqual(resumed[0], uninterrupted[0])
+            self.assertTrue(resumed[1].equals(uninterrupted[1]))
+            self.assertTrue(resumed[2].equals(uninterrupted[2]))
+            self.assertTrue(resumed[3].equals(uninterrupted[3]))
+            self.assertFalse(checkpoint.exists())
 
     def test_atr_stop_and_rr_levels(self):
         signal = {"entry_price": 100.0, "atr14": 2.0, "direction": "BUY"}
