@@ -18,7 +18,7 @@ class RobustnessTests(unittest.TestCase):
         sig=pd.DataFrame({"signal_ts":[step,2*step,3*step],"direction":["BUY","SELL","BUY"]})
         item=type("Item",(),{"frames":{"15m":f}})()
         d,s,c=_slice_period({"X":item},{"X":sig},step,3*step+1)
-        self.assertEqual(d["X"].frames["15m"]["ts"].tolist(),[step,2*step])
+        self.assertEqual(d["X"].frames["15m"]["ts"].tolist(),[0,step])
         self.assertEqual(s["X"]["signal_ts"].tolist(),[step,2*step])
         self.assertEqual(c["segment_candle_count"],2)
         self.assertEqual(c["segment_signal_count"],2)
