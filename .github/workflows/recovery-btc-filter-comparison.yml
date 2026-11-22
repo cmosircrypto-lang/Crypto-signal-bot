@@ -86,7 +86,7 @@ jobs:
           import pandas as pd
           p="Backtest/results/recovery_btc_filter_comparison/recovery_robustness_summary.csv"
           df=pd.read_csv(p)
-          cols=[c for c in ["scenario","recovery_enabled","period_index","segment_start_utc","segment_end_utc_exclusive",
+          cols=[c for c in ["scenario","filter_scenario","filter_mode","recovery_enabled","period_index","segment_start_utc","segment_end_utc_exclusive",
             "tested_cycle_profit_target_usd","portfolio_open_risk_cap_percent","final_equity","net_pnl","profit_factor",
             "max_drawdown_pct","trades","cycles_started","cycles_recovered_target",
             "cycles_unresolved","cycles_liquidated_equity_proxy","max_simultaneous_positions"]
@@ -100,8 +100,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: recovery-btc-filter-comparison-12x3x2
-          path: Backtest/results/recovery_target_subperiods/
+          path: Backtest/results/recovery_btc_filter_comparison/
           if-no-files-found: warn
           retention-days: 90
 
-# Trigger the recovery-value baseline comparison.
+# Trigger the BTC filter comparison.
