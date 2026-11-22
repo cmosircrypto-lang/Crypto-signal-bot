@@ -12,7 +12,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
 
-from .checkpoint import load_checkpoint, save_checkpoint
+from . import config\nfrom .checkpoint import load_checkpoint, save_checkpoint
 from .evaluator import assert_legacy_compatible
 from .genome import StrategyGenome
 from .dynamic_selector import (
@@ -72,7 +72,15 @@ def build_symbol_candidate_pool(
         raise ValueError("symbol is required")
     pool: list[dict[str, Any]] = []
     seen: set[str] = set()
-    for genome in genomes:
+    source_genomes = list(genomes)
+    # Guarantee baseline coverage of every configured entry method, even if a
+    # small genetic population has not yet discovered or retained one method.
+    baseline = StrategyGenome.baseline()
+    source_genomes.extend(
+        replace(baseline, entry_methods=(method,))
+        for method in config.ENTRY_METHODS
+    )
+    for genome in source_genomes:
         genome.validate()
         for method in genome.entry_methods:
             one_method = replace(
