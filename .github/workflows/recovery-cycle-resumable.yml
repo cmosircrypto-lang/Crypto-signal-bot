@@ -23,6 +23,7 @@ jobs:
     env:
       RECOVERY_TOP_SCENARIOS_ONLY: "true"
       RECOVERY_OUTPUT_DIR: Backtest/results/recovery_resumable
+      RECOVERY_RESUME_RUN_ID: "44957845251"
 
     steps:
       - name: Checkout resumable recovery branch
@@ -60,15 +61,28 @@ jobs:
           done
 
       - name: Restore previous run checkpoints
-        if: ${{ inputs.resume_run_id != '' }}
+        if: ${{ inputs.resume_run_id != '' || env.RECOVERY_RESUME_RUN_ID != '' }}
         uses: actions/download-artifact@v4
         continue-on-error: true
         with:
           github-token: ${{ github.token }}
           repository: ${{ github.repository }}
-          run-id: ${{ inputs.resume_run_id }}
+          run-id: ${{ inputs.resume_run_id || env.RECOVERY_RESUME_RUN_ID }}
           name: recovery-cycle-resumable-checkpoint
-          path: Backtest/results/recovery_resumable
+          path: /tmp/recovery-restore
+
+      - name: Place restored checkpoints in the runner cache directory
+        if: ${{ inputs.resume_run_id != '' || env.RECOVERY_RESUME_RUN_ID != '' }}
+        run: |
+          set -e
+          source_dir=$(find /tmp/recovery-restore -type d -path '*/Backtest/results/recovery_resumable' -print -quit)
+          if [ -z "$source_dir" ]; then
+            source_dir=/tmp/recovery-restore
+          fi
+          mkdir -p Backtest/results/recovery_resumable
+          cp -a "$source_dir/." Backtest/results/recovery_resumable/
+          count=$(find Backtest/results/recovery_resumable/signal_symbol_checkpoints -maxdepth 1 -name '*.pkl' 2>/dev/null | wc -l)
+          echo "Restored $count per-symbol checkpoints."
 
       - name: Run resumable recovery-cycle validation
         run: |
@@ -94,6 +108,7 @@ jobs:
           PY
           fi
           if [ -f /tmp/recovery-resumable.log ]; then
+            cp /tmp/recovery-resumable.log Backtest/results/recovery_resumable/recovery-resumable.log
             tail -n 80 /tmp/recovery-resumable.log >> "$GITHUB_STEP_SUMMARY"
           fi
 
@@ -102,8 +117,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: recovery-cycle-resumable-checkpoint
-          path: |
-            Backtest/results/recovery_resumable/
-            /tmp/recovery-resumable.log
+          path: Backtest/results/recovery_resumable/
           if-no-files-found: warn
           retention-days: 90
