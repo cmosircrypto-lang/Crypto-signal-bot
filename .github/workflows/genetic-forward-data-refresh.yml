@@ -28,17 +28,13 @@ jobs:
         run: pip install pandas numpy requests
 
       - name: Download immutable baseline dataset
-        env:
-          GH_TOKEN: \${{ github.token }}
         run: |
-          gh release download okx-data \
-            --repo "cmosircrypto-lang/Crypto-signal-bot" \
-            --pattern "okx_data.tar" \
-            --dir /tmp
-          gh release download okx-data \
-            --repo "cmosircrypto-lang/Crypto-signal-bot" \
-            --pattern "okx_timeframes.tar" \
-            --dir /tmp
+          curl --fail --location --retry 3 \
+            "https://github.com/cmosircrypto-lang/Crypto-signal-bot/releases/download/okx-data/okx_data.tar" \
+            --output /tmp/okx_data.tar
+          curl --fail --location --retry 3 \
+            "https://github.com/cmosircrypto-lang/Crypto-signal-bot/releases/download/okx-data/okx_timeframes.tar" \
+            --output /tmp/okx_timeframes.tar
           mkdir -p Backtest/data/okx
           tar -xf /tmp/okx_data.tar -C Backtest/data/okx
           tar -xf /tmp/okx_timeframes.tar -C Backtest/data/okx
@@ -47,7 +43,7 @@ jobs:
 
       - name: Append only new closed 15m candles
         run: |
-          END_DATE="$(date -u -d 'tomorrow' +%F)"
+          export END_DATE="$(date -u -d 'tomorrow' +%F)"
           python - <<'PY'
           import glob
           import os
