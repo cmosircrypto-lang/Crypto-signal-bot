@@ -106,3 +106,29 @@ CI now compiles the expanded config/genome modules and runs the strategy-family 
 ## Genetic mutation and crossover
 
 `evolution.py` adds deterministic seeded `random_genome`, `mutate_genome`, and `crossover_genomes` operators. They can vary the existing Swing genes, all three main.py-derived parameter groups, and the additional momentum/mean-reversion/squeeze families; family lists and combination modes are genes too. Dependent constraints (fast EMA below slow EMA, minimum stop below maximum stop, RSI low below RSI high, and valid family agreement) are repaired before a child is accepted. These are tested operators and genome sampling, not yet a complete population evolution/evaluation loop; family signal evaluators remain a separate gate.
+
+
+## Causal family signal evaluators
+
+`family_signals.py` now provides closed-candle evaluators for EMA Cross PRO,
+BTC-aligned pullback, SMC liquidity sweep, momentum breakout, mean reversion,
+and volatility squeeze. The three families derived from the active strategies
+in the repository's `main.py` use their corresponding baseline concepts and
+genome parameters. Swing/Order Block remains an explicit adapter to a validated
+closed-candle SwingEngine signal; this module does not pretend a simplified
+proxy is parity-equivalent to the existing SwingEngine.
+
+The evaluator supports SINGLE, ANY, ALL, and VOTE. Hybrid signals require
+direction agreement; ALL requires every selected family, while VOTE requires
+`min_family_agreement`. Hybrid stop and target distances use medians of the
+agreeing families. LONG and SHORT are evaluated in separate calls.
+
+`make_cycle_evaluator` adapts current family signals to the resumable cycle
+runner callback contract. Historical metrics must still be supplied by an
+explicit historical backtest callback using training/validation folds only.
+No synthetic or fabricated historical performance is accepted. The current
+signal evaluator itself is not a substitute for the historical trade simulator.
+
+All input frames must be pre-truncated to fully closed candles at the cycle
+cutoff. The module does not fetch data, and the untouched final OOS segment
+must remain outside the historical evaluator and all candidate selection.
