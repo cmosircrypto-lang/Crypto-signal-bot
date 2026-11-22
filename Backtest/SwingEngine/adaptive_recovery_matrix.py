@@ -17,7 +17,7 @@ from recovery_cycle_resumable import CUTOFF_UTC, INITIAL_CAPITAL, _simulate
 from okx_contract_specs import OKXContractSpecs
 
 
-RISK_CAPS = (3.0, 5.0)
+RISK_CAPS = (3.0, 5.0, None)
 METHODS = ("unlimited_until_tp_or_equity_wipeout",)
 
 
@@ -131,10 +131,10 @@ def run():
         f"- OOS cutoff: {CUTOFF_UTC}\n"
         "- Same 76-symbol universe, signals, BTC 1d+4h filter, ATR 2.0, RR 2.0 and base risk 0.5%.\n"
         "- Recovery objective: initial-trade target profit; exact recovery sizing.\n"
-        "- Two scenarios: unlimited recovery with aggregate open-risk caps of 3% and 5%.\n"
+        "- Three scenarios per BTC filter: unlimited recovery with aggregate open-risk caps of 3%, 5%, and no aggregate cap.\n"
         "- Exactly one open position across the entire portfolio. The active symbol owns the portfolio lock until its full recovery cycle reaches a terminal outcome.\n"
         "- No independent trade from another symbol may open while the active recovery cycle is in progress.\n"
-        "- When a recovery entry does not fit the 3%/5% open-risk budget, the cycle is retained and waits for a later eligible signal.\n"
+        "- Under 3%/5% caps, an oversized recovery entry is skipped while the cycle remains active; the uncapped scenario has no aggregate open-risk ceiling.\n"
         "- Fees, slippage and funding are zero.\n"
         "- Equity wipeout is a conservative proxy based on aggregate open stop-risk plus the next recovery stop-risk reaching current equity; it is not OKX maintenance-margin liquidation.\n"
         "- Historical OOS research only; no live trading.\n",
