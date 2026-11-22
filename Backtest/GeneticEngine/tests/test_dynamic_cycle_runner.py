@@ -59,7 +59,7 @@ class DynamicCycleRunnerTests(unittest.TestCase):
                     raise RuntimeError("simulated interruption")
                 return valid_result()
 
-            metadata = {"code_hash": "code-v1", "dataset_hash": "ohlcv-v1"}
+            metadata = {"code_hash": "code-v1", "config_hash": "cfg-v1", "dataset_hash": "ohlcv-v1"}
             with self.assertRaises(RuntimeError):
                 run_symbol_cycle(
                     symbol="BNB", cycle_id="cycle-001", candidates=candidates,
@@ -90,7 +90,7 @@ class DynamicCycleRunnerTests(unittest.TestCase):
             kwargs = dict(
                 symbol="XRP", cycle_id="cycle-1", candidates=candidates,
                 evaluator=lambda _: valid_result(), checkpoint_path=path,
-                checkpoint_metadata={"code_hash": "code-v1", "dataset_hash": "data-v1"},
+                checkpoint_metadata={"code_hash": "code-v1", "config_hash": "cfg-v1", "dataset_hash": "data-v1"},
             )
             run_symbol_cycle(**kwargs)
             with self.assertRaises(Exception):
@@ -105,7 +105,7 @@ class DynamicCycleRunnerTests(unittest.TestCase):
                 candidates=[{"candidate_id": "direct", "method": "DIRECT"}],
                 evaluator=lambda _: result,
                 checkpoint_path=Path(directory) / "ADA.json",
-                checkpoint_metadata={"code_hash": "c1", "dataset_hash": "d1"},
+                checkpoint_metadata={"code_hash": "c1", "config_hash": "cfg1", "dataset_hash": "d1"},
             )
             self.assertEqual(decision.status, "NO_SIGNAL")
             self.assertIsNone(decision.winner)
