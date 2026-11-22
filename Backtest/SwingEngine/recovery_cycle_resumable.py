@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import math
+import hashlib
 import os
 import pickle
 import time
@@ -209,12 +210,22 @@ def _simulate(data, signals, obs, specs, btc_frames, atr_multiple, rr,
     max_open_risk_percent = 0.0
     max_simultaneous_positions = 0
     checkpoint_file = Path(checkpoint_path) if checkpoint_path else None
+
+    def frame_fingerprint(frame):
+        if frame is None:
+            return None
+        digest = hashlib.sha256(
+            pd.util.hash_pandas_object(frame, index=True).values.tobytes()
+        ).hexdigest()
+        return digest
+
     checkpoint_signature = json.dumps({
         "universe": universe, "atr_multiple": atr_multiple, "rr": rr,
         "filter_mode": filter_mode or FILTER_MODE,
         "cycle_config": cycle_config or {},
         "dataset": _dataset_fingerprint(data),
-        "signal_counts": {k: len(v) for k, v in sorted(signals.items())},
+        "signals": {k: frame_fingerprint(v) for k, v in sorted(signals.items())},
+        "btc_frames": {k: frame_fingerprint(v) for k, v in sorted(btc_frames.items())},
     }, sort_keys=True, default=str)
     start_index = 0
 
