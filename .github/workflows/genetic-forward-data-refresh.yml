@@ -1,0 +1,297 @@
+name: Genetic Forward Dataset Refresh
+
+on:
+  push:
+    branches:
+      - experiment/genetic-forward-data-refresh
+    paths:
+      - .github/workflows/genetic-forward-data-refresh.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  refresh-and-validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout isolated research branch
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install pandas numpy requests
+
+      - name: Download immutable baseline dataset
+        env:
+          GH_TOKEN: \${{ github.token }}
+        run: |
+          gh release download okx-data \
+            --repo "\${GITHUB_REPOSITORY}" \
+            --pattern "okx_data.tar" \
+            --dir /tmp
+          gh release download okx-data \
+            --repo "\${GITHUB_REPOSITORY}" \
+            --pattern "okx_timeframes.tar" \
+            --dir /tmp
+          mkdir -p Backtest/data/okx
+          tar -xf /tmp/okx_data.tar -C Backtest/data/okx
+          tar -xf /tmp/okx_timeframes.tar -C Backtest/data/okx
+          mkdir -p /tmp/baseline_15m
+          cp -a Backtest/data/okx/15m/. /tmp/baseline_15m/
+
+      - name: Append only new closed 15m candles
+        run: |
+          END_DATE="$(date -u -d 'tomorrow' +%F)"
+          python - <<'PY'
+          import glob
+          import os
+          import subprocess
+          import sys
+
+          files = sorted(glob.glob("Backtest/data/okx/15m/*.csv.gz"))
+          if len(files) != 76:
+              raise SystemExit(f"Expected 76 baseline 15m files, found {len(files)}")
+
+          # Convert OKX instrument IDs back to the downloader's accepted symbol format.
+          symbols = []
+          for path in files:
+              inst = os.path.basename(path).removesuffix(".csv.gz")
+              base = inst.removesuffix("-USDT-SWAP")
+              symbols.append(f"{base}-SWAP-USDT")
+
+          end_date = os.environ.get("END_DATE")
+          if not end_date:
+              from datetime import datetime, timedelta, timezone
+              end_date = (datetime.now(timezone.utc).date() + timedelta(days=1)).isoformat()
+
+          cmd = [
+              sys.executable, "Backtest/download_okx_data.py",
+              "--bots-file", "Backtest/crypto_signal_bots_lite.py",
+              "--symbols", *symbols,
+              "--bar", "15m",
+              "--days", "7",
+              "--warmup-days", "0",
+              "--end", end_date,
+              "--out", "Backtest/data/okx",
+          ]
+          print("Updating", len(symbols), "existing symbols through", end_date, "UTC")
+          subprocess.run(cmd, check=True)
+          PY
+
+      - name: Rebuild 1h and 4h from the updated 15m source
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import pandas as pd
+
+          base = Path("Backtest/data/okx")
+          cols = ["ts", "open", "high", "low", "close", "volume"]
+          bar_ms = 900_000
+          frames = {"1h": 4, "4h": 16}
+          source_files = sorted((base / "15m").glob("*.csv.gz"))
+          if len(source_files) != 76:
+              raise SystemExit(f"Expected 76 source files, found {len(source_files)}")
+
+          for path in source_files:
+              df = pd.read_csv(path, compression="gzip")[cols]
+              for col in cols:
+                  df[col] = pd.to_numeric(df[col], errors="raise")
+              if df["ts"].duplicated().any() or not df["ts"].is_monotonic_increasing:
+                  raise SystemExit(f"Duplicate or unordered timestamps: {path.name}")
+              if (df["ts"] % bar_ms != 0).any():
+                  raise SystemExit(f"Misaligned 15m timestamps: {path.name}")
+
+              for tf, factor in frames.items():
+                  target_ms = bar_ms * factor
+                  buckets = (df["ts"] // target_ms) * target_ms
+                  out = []
+                  for bucket, group in df.groupby(buckets, sort=True):
+                      actual = group["ts"].astype("int64").tolist()
+                      expected = [int(bucket) + i * bar_ms for i in range(factor)]
+                      if actual != expected:
+                          continue
+                      out.append({
+                          "ts": int(bucket),
+                          "open": float(group["open"].iloc[0]),
+                          "high": float(group["high"].max()),
+                          "low": float(group["low"].min()),
+                          "close": float(group["close"].iloc[-1]),
+                          "volume": float(group["volume"].sum()),
+                      })
+                  out_df = pd.DataFrame(out, columns=cols)
+                  (base / tf).mkdir(parents=True, exist_ok=True)
+                  out_df.to_csv(base / tf / path.name, index=False, compression="gzip")
+          print("Rebuilt 1h and 4h datasets from the updated 15m source.")
+          PY
+
+      - name: Validate data integrity, new coverage, and baseline preservation
+        run: |
+          mkdir -p reports
+          python - <<'PY'
+          from pathlib import Path
+          from datetime import datetime, timezone
+          import json
+          import numpy as np
+          import pandas as pd
+
+          base = Path("Backtest/data/okx")
+          baseline = Path("/tmp/baseline_15m")
+          cols = ["ts", "open", "high", "low", "close", "volume"]
+          bar_ms = 900_000
+          start_ms = int(datetime(2026, 11, 17, tzinfo=timezone.utc).timestamp() * 1000)
+          now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+          cutoff_ms = (now_ms // bar_ms) * bar_ms
+          core = ["BTC-USDT-SWAP", "ETH-USDT-SWAP", "BNB-USDT-SWAP",
+                  "SOL-USDT-SWAP", "XRP-USDT-SWAP", "ADA-USDT-SWAP"]
+          files = sorted((base / "15m").glob("*.csv.gz"))
+          if len(files) != 76:
+              raise SystemExit(f"Expected 76 updated 15m files, found {len(files)}")
+
+          rows = []
+          loaded = {}
+          errors = []
+
+          for path in files:
+              name = path.name.removesuffix(".csv.gz")
+              try:
+                  df = pd.read_csv(path, compression="gzip")
+                  if list(df.columns) != cols:
+                      raise ValueError(f"Unexpected columns: {list(df.columns)}")
+                  for col in cols:
+                      df[col] = pd.to_numeric(df[col], errors="raise")
+                  if df.isna().any().any() or not np.isfinite(df[cols].to_numpy(dtype=float)).all():
+                      raise ValueError("Null/non-finite values")
+                  ts = df["ts"].astype("int64")
+                  if ts.duplicated().any() or not ts.is_monotonic_increasing:
+                      raise ValueError("Duplicate or unordered timestamps")
+                  if (ts % bar_ms != 0).any():
+                      raise ValueError("Misaligned timestamps")
+                  if (df["high"] < df[["open", "close", "low"]].max(axis=1)).any():
+                      raise ValueError("Invalid high")
+                  if (df["low"] > df[["open", "close", "high"]].min(axis=1)).any():
+                      raise ValueError("Invalid low")
+                  if (df[["open", "high", "low", "close"]] <= 0).any().any():
+                      raise ValueError("Non-positive OHLC")
+                  if (df["volume"] < 0).any():
+                      raise ValueError("Negative volume")
+
+                  old_path = baseline / path.name
+                  old = pd.read_csv(old_path, compression="gzip")
+                  old = old[cols]
+                  prefix = df[df["ts"] <= int(old["ts"].max())][cols].reset_index(drop=True)
+                  old = old.reset_index(drop=True)
+                  if not prefix.equals(old):
+                      raise ValueError("Historical 15m rows changed relative to immutable baseline")
+
+                  new = df[(df["ts"] >= start_ms) & (df["ts"] < cutoff_ms)]
+                  new_ts = new["ts"].astype("int64").to_numpy()
+                  expected = np.arange(start_ms, cutoff_ms, bar_ms, dtype=np.int64)
+                  missing = int(len(np.setdiff1d(expected, new_ts)))
+                  extra = int(len(np.setdiff1d(new_ts, expected)))
+                  if name in core and (missing or extra):
+                      raise ValueError(
+                          f"Forward-window candle coverage mismatch: missing={missing}, extra={extra}"
+                      )
+
+                  loaded[name] = df
+                  rows.append({
+                      "symbol": name,
+                      "baseline_rows": int(len(old)),
+                      "new_rows": int(len(new)),
+                      "new_first_utc": datetime.fromtimestamp(int(new_ts[0])/1000, timezone.utc).isoformat() if len(new_ts) else None,
+                      "new_last_utc": datetime.fromtimestamp(int(new_ts[-1])/1000, timezone.utc).isoformat() if len(new_ts) else None,
+                      "new_window_missing": missing,
+                      "new_window_extra": extra,
+                      "status": "OK" if len(new) else "NO_NEW_CANDLES",
+                  })
+              except Exception as exc:
+                  errors.append(f"{name}: {exc}")
+                  rows.append({"symbol": name, "status": "ERROR", "error": str(exc)})
+
+          if not set(core).issubset(loaded):
+              errors.append("One or more of the six genetic candidate symbols are missing")
+
+          # Verify rebuilt 1h/4h files exactly match complete groups of 15m candles.
+          for tf, factor in {"1h": 4, "4h": 16}.items():
+              derived_files = sorted((base / tf).glob("*.csv.gz"))
+              if len(derived_files) != 76:
+                  errors.append(f"{tf}: expected 76 files, found {len(derived_files)}")
+                  continue
+              for path in derived_files:
+                  name = path.name.removesuffix(".csv.gz")
+                  src = loaded.get(name)
+                  if src is None:
+                      continue
+                  expected_rows = []
+                  target_ms = bar_ms * factor
+                  buckets = (src["ts"] // target_ms) * target_ms
+                  for bucket, group in src.groupby(buckets, sort=True):
+                      actual = group["ts"].astype("int64").tolist()
+                      wanted = [int(bucket) + i * bar_ms for i in range(factor)]
+                      if actual != wanted:
+                          continue
+                      expected_rows.append({
+                          "ts": int(bucket),
+                          "open": float(group["open"].iloc[0]),
+                          "high": float(group["high"].max()),
+                          "low": float(group["low"].min()),
+                          "close": float(group["close"].iloc[-1]),
+                          "volume": float(group["volume"].sum()),
+                      })
+                  expected_df = pd.DataFrame(expected_rows, columns=cols)
+                  actual_df = pd.read_csv(path, compression="gzip")[cols]
+                  if len(actual_df) != len(expected_df):
+                      errors.append(f"{tf}/{name}: row count mismatch")
+                      continue
+                  if not np.array_equal(actual_df["ts"].to_numpy(dtype="int64"),
+                                        expected_df["ts"].to_numpy(dtype="int64")):
+                      errors.append(f"{tf}/{name}: timestamps mismatch")
+                      continue
+                  for col in cols[1:]:
+                      if not np.allclose(actual_df[col].to_numpy(dtype=float),
+                                         expected_df[col].to_numpy(dtype=float),
+                                         rtol=1e-10, atol=1e-12):
+                          errors.append(f"{tf}/{name}: {col} mismatch")
+                          break
+
+          report = {
+              "baseline_release": "okx-data",
+              "forward_window_start_utc": "2026-11-17T00:00:00+00:00",
+              "validated_through_exclusive_utc": datetime.fromtimestamp(cutoff_ms/1000, timezone.utc).isoformat(),
+              "bar_interval_minutes": 15,
+              "symbols": rows,
+              "errors": errors,
+              "status": "PASS" if not errors else "FAIL",
+          }
+          Path("reports/forward_data_quality.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
+          pd.DataFrame(rows).to_csv("reports/forward_data_quality.csv", index=False)
+          print(json.dumps(report, indent=2))
+          with open(Path(__import__("os").environ["GITHUB_STEP_SUMMARY"]), "w", encoding="utf-8") as f:
+              f.write("# Genetic forward dataset quality\\n\\n")
+              f.write(f"- Status: **{report['status']}**\\n")
+              f.write(f"- New data starts: 2026-11-17 00:00 UTC\\n")
+              f.write(f"- Validated through (exclusive): {report['validated_through_exclusive_utc']}\\n")
+              f.write(f"- 15m files: {len(files)}/76\\n")
+              f.write(f"- Core candidate symbols checked: {len(core)}/6\\n")
+              f.write(f"- Errors: {len(errors)}\\n\\n")
+              f.write(pd.DataFrame(rows).to_markdown(index=False))
+          if errors:
+              raise SystemExit("Forward dataset validation failed")
+          PY
+
+      - name: Upload isolated forward dataset and quality report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: genetic-forward-okx-dataset
+          path: |
+            Backtest/data/okx/
+            reports/
+          if-no-files-found: warn
+          retention-days: 30
