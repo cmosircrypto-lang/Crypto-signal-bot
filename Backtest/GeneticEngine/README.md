@@ -79,3 +79,6 @@ The current runner is an orchestration primitive, not yet a full 76-symbol live 
 
 
 The runner's `build_symbol_candidate_pool` helper expands each genome into one-method candidates scoped to the requested symbol. It uses the existing adapter's compatibility guard, so unsupported legacy parameters are rejected rather than silently treated as active genes. Checkpoint metadata must include `code_hash`, `config_hash`, and `dataset_hash`; the runner also fingerprints the symbol, cycle ID, and complete candidate pool. The checkpoint records the next candidate cursor after each completed evaluation.
+
+
+The per-symbol pool builder also injects a baseline candidate for every configured entry method, so a small or skewed genetic population cannot accidentally omit an enabled method from a scan-cycle comparison. Evolved genomes add their distinct filter/zone/touch/risk/RR combinations alongside this guaranteed method coverage.
