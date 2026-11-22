@@ -196,7 +196,52 @@ def _simulate(data, signals, obs, specs, btc_frames, atr_multiple, rr,
     max_open_risk_amount = 0.0
     max_open_risk_percent = 0.0
     max_simultaneous_positions = 0
-    for idx, ts in enumerate(times, 1):
+    checkpoint_file = Path(checkpoint_path) if checkpoint_path else None
+    checkpoint_signature = json.dumps({
+        "universe": universe, "atr_multiple": atr_multiple, "rr": rr,
+        "filter_mode": filter_mode or FILTER_MODE,
+        "cycle_config": cycle_config or {},
+        "dataset": _dataset_fingerprint(data),
+        "signal_counts": {k: len(v) for k, v in sorted(signals.items())},
+    }, sort_keys=True, default=str)
+    start_index = 0
+
+    def save_simulation_checkpoint(next_index):
+        if checkpoint_file is None:
+            return
+        checkpoint_file.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "signature": checkpoint_signature, "next_index": next_index,
+            "system": system, "active": active, "cycles": cycles,
+            "completed_cycles": completed_cycles, "cycle_serial": cycle_serial,
+            "closed": closed, "skips": skips, "cycle_counts": cycle_counts,
+            "max_open_risk_amount": max_open_risk_amount,
+            "max_open_risk_percent": max_open_risk_percent,
+            "max_simultaneous_positions": max_simultaneous_positions,
+        }
+        temporary = checkpoint_file.with_suffix(checkpoint_file.suffix + ".tmp")
+        with temporary.open("wb") as handle:
+            pickle.dump(payload, handle, protocol=pickle.HIGHEST_PROTOCOL)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, checkpoint_file)
+
+    if checkpoint_file is not None and checkpoint_file.exists():
+        with checkpoint_file.open("rb") as handle:
+            saved = pickle.load(handle)
+        if saved.get("signature") != checkpoint_signature:
+            raise ValueError(f"Simulation checkpoint does not match current dataset/config: {checkpoint_file}")
+        system = saved["system"]
+        active, cycles = saved["active"], saved["cycles"]
+        completed_cycles, cycle_serial = saved["completed_cycles"], saved["cycle_serial"]
+        closed, skips, cycle_counts = saved["closed"], saved["skips"], saved["cycle_counts"]
+        max_open_risk_amount = saved["max_open_risk_amount"]
+        max_open_risk_percent = saved["max_open_risk_percent"]
+        max_simultaneous_positions = saved["max_simultaneous_positions"]
+        start_index = int(saved["next_index"])
+        print(f"[CHECKPOINT] Resuming simulation at event {start_index + 1}/{len(times)}", flush=True)
+
+    for idx, ts in enumerate(times[start_index:], start_index + 1):
         if float(system.execution.equity) <= 0:
             break
         candles = candles_at_time.get(ts, {})
@@ -435,6 +480,10 @@ def _simulate(data, signals, obs, specs, btc_frames, atr_multiple, rr,
                         completed_cycles.append(dict(state))
                         cycle_counts["cycles_portfolio_risk_failed"] += 1
                 skips.append({"symbol": symbol, "signal_ts": ts, "reason": "contract_or_size", "error": str(exc)})
+        if checkpoint_file is not None and (
+            idx % max(1, int(checkpoint_interval)) == 0 or idx == len(times)
+        ):
+            save_simulation_checkpoint(idx)
         if progress and (idx % max(1, len(times)//20) == 0 or idx == len(times)):
             progress(idx, len(times), ts)
     for state in cycles.values():
@@ -443,6 +492,8 @@ def _simulate(data, signals, obs, specs, btc_frames, atr_multiple, rr,
         completed_cycles.append(dict(state))
         cycle_counts["cycles_unresolved"] += 1
     trades = pd.DataFrame(closed)
+    if checkpoint_file is not None:
+        checkpoint_file.unlink(missing_ok=True)
     summary = _equity_metrics(closed, INITIAL_CAPITAL)
     summary.update({
         "universe": universe, "symbols": len(data),
