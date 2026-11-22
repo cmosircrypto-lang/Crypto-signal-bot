@@ -1,6 +1,6 @@
 """Six-scenario OOS experiment for uncapped and balance-adaptive recovery.
 
-Uses the validated 76-symbol prepared OOS cache and unchanged signal preparation.
+Uses the validated 76-symbol prepared OOS cache and unchanged signal preparation. Compares 1D+4H against 1D+4H+1H.
 Zero fees, slippage and funding. Simulation only.
 """
 from __future__ import annotations
@@ -147,11 +147,12 @@ def run():
     (out / "README.md").write_text(
         "# Serialized unlimited recovery — 76-symbol OOS\n\n"
         f"- OOS cutoff: {CUTOFF_UTC}\n"
-        "- Same 76-symbol universe, signals, BTC 1d+4h filter, ATR 2.0, RR 2.0 and base risk 0.5%.\n"
+        "- Same 76-symbol universe, signals, ATR 2.0, RR 2.0 and base risk 0.5%.
+- BTC filter comparison: 1D+4H versus 1D+4H+1H; all other inputs are held constant.\n"
         "- Recovery objective: initial-trade target profit; exact recovery sizing.\n"
         "- Three scenarios per BTC filter: unlimited recovery with aggregate open-risk caps of 3%, 5%, and no aggregate cap.\n"
-        "- Exactly one open position across the entire portfolio. The active symbol owns the portfolio lock until its full recovery cycle reaches a terminal outcome.\n"
-        "- No independent trade from another symbol may open while the active recovery cycle is in progress.\n"
+        "- Exactly one open position across the entire portfolio. After an SL, the next eligible signal from any of the 76 symbols may continue the single active recovery cycle.\n"
+        "- The recovery-cycle lock is portfolio-wide, not tied to the symbol that first received SL. No second position opens while a position is already active.\n"
         "- Under 3%/5% caps, an oversized recovery entry is skipped while the cycle remains active; the uncapped scenario has no aggregate open-risk ceiling.\n"
         "- Fees, slippage and funding are zero.\n"
         "- Equity wipeout is a conservative proxy based on aggregate open stop-risk plus the next recovery stop-risk reaching current equity; it is not OKX maintenance-margin liquidation.\n"
