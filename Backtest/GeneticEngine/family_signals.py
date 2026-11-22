@@ -134,17 +134,21 @@ def _evaluate_one(family: str, frames: Mapping[str, Any], genome: StrategyGenome
         if h4raw is None or h1raw is None or m15raw is None:
             return None
         h4, h1, m15 = _indicators(h4raw), _indicators(h1raw), _indicators(m15raw)
+        for frame in (h4, h1, m15):
+            frame["ema_fast"] = frame["close"].ewm(span=genome.ema_fast_period, adjust=False).mean()
+            frame["ema_slow"] = frame["close"].ewm(span=genome.ema_slow_period, adjust=False).mean()
+            frame["ema_trend"] = frame["close"].ewm(span=50, adjust=False).mean()
         age = None
         for offset in range(min(genome.ema_cross_lookback, len(h4)-1)):
             i = len(h4)-1-offset
             a, b = h4.iloc[i-1], h4.iloc[i]
-            crossed = (a.ema9 <= a.ema21 and b.ema9 > b.ema21) if direction == "LONG" else (a.ema9 >= a.ema21 and b.ema9 < b.ema21)
+            crossed = (a.ema_fast <= a.ema_slow and b.ema_fast > b.ema_slow) if direction == "LONG" else (a.ema_fast >= a.ema_slow and b.ema_fast < b.ema_slow)
             if crossed:
                 age = offset
                 break
         l4, l1, lm = h4.iloc[-1], h1.iloc[-1], m15.iloc[-1]
-        aligned = (l4.ema9 > l4.ema21 and l1.ema9 > l1.ema21 and l4.ema21 > l4.ema50) if direction == "LONG" else (l4.ema9 < l4.ema21 and l1.ema9 < l1.ema21 and l4.ema21 < l4.ema50)
-        slope = float(l4.ema9 - h4.ema9.iloc[-4])
+        aligned = (l4.ema_fast > l4.ema_slow and l1.ema_fast > l1.ema_slow and l4.ema_slow > l4.ema_trend) if direction == "LONG" else (l4.ema_fast < l4.ema_slow and l1.ema_fast < l1.ema_slow and l4.ema_slow < l4.ema_trend)
+        slope = float(l4.ema_fast - h4.ema_fast.iloc[-4])
         slope_ok = slope * direction_sign >= genome.ema_slope_atr * float(l4.atr)
         rsi_ok = (45 <= float(lm.rsi) <= 68) if direction == "LONG" else (32 <= float(lm.rsi) <= 55)
         if age is None or not aligned or not slope_ok or float(l4.adx) < genome.ema_min_adx_4h or float(l1.adx) < genome.ema_min_adx_1h or vol < genome.ema_volume_mult or not rsi_ok:
@@ -304,6 +308,7 @@ def evaluate_genome_signals(
                 "setup_quality":sum(x["setup_quality"] for x in chosen)/len(chosen)}
     winner["method"]="+".join(x["family"] for x in chosen)
     winner["families_agreed"]=[x["family"] for x in chosen]
+    winner["family_signal_timestamps"]={x["family"]:x["signal_timestamp"] for x in chosen}
     winner["family_votes"]=count
     winner["direction"]=direction
     winner["candle_closed"]=all(x["candle_closed"] for x in chosen)
