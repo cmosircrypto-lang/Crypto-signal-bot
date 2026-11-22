@@ -1,0 +1,67 @@
+name: Recovery BTC Filter Audit — OOS Period 6
+on:
+  push:
+    branches:
+      - experiment/recovery-cycle-resumable
+    paths:
+      - "Backtest/SwingEngine/recovery_btc_filter_audit.py"
+      - ".github/workflows/recovery-btc-filter-audit.yml"
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      RECOVERY_PREPARED_CACHE: Backtest/results/recovery_adaptive_matrix/prepared_oos_cache.pkl
+      RECOVERY_BTC_AUDIT_OUTPUT_DIR: Backtest/results/recovery_btc_filter_audit
+    steps:
+      - name: Checkout research branch
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pandas numpy
+      - name: Restore validated prepared OOS cache
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: 44987822498
+          name: recovery-cycle-resumable-checkpoint
+          path: /tmp/recovery-baseline
+      - name: Download validated OKX dataset
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          gh release download okx-data --repo "${GITHUB_REPOSITORY}" --pattern "okx_data.tar" --dir /tmp
+          gh release download okx-data --repo "${GITHUB_REPOSITORY}" --pattern "okx_timeframes.tar" --dir /tmp
+          mkdir -p Backtest/data/okx
+          tar -xf /tmp/okx_data.tar -C Backtest/data/okx
+          tar -xf /tmp/okx_timeframes.tar -C Backtest/data/okx
+      - name: Place prepared cache
+        run: |
+          set -e
+          cache=$(find /tmp/recovery-baseline -name prepared_oos_cache.pkl -print -quit)
+          test -n "$cache"
+          mkdir -p Backtest/results/recovery_adaptive_matrix
+          cp "$cache" "$RECOVERY_PREPARED_CACHE"
+      - name: Audit BTC gate on periods 5, 6 and 7
+        env:
+          PYTHONPATH: Backtest/SwingEngine
+        run: python -u Backtest/SwingEngine/recovery_btc_filter_audit.py
+      - name: Upload BTC audit
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: recovery-btc-filter-audit-periods-5-6-7
+          path: Backtest/results/recovery_btc_filter_audit/
+          if-no-files-found: error
+          retention-days: 90
