@@ -573,7 +573,8 @@ def _next_recovery_cycle(cycles, cursor=0):
 
 
 def _simulate_multi_cycle(data, signals, obs, specs, btc_frames, atr_multiple, rr,
-                          universe, cycle_config, progress=None, filter_mode=None):
+                          universe, cycle_config, progress=None, filter_mode=None,
+                          equity_curve_path=None, open_positions_path=None):
     """Replay signals with two independent cycles and round-robin recovery allocation."""
     if not cycle_config or cycle_config.get("recovery_target_profit") not in (0.5, 1.0):
         raise ValueError("Multi-cycle simulation requires a $0.50 or $1.00 recovery target")
@@ -605,11 +606,19 @@ def _simulate_multi_cycle(data, signals, obs, specs, btc_frames, atr_multiple, r
     max_open_risk_amount = max_open_risk_percent = 0.0
     max_simultaneous_positions = 0
     risk_cap = float(cycle_config.get("portfolio_open_risk_cap_percent", 3.0))
+    # Valuation-only close marking; execution equity and trading rules stay unchanged.
+    mark_prices = {}
+    equity_curve = []
+    mtm_peak_equity = float(INITIAL_CAPITAL)
+    mtm_max_drawdown_pct = 0.0
+    mtm_max_drawdown_usd = 0.0
 
     for idx, ts in enumerate(times, 1):
         if float(system.execution.equity) <= 0:
             break
         candles = candles_at_time.get(ts, {})
+        for mark_symbol, mark_candle in candles.items():
+            mark_prices[mark_symbol] = float(mark_candle["close"])
         # Resolve exits before processing signals at this timestamp.
         for symbol in list(system.execution.open_positions):
             candle = candles.get(symbol)
@@ -817,6 +826,32 @@ def _simulate_multi_cycle(data, signals, obs, specs, btc_frames, atr_multiple, r
                     # Failed sizing does not destroy the recovery cycle.
                     state["status"] = "RECOVERY_WAITING"
 
+        # Snapshot close-marked equity after exits and entries at this timestamp.
+        floating_pnl = 0.0
+        for open_symbol, open_position in system.execution.open_positions.items():
+            mark_price = mark_prices.get(open_symbol, float(open_position.entry_price))
+            if open_position.direction == "BUY":
+                floating_pnl += (mark_price - float(open_position.entry_price)) * float(open_position.quantity)
+            else:
+                floating_pnl += (float(open_position.entry_price) - mark_price) * float(open_position.quantity)
+        realized_equity = float(system.execution.equity)
+        mtm_equity = realized_equity + floating_pnl
+        mtm_peak_equity = max(mtm_peak_equity, mtm_equity)
+        drawdown_usd = max(0.0, mtm_peak_equity - mtm_equity)
+        drawdown_pct = drawdown_usd / mtm_peak_equity * 100.0 if mtm_peak_equity > 0 else 0.0
+        mtm_max_drawdown_usd = max(mtm_max_drawdown_usd, drawdown_usd)
+        mtm_max_drawdown_pct = max(mtm_max_drawdown_pct, drawdown_pct)
+        equity_curve.append({
+            "timestamp": int(ts),
+            "timestamp_utc": datetime.fromtimestamp(ts / 1000, tz=timezone.utc).isoformat(),
+            "realized_equity": realized_equity,
+            "unrealized_pnl": floating_pnl,
+            "equity_mtm": mtm_equity,
+            "open_positions": len(system.execution.open_positions),
+            "drawdown_usd_mtm": drawdown_usd,
+            "drawdown_pct_mtm": drawdown_pct,
+        })
+
         if progress and (idx % max(1, len(times)//20) == 0 or idx == len(times)):
             progress(idx, len(times), ts)
 
@@ -827,6 +862,59 @@ def _simulate_multi_cycle(data, signals, obs, specs, btc_frames, atr_multiple, r
         cycle_counts["cycles_unresolved"] += 1
 
     summary = _equity_metrics(closed, INITIAL_CAPITAL)
+    realized_final_equity = float(summary["final_equity"])
+    realized_net_pnl = float(summary["net_pnl"])
+    realized_max_drawdown_pct = float(summary["max_drawdown_pct"])
+    final_open_positions = []
+    final_unrealized_pnl = 0.0
+    for open_symbol, open_position in sorted(system.execution.open_positions.items()):
+        mark_price = mark_prices.get(open_symbol, float(open_position.entry_price))
+        if open_position.direction == "BUY":
+            position_unrealized = (mark_price - float(open_position.entry_price)) * float(open_position.quantity)
+        else:
+            position_unrealized = (float(open_position.entry_price) - mark_price) * float(open_position.quantity)
+        final_unrealized_pnl += position_unrealized
+        final_open_positions.append({
+            "symbol": open_symbol, "direction": open_position.direction,
+            "entry_price": float(open_position.entry_price), "mark_price": mark_price,
+            "quantity": float(open_position.quantity),
+            "contract_count": open_position.contract_count,
+            "stop_loss": float(open_position.stop_loss),
+            "take_profit": float(open_position.take_profit),
+            "risk_amount": float(open_position.risk_amount),
+            "opened_at": int(open_position.opened_at),
+            "unrealized_pnl": position_unrealized,
+            "mark_method": "latest_available_15m_close",
+        })
+    final_mtm_equity = realized_final_equity + final_unrealized_pnl
+    summary.update({
+        "realized_final_equity": realized_final_equity,
+        "realized_net_pnl": realized_net_pnl,
+        "realized_max_drawdown_pct": realized_max_drawdown_pct,
+        "final_equity": final_mtm_equity,
+        "net_pnl": final_mtm_equity - float(INITIAL_CAPITAL),
+        "max_drawdown_pct": mtm_max_drawdown_pct,
+        "mtm_final_equity": final_mtm_equity,
+        "mtm_net_pnl": final_mtm_equity - float(INITIAL_CAPITAL),
+        "mtm_unrealized_pnl_at_end": final_unrealized_pnl,
+        "mtm_max_drawdown_pct": mtm_max_drawdown_pct,
+        "mtm_max_drawdown_usd": mtm_max_drawdown_usd,
+        "mtm_peak_equity": mtm_peak_equity,
+        "mtm_observation_count": len(equity_curve),
+        "equity_valuation_method": "15m_close_mark_to_market",
+    })
+    if equity_curve_path:
+        curve_path = Path(equity_curve_path)
+        curve_path.parent.mkdir(parents=True, exist_ok=True)
+        pd.DataFrame(equity_curve).to_csv(curve_path, index=False)
+    if open_positions_path:
+        positions_path = Path(open_positions_path)
+        positions_path.parent.mkdir(parents=True, exist_ok=True)
+        pd.DataFrame(final_open_positions, columns=[
+            "symbol", "direction", "entry_price", "mark_price", "quantity",
+            "contract_count", "stop_loss", "take_profit", "risk_amount",
+            "opened_at", "unrealized_pnl", "mark_method",
+        ]).to_csv(positions_path, index=False)
     summary.update({
         "universe": universe, "symbols": len(data),
         "atr_multiple": atr_multiple, "reward_ratio": rr,
