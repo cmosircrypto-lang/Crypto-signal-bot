@@ -162,7 +162,8 @@ def recovery_risk_amount(losses, base_risk, base_target_profit, rr, objective, s
 
 
 def _simulate(data, signals, obs, specs, btc_frames, atr_multiple, rr,
-              universe, cycle_config=None, progress=None):
+              universe, cycle_config=None, progress=None, filter_mode=None,
+              checkpoint_path=None, checkpoint_interval=250):
     system = TradingSystem(
         initial_capital=INITIAL_CAPITAL, fee_rate=0.0, slippage_rate=0.0,
         max_total=(cycle_config or {}).get("max_total_positions", 6),
@@ -224,7 +225,7 @@ def _simulate(data, signals, obs, specs, btc_frames, atr_multiple, rr,
                 system, max_open_risk_amount, max_open_risk_percent
             )
             if cycle_config:
-                state = cycles.get(symbol)
+                state = cycles.get("__GLOBAL__")
                 if state:
                     state["trade_count"] += 1
                     state["cycle_realized_pnl"] += float(result.pnl)
@@ -238,7 +239,7 @@ def _simulate(data, signals, obs, specs, btc_frames, atr_multiple, rr,
                             state["cycle_closed_at"] = ts
                             state["cycle_net_pnl"] = state["cycle_realized_pnl"]
                             completed_cycles.append(dict(state))
-                            cycles.pop(symbol, None)
+                            cycles.pop("__GLOBAL__", None)
                             cycle_counts["cycles_failed_limit"] += 1
                     elif result.exit_reason == "TP":
                         state["cycle_closed_at"] = ts
@@ -251,7 +252,7 @@ def _simulate(data, signals, obs, specs, btc_frames, atr_multiple, rr,
                             state["base_target_profit"],
                         )
                         completed_cycles.append(dict(state))
-                        cycles.pop(symbol, None)
+                        cycles.pop("__GLOBAL__", None)
                         if state["recovery_entries"]:
                             cycle_counts["cycles_recovered"] += 1
                         if state["recovered_to_breakeven"]:
@@ -271,24 +272,21 @@ def _simulate(data, signals, obs, specs, btc_frames, atr_multiple, rr,
             direction = str(signal["direction"]).upper()
             # Keep the sole portfolio slot reserved for the active cycle.
             if cycle_config and cycle_config.get("single_position_global", False):
-                locked_symbols = list(cycles)
-                if locked_symbols and symbol not in locked_symbols:
-                    skips.append({"symbol": symbol, "signal_ts": ts, "reason": "global_recovery_cycle_lock"})
-                    continue
-                if system.execution.open_positions and symbol not in system.execution.open_positions:
+                if system.execution.open_positions:
                     skips.append({"symbol": symbol, "signal_ts": ts, "reason": "global_single_position_busy"})
                     continue
             if not system.can_search_symbol(symbol):
                 continue
             trend = btc_trends_at_time(btc_frames, ts)
-            if trend["1d"] != direction or trend["4h"] != direction:
+            required_trends = ("1d", "4h") if (filter_mode or FILTER_MODE) == "1d_4h" else ("1d", "4h", "1h")
+            if any(trend.get(tf) != direction for tf in required_trends):
                 continue
             levels = _levels(signal, atr_multiple, rr)
             if levels is None:
                 skips.append({"symbol": symbol, "signal_ts": ts, "reason": "invalid_atr_or_levels"})
                 continue
             stop, target = levels
-            is_recovery = bool(cycle_config and symbol in cycles)
+            is_recovery = bool(cycle_config and "__GLOBAL__" in cycles)
             risk_amount = None
             if cycle_config and not is_recovery:
                 # A new independent cycle starts with the base trade.
@@ -297,7 +295,7 @@ def _simulate(data, signals, obs, specs, btc_frames, atr_multiple, rr,
             available_risk, open_risk = _available_portfolio_risk(system, risk_cap)
             if available_risk <= 0:
                 if is_recovery and not cycle_config.get("keep_cycle_when_risk_blocked", False):
-                    state = cycles.pop(symbol)
+                    state = cycles.pop("__GLOBAL__")
                     state["status"] = "FAILED_PORTFOLIO_RISK_CAP"
                     state["cycle_closed_at"] = ts
                     state["cycle_net_pnl"] = state["cycle_realized_pnl"]
@@ -306,7 +304,7 @@ def _simulate(data, signals, obs, specs, btc_frames, atr_multiple, rr,
                 skips.append({"symbol": symbol, "signal_ts": ts, "reason": "portfolio_open_risk_cap"})
                 continue
             if is_recovery:
-                state = cycles[symbol]
+                state = cycles["__GLOBAL__"]
                 if cycle_config.get("smart_balance_cap"):
                     equity_ratio = float(system.execution.equity) / INITIAL_CAPITAL
                     dynamic_cap = (5 if equity_ratio > 0.80 else
@@ -320,7 +318,7 @@ def _simulate(data, signals, obs, specs, btc_frames, atr_multiple, rr,
                         state["cycle_closed_at"] = ts
                         state["cycle_net_pnl"] = state["cycle_realized_pnl"]
                         completed_cycles.append(dict(state))
-                        cycles.pop(symbol, None)
+                        cycles.pop("__GLOBAL__", None)
                         cycle_counts["cycles_failed_limit"] += 1
                         skips.append({"symbol": symbol, "signal_ts": ts, "reason": "smart_balance_recovery_cap"})
                         continue
@@ -348,7 +346,7 @@ def _simulate(data, signals, obs, specs, btc_frames, atr_multiple, rr,
                         state["cycle_closed_at"] = ts
                         state["cycle_net_pnl"] = state["cycle_realized_pnl"]
                         completed_cycles.append(dict(state))
-                        cycles.pop(symbol, None)
+                        cycles.pop("__GLOBAL__", None)
                         cycle_counts["cycles_portfolio_risk_failed"] += 1
                     skips.append({"symbol": symbol, "signal_ts": ts, "reason": "recovery_exceeds_available_portfolio_risk"})
                     continue
@@ -375,7 +373,7 @@ def _simulate(data, signals, obs, specs, btc_frames, atr_multiple, rr,
                     state["cycle_realized_pnl"] += liquidation_loss
                     state["cycle_net_pnl"] = state["cycle_realized_pnl"]
                     completed_cycles.append(dict(state))
-                    cycles.pop(symbol, None)
+                    cycles.pop("__GLOBAL__", None)
                     system.execution.equity = 0.0
                     cycle_counts["cycles_portfolio_risk_failed"] += 1
                     cycle_counts["cycles_liquidated_equity_proxy"] += 1
@@ -414,22 +412,22 @@ def _simulate(data, signals, obs, specs, btc_frames, atr_multiple, rr,
                         "sizing_method": cycle_config["sizing_method"],
                         "max_recovery_trades": cycle_config["max_recovery_trades"],
                     }
-                    cycles[symbol] = state
+                    cycles["__GLOBAL__"] = state
                     cycle_counts["cycles_started"] += 1
                 elif is_recovery:
-                    cycles[symbol]["recovery_entries"] += 1
+                    cycles["__GLOBAL__"]["recovery_entries"] += 1
                 active[symbol] = {
                     "atr_multiple": atr_multiple, "reward_ratio": rr,
-                    "cycle_id": cycles[symbol]["cycle_id"] if cycle_config else None,
-                    "cycle_trade_number": cycles[symbol]["trade_count"] + 1 if cycle_config else None,
+                    "cycle_id": cycles["__GLOBAL__"]["cycle_id"] if cycle_config else None,
+                    "cycle_trade_number": cycles["__GLOBAL__"]["trade_count"] + 1 if cycle_config else None,
                     "is_recovery": is_recovery,
-                    "recovery_entry_number": cycles[symbol]["recovery_entries"] if is_recovery else 0,
+                    "recovery_entry_number": cycles["__GLOBAL__"]["recovery_entries"] if is_recovery else 0,
                     "recovery_objective": cycle_config["objective"] if cycle_config else "none",
                     "recovery_sizing": cycle_config["sizing_method"] if cycle_config else "none",
                 }
             except (ValueError, KeyError) as exc:
                 if is_recovery and "risk budget" in str(exc).lower():
-                    state = cycles.pop(symbol, None)
+                    state = cycles.pop("__GLOBAL__", None)
                     if state:
                         state["status"] = "FAILED_PORTFOLIO_RISK_CAP"
                         state["cycle_closed_at"] = ts
@@ -451,7 +449,7 @@ def _simulate(data, signals, obs, specs, btc_frames, atr_multiple, rr,
         "atr_multiple": atr_multiple, "reward_ratio": rr,
         "single_position_global": bool(cycle_config and cycle_config.get("single_position_global", False)),
         "max_simultaneous_positions": max_simultaneous_positions,
-        "filter_mode": FILTER_MODE, "risk_percent_base": RISK_PERCENT,
+        "filter_mode": (filter_mode or FILTER_MODE), "required_btc_trend_timeframes": list(("1d", "4h") if (filter_mode or FILTER_MODE) == "1d_4h" else ("1d", "4h", "1h")), "risk_percent_base": RISK_PERCENT,
         "open_trades_at_end": len(system.execution.open_positions),
         "max_open_per_symbol": 1,
         **cycle_counts,
