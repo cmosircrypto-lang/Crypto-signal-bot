@@ -5,11 +5,14 @@ on:
     branches:
       - experiment/dynamic-signal-selection-design
     paths:
+      - "Backtest/GeneticEngine/config.py"
+      - "Backtest/GeneticEngine/genome.py"
       - "Backtest/GeneticEngine/dynamic_selector.py"
       - "Backtest/GeneticEngine/checkpoint.py"
       - "Backtest/GeneticEngine/dynamic_cycle_runner.py"
       - "Backtest/GeneticEngine/tests/test_dynamic_selection.py"
       - "Backtest/GeneticEngine/tests/test_dynamic_cycle_runner.py"
+      - "Backtest/GeneticEngine/tests/test_strategy_family_genome.py"
       - "Backtest/GeneticEngine/README.md"
       - ".github/workflows/dynamic-signal-selection-tests.yml"
   workflow_dispatch:
@@ -38,5 +41,7 @@ jobs:
         run: python -m unittest Backtest.GeneticEngine.tests.test_dynamic_selection
       - name: Test resumable per-symbol cycle runner
         run: python -m unittest Backtest.GeneticEngine.tests.test_dynamic_cycle_runner
+      - name: Test composable strategy-family genome
+        run: python -m unittest Backtest.GeneticEngine.tests.test_strategy_family_genome
       - name: Test existing genome contract
         run: python -m unittest Backtest.GeneticEngine.tests.test_genome
