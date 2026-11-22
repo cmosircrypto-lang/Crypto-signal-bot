@@ -1,4 +1,4 @@
-name: Genetic Family Historical Smoke
+name: Genetic Family Multi-Symbol Research
 
 on:
   push:
@@ -12,9 +12,21 @@ permissions:
   contents: read
 
 jobs:
-  bnb-smoke:
+  multi-symbol-smoke:
+    name: ${{ matrix.symbol }} LONG + SHORT
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      max-parallel: 6
+      matrix:
+        symbol:
+          - BTC-USDT-SWAP
+          - ETH-USDT-SWAP
+          - BNB-USDT-SWAP
+          - SOL-USDT-SWAP
+          - XRP-USDT-SWAP
+          - ADA-USDT-SWAP
     steps:
       - name: Checkout research branch
         uses: actions/checkout@v4
@@ -40,29 +52,29 @@ jobs:
             echo "$timeframe: $count symbol files"
             test "$count" -eq 76
           done
-      - name: Run BNB independent LONG and SHORT genetic smoke
+      - name: Run independent LONG and SHORT genetic evolution
         run: |
           set -o pipefail
           python -u -m Backtest.GeneticEngine.run_genetic_research \
-            --profile smoke --symbols BNB-USDT-SWAP --population 8 --generations 2 \
-            | tee /tmp/genetic-family-smoke.log
-      - name: Add smoke report to summary
+            --profile smoke --symbols "${{ matrix.symbol }}" --population 10 --generations 3 \
+            | tee "/tmp/genetic-family-${{ matrix.symbol }}.log"
+      - name: Add report to summary
         if: always()
         run: |
-          if [ -f /tmp/genetic-family-smoke.log ]; then
+          if [ -f "/tmp/genetic-family-${{ matrix.symbol }}.log" ]; then
             {
-              echo "## BNB family-genetic smoke"
-              tail -n 100 /tmp/genetic-family-smoke.log
+              echo "## ${{ matrix.symbol }} family-genetic research"
+              tail -n 100 "/tmp/genetic-family-${{ matrix.symbol }}.log"
             } >> "$GITHUB_STEP_SUMMARY"
           fi
-      - name: Upload smoke checkpoints and summary
+      - name: Upload checkpoints and summary
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: genetic-family-bnb-smoke
+          name: genetic-family-${{ matrix.symbol }}-pop10-gen3
           path: |
             Backtest/results/genetic_family_checkpoints/
             Backtest/results/genetic_family_summary.json
-            /tmp/genetic-family-smoke.log
+            /tmp/genetic-family-${{ matrix.symbol }}.log
           if-no-files-found: warn
           retention-days: 30
