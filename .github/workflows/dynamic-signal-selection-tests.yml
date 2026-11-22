@@ -7,8 +7,6 @@ on:
     paths:
       - "Backtest/GeneticEngine/config.py"
       - "Backtest/GeneticEngine/genome.py"
-            Backtest/GeneticEngine/config.py \
-            Backtest/GeneticEngine/genome.py \
       - "Backtest/GeneticEngine/dynamic_selector.py"
       - "Backtest/GeneticEngine/checkpoint.py"
       - "Backtest/GeneticEngine/dynamic_cycle_runner.py"
@@ -36,6 +34,8 @@ jobs:
       - name: Compile research modules
         run: |
           python -m py_compile \
+            Backtest/GeneticEngine/config.py \
+            Backtest/GeneticEngine/genome.py \
             Backtest/GeneticEngine/dynamic_selector.py \
             Backtest/GeneticEngine/checkpoint.py \
             Backtest/GeneticEngine/dynamic_cycle_runner.py
