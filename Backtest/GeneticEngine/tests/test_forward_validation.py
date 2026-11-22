@@ -26,6 +26,7 @@ END = 1_795_384_800_000    # 2026-11-22T22:00:00Z
 def quality_report(names):
     return {
         "status": "PASS",
+        "baseline_release": "okx-data",
         "errors": [],
         "forward_window_start_utc": "2026-11-17T00:00:00+00:00",
         "validated_through_exclusive_utc": "2026-11-22T22:00:00+00:00",
