@@ -82,3 +82,10 @@ The runner's `build_symbol_candidate_pool` helper expands each genome into one-m
 
 
 The per-symbol pool builder also injects a baseline candidate for every configured entry method, so a small or skewed genetic population cannot accidentally omit an enabled method from a scan-cycle comparison. Evolved genomes add their distinct filter/zone/touch/risk/RR combinations alongside this guaranteed method coverage.
+
+
+## Direction-specific evolution and main.py strategy sources
+
+The dynamic candidate pool now expands each method/genome into separate LONG and SHORT candidate specifications. Evaluator results must match the declared direction. Historical metrics and evolution must remain direction-specific; only after independent evaluation may the cycle selector compare both sides and choose at most one signal for a symbol.
+
+The three distinct signal families in the repository's `main.py` are documented as future research candidates: EMA Cross PRO, BTC-aligned 1h pullback, and SMC Winner. The three managed bot variants reuse those same signal functions and are not additional strategies. Only signal-generation rules may be ported. Position sizing, recovery, Telegram, persistence, cooldown/dispatch and live exchange access are excluded. The strategies are not yet wired into the genetic evaluator; they require causal OKX data adapters, fixtures and parity tests first.
