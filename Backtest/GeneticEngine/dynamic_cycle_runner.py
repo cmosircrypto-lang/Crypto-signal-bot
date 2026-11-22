@@ -1,4 +1,4 @@
-"""Resumable per-symbol evaluation of a candidate pool for one scan cycle."""
+"""Resumable per-symbol evaluation of a direction-aware candidate pool."""
 from __future__ import annotations
 
 import hashlib
@@ -15,6 +15,8 @@ from .dynamic_selector import (
     HistoricalMetrics, ScoringPolicy, SignalCandidate, SelectionDecision,
     select_cycle_signals,
 )
+
+DIRECTIONS = ("LONG", "SHORT")
 
 
 def _canonical_hash(value: Any) -> str:
@@ -35,10 +37,16 @@ def _to_signal_candidate(symbol: str, spec: Mapping[str, Any],
     historical = result.get("historical")
     if not isinstance(historical, Mapping):
         raise ValueError("evaluator result must include historical metrics mapping")
+    expected_direction = spec.get("direction")
+    actual_direction = str(result.get("direction", expected_direction or "LONG")).upper()
+    if expected_direction is not None and actual_direction != str(expected_direction).upper():
+        raise ValueError(
+            f"direction-specific evaluator mismatch: expected {expected_direction}, got {actual_direction}"
+        )
     return SignalCandidate(
         symbol=symbol, candidate_id=_candidate_id(spec),
         method=str(spec.get("method", "UNKNOWN")),
-        direction=str(result.get("direction", "LONG")),
+        direction=actual_direction,
         signal_timestamp=str(result.get("signal_timestamp", "")),
         historical=HistoricalMetrics(**dict(historical)),
         current_setup_quality=float(result.get("current_setup_quality", 0.0)),
@@ -51,7 +59,7 @@ def _to_signal_candidate(symbol: str, spec: Mapping[str, Any],
 def build_symbol_candidate_pool(
     symbol: str, genomes: Iterable[StrategyGenome]
 ) -> list[dict[str, Any]]:
-    """Expand genomes into one-method candidates; guarantee baseline method coverage."""
+    """Expand each genome/method into independent LONG and SHORT candidates."""
     symbol = symbol.strip().upper()
     if not symbol:
         raise ValueError("symbol is required")
@@ -69,13 +77,21 @@ def build_symbol_candidate_pool(
             one_method = replace(genome, entry_methods=(method,), symbols=(symbol,))
             assert_legacy_compatible(one_method)
             payload = one_method.to_dict()
-            candidate_id = _canonical_hash(payload)[:20]
-            if candidate_id in seen:
-                continue
-            seen.add(candidate_id)
-            pool.append({"candidate_id": candidate_id, "method": method,
-                         "genome": payload})
-    return sorted(pool, key=lambda item: (item["method"], item["candidate_id"]))
+            for direction in DIRECTIONS:
+                candidate_payload = {"genome": payload, "direction": direction}
+                candidate_id = _canonical_hash(candidate_payload)[:20]
+                if candidate_id in seen:
+                    continue
+                seen.add(candidate_id)
+                pool.append({
+                    "candidate_id": candidate_id,
+                    "method": method,
+                    "direction": direction,
+                    "genome": payload,
+                })
+    return sorted(pool, key=lambda item: (
+        item["method"], item["direction"], item["candidate_id"]
+    ))
 
 
 def run_symbol_cycle(
@@ -93,6 +109,10 @@ def run_symbol_cycle(
     ids = [_candidate_id(item) for item in specs]
     if len(ids) != len(set(ids)):
         raise ValueError("candidate_id values must be unique within a symbol cycle")
+    for spec in specs:
+        direction = spec.get("direction")
+        if direction is not None and str(direction).upper() not in DIRECTIONS:
+            raise ValueError(f"unsupported candidate direction: {direction}")
     pool_hash = _canonical_hash(specs)
     missing = {"code_hash", "config_hash", "dataset_hash"} - set(checkpoint_metadata)
     if missing:
@@ -111,7 +131,7 @@ def run_symbol_cycle(
         result = evaluator(spec)
         if not isinstance(result, Mapping):
             raise TypeError("candidate evaluator must return a mapping")
-        _to_signal_candidate(symbol, spec, result)  # validate before persisting
+        _to_signal_candidate(symbol, spec, result)
         completed[candidate_id] = dict(result)
         save_checkpoint(
             path, metadata=metadata,
@@ -129,6 +149,7 @@ def run_symbol_cycle(
         payload={"completed": completed, "status": "COMPLETED",
                  "winner_candidate_id": decision.winner.candidate_id if decision.winner else None,
                  "winner_method": decision.winner.method if decision.winner else None,
+                 "winner_direction": decision.winner.direction if decision.winner else None,
                  "winner_score": decision.winner.final_score if decision.winner else None},
     )
     return decision
