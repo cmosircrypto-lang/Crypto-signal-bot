@@ -3,9 +3,10 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from Backtest.GeneticEngine.config import EvolutionConfig
-from Backtest.GeneticEngine.genetic_runner import run_direction_evolution
+from Backtest.GeneticEngine.genetic_runner import run_direction_evolution, run_genetic_evolution
 from Backtest.GeneticEngine.genome import StrategyGenome
 
 
@@ -67,6 +68,25 @@ class GeneticRunnerTests(unittest.TestCase):
             self.assertEqual(result["eligible_phenotypes"],result["evaluated_phenotypes"])
             self.assertEqual(calls["first"],3)
             self.assertEqual(calls["second"],result["evaluated_phenotypes"]-2)
+
+
+    def test_symbol_orchestrator_invokes_independent_direction_runs(self):
+        dummy_data={"BNB-USDT-SWAP":object()}
+        seen=[]
+        def fake_walk(data,symbol,genome,direction,**kwargs):
+            seen.append((symbol,direction))
+            return METRICS
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch("Backtest.GeneticEngine.historical_evaluator.evaluate_candidate_walk_forward",
+                       side_effect=fake_walk):
+                result=run_genetic_evolution(
+                    all_symbol_data=dummy_data,symbols=("BNB-USDT-SWAP",),
+                    checkpoint_dir=tmp,checkpoint_metadata=META,
+                    evolution_config=self.config(),profile="smoke",
+                )
+        self.assertIn(("BNB-USDT-SWAP","LONG"),seen)
+        self.assertIn(("BNB-USDT-SWAP","SHORT"),seen)
+        self.assertEqual(set(result["BNB-USDT-SWAP"]),{"LONG","SHORT"})
 
     def test_stale_dataset_checkpoint_is_rejected(self):
         with tempfile.TemporaryDirectory() as tmp:
