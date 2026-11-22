@@ -101,3 +101,8 @@ Families can be combined using SINGLE, ANY, ALL, or VOTE with a configurable agr
 
 
 CI now compiles the expanded config/genome modules and runs the strategy-family genome tests alongside selector, checkpoint and legacy contract tests.
+
+
+## Genetic mutation and crossover
+
+`evolution.py` adds deterministic seeded `random_genome`, `mutate_genome`, and `crossover_genomes` operators. They can vary the existing Swing genes, all three main.py-derived parameter groups, and the additional momentum/mean-reversion/squeeze families; family lists and combination modes are genes too. Dependent constraints (fast EMA below slow EMA, minimum stop below maximum stop, RSI low below RSI high, and valid family agreement) are repaired before a child is accepted. These are tested operators and genome sampling, not yet a complete population evolution/evaluation loop; family signal evaluators remain a separate gate.
