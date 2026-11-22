@@ -194,6 +194,7 @@ def _simulate(data, signals, obs, specs, btc_frames, atr_multiple, rr,
                     "cycles_liquidated_equity_proxy": 0}
     max_open_risk_amount = 0.0
     max_open_risk_percent = 0.0
+    max_simultaneous_positions = 0
     for idx, ts in enumerate(times, 1):
         if float(system.execution.equity) <= 0:
             break
@@ -268,6 +269,15 @@ def _simulate(data, signals, obs, specs, btc_frames, atr_multiple, rr,
         entries = sorted(signals_at_time.get(ts, []), key=lambda x: x[0])
         for symbol, signal in entries:
             direction = str(signal["direction"]).upper()
+            # Keep the sole portfolio slot reserved for the active cycle.
+            if cycle_config and cycle_config.get("single_position_global", False):
+                locked_symbols = list(cycles)
+                if locked_symbols and symbol not in locked_symbols:
+                    skips.append({"symbol": symbol, "signal_ts": ts, "reason": "global_recovery_cycle_lock"})
+                    continue
+                if system.execution.open_positions and symbol not in system.execution.open_positions:
+                    skips.append({"symbol": symbol, "signal_ts": ts, "reason": "global_single_position_busy"})
+                    continue
             if not system.can_search_symbol(symbol):
                 continue
             trend = btc_trends_at_time(btc_frames, ts)
@@ -388,6 +398,7 @@ def _simulate(data, signals, obs, specs, btc_frames, atr_multiple, rr,
                 max_open_risk_amount, max_open_risk_percent = _update_open_risk_peaks(
                     system, max_open_risk_amount, max_open_risk_percent
                 )
+                max_simultaneous_positions = max(max_simultaneous_positions, len(system.execution.open_positions))
                 if cycle_config and not is_recovery:
                     state = {
                         "symbol": symbol, "cycle_id": f"{symbol}-{cycle_serial[symbol]}",
@@ -438,6 +449,8 @@ def _simulate(data, signals, obs, specs, btc_frames, atr_multiple, rr,
     summary.update({
         "universe": universe, "symbols": len(data),
         "atr_multiple": atr_multiple, "reward_ratio": rr,
+        "single_position_global": bool(cycle_config and cycle_config.get("single_position_global", False)),
+        "max_simultaneous_positions": max_simultaneous_positions,
         "filter_mode": FILTER_MODE, "risk_percent_base": RISK_PERCENT,
         "open_trades_at_end": len(system.execution.open_positions),
         "max_open_per_symbol": 1,
