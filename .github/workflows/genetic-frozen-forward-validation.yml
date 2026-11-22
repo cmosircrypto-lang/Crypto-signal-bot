@@ -1,6 +1,9 @@
 name: Frozen Genetic Champion Forward Validation
 
 on:
+  push:
+    branches:
+      - experiment/genetic-frozen-forward-validation
   workflow_dispatch:
     inputs:
       genetic_source_run_id:
@@ -24,19 +27,45 @@ permissions:
   actions: read
 
 jobs:
+  preflight:
+    name: Compile and test the frozen validation code
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout isolated validation branch
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install research dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install numpy pandas
+      - name: Compile and run focused regression tests
+        run: |
+          python -m compileall -q Backtest/GeneticEngine
+          python -m unittest \
+            Backtest.GeneticEngine.tests.test_genome \
+            Backtest.GeneticEngine.tests.test_family_signals \
+            Backtest.GeneticEngine.tests.test_historical_evaluator \
+            Backtest.GeneticEngine.tests.test_genetic_runner \
+            Backtest.GeneticEngine.tests.test_dynamic_selection \
+            Backtest.GeneticEngine.tests.test_forward_validation
+
   frozen-forward-validation:
     name: Validate 11 frozen candidates on new forward data
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[run-forward]')
+    needs: preflight
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:
       - name: Checkout isolated validation branch
         uses: actions/checkout@v4
-
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-
       - name: Install research dependencies
         run: |
           python -m pip install --upgrade pip
@@ -45,8 +74,8 @@ jobs:
       - name: Verify and download the exact source genetic run
         env:
           GH_TOKEN: ${{ github.token }}
-          SOURCE_RUN_ID: ${{ inputs.genetic_source_run_id }}
-          SOURCE_COMMIT_SHA: ${{ inputs.genetic_source_commit_sha }}
+          SOURCE_RUN_ID: ${{ inputs.genetic_source_run_id || '45054615629' }}
+          SOURCE_COMMIT_SHA: ${{ inputs.genetic_source_commit_sha || '16544a09a07ce024f07037cb0ca65c1fbd18cf57' }}
         run: |
           set -euo pipefail
           source_meta="$(gh run view "$SOURCE_RUN_ID" --repo "$GITHUB_REPOSITORY" --json headBranch,headSha,status,conclusion)"
@@ -63,7 +92,7 @@ jobs:
       - name: Verify and download the validated forward dataset
         env:
           GH_TOKEN: ${{ github.token }}
-          DATA_RUN_ID: ${{ inputs.forward_data_run_id }}
+          DATA_RUN_ID: ${{ inputs.forward_data_run_id || '45076388584' }}
         run: |
           set -euo pipefail
           data_meta="$(gh run view "$DATA_RUN_ID" --repo "$GITHUB_REPOSITORY" --json headBranch,status,conclusion)"
@@ -84,20 +113,9 @@ jobs:
         run: |
           python -m Backtest.GeneticEngine.freeze_candidates \
             --artifact-root /tmp/genetic-source \
-            --source-run-id "${{ inputs.genetic_source_run_id }}" \
-            --source-commit-sha "${{ inputs.genetic_source_commit_sha }}" \
+            --source-run-id "${{ inputs.genetic_source_run_id || '45054615629' }}" \
+            --source-commit-sha "${{ inputs.genetic_source_commit_sha || '16544a09a07ce024f07037cb0ca65c1fbd18cf57' }}" \
             --output Backtest/GeneticEngine/frozen_candidates.json
-
-      - name: Compile and run focused regression tests
-        run: |
-          python -m compileall -q Backtest/GeneticEngine
-          python -m unittest \
-            Backtest.GeneticEngine.tests.test_genome \
-            Backtest.GeneticEngine.tests.test_family_signals \
-            Backtest.GeneticEngine.tests.test_historical_evaluator \
-            Backtest.GeneticEngine.tests.test_genetic_runner \
-            Backtest.GeneticEngine.tests.test_dynamic_selection \
-            Backtest.GeneticEngine.tests.test_forward_validation
 
       - name: Run frozen forward-only validation
         run: |
