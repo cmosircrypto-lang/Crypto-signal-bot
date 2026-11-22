@@ -1,17 +1,18 @@
-# Twelve-subperiod comparison: baseline without recovery vs $0.50/$1.00 recovery targets.
-name: Recovery Value Test — 12 Subperiods — Baseline vs Recovery
+# Twelve-subperiod comparison: independent two-cycle recovery at $0.50/$1.00 targets.
+name: Recovery Value Test — 12 Subperiods — Two Concurrent Cycles
 on:
   push:
     branches:
       - experiment/recovery-cycle-resumable
     paths:
+      - "Backtest/SwingEngine/recovery_cycle_resumable.py"
       - "Backtest/SwingEngine/recovery_robustness_validation.py"
       - "Backtest/SwingEngine/test_recovery_robustness_validation.py"
       - ".github/workflows/recovery-robustness-validation.yml"
   workflow_dispatch:
 concurrency:
   group: recovery-robustness-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 permissions:
   contents: read
   actions: read
@@ -69,14 +70,14 @@ jobs:
           python -m py_compile Backtest/SwingEngine/recovery_cycle_resumable.py Backtest/SwingEngine/recovery_robustness_validation.py Backtest/SwingEngine/test_recovery_robustness_validation.py
           python Backtest/SwingEngine/test_recovery_cycle_experiment.py
           python Backtest/SwingEngine/test_recovery_robustness_validation.py
-      - name: Run 36 independent subperiod/scenario simulations
+      - name: Run 24 independent two-cycle subperiod/scenario simulations
         run: |
           set -o pipefail
           python -u Backtest/SwingEngine/recovery_robustness_validation.py | tee /tmp/recovery-robustness.log
       - name: Publish summary
         if: always()
         run: |
-          echo "## Recovery value test — twelve subperiods × three scenarios (3% risk cap)" >> "$GITHUB_STEP_SUMMARY"
+          echo "## Recovery value test — twelve subperiods × two targets; two concurrent cycles (3% risk cap)" >> "$GITHUB_STEP_SUMMARY"
           if [ -f Backtest/results/recovery_target_subperiods/recovery_robustness_summary.csv ]; then
             python - <<'PY' >> "$GITHUB_STEP_SUMMARY"
           import pandas as pd
@@ -95,7 +96,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: recovery-target-subperiods-12x2
+          name: recovery-two-cycle-subperiods-12x2
           path: Backtest/results/recovery_target_subperiods/
           if-no-files-found: warn
           retention-days: 90
