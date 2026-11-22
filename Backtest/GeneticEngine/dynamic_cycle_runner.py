@@ -8,10 +8,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
 
 from .checkpoint import load_checkpoint, save_checkpoint
+from .evaluator import assert_legacy_compatible
+from .genome import StrategyGenome
 from .dynamic_selector import (
     HistoricalMetrics,
     ScoringPolicy,
@@ -52,6 +55,41 @@ def _to_signal_candidate(
         candle_closed=bool(result.get("candle_closed", False)),
         rejection_reason=result.get("rejection_reason"),
     )
+
+
+
+def build_symbol_candidate_pool(
+    symbol: str, genomes: Iterable[StrategyGenome]
+) -> list[dict[str, Any]]:
+    """Expand a genetic population into independently scored method candidates.
+
+    Each entry method becomes its own candidate for this symbol. Only genes
+    currently honored by the legacy adapter are accepted; unsupported
+    swing/OB/ATR-stop mutations fail fast instead of being silently ignored.
+    """
+    symbol = symbol.strip().upper()
+    if not symbol:
+        raise ValueError("symbol is required")
+    pool: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for genome in genomes:
+        genome.validate()
+        for method in genome.entry_methods:
+            one_method = replace(
+                genome, entry_methods=(method,), symbols=(symbol,)
+            )
+            assert_legacy_compatible(one_method)
+            payload = one_method.to_dict()
+            candidate_id = _canonical_hash(payload)[:20]
+            if candidate_id in seen:
+                continue
+            seen.add(candidate_id)
+            pool.append({
+                "candidate_id": candidate_id,
+                "method": method,
+                "genome": payload,
+            })
+    return sorted(pool, key=lambda item: (item["method"], item["candidate_id"]))
 
 
 def run_symbol_cycle(
