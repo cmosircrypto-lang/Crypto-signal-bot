@@ -1,29 +1,21 @@
-"""Resumable per-symbol evaluation of a direction-aware candidate pool."""
+"""Resumable per-symbol evaluation of composable, direction-aware candidates."""
 from __future__ import annotations
-
 import hashlib
 import json
 from dataclasses import replace
+from itertools import combinations
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
-
 from . import config
 from .checkpoint import load_checkpoint, save_checkpoint
-from .evaluator import assert_legacy_compatible
 from .genome import StrategyGenome
-from .dynamic_selector import (
-    HistoricalMetrics, ScoringPolicy, SignalCandidate, SelectionDecision,
-    select_cycle_signals,
-)
+from .dynamic_selector import HistoricalMetrics, ScoringPolicy, SignalCandidate, SelectionDecision, select_cycle_signals
 
 DIRECTIONS = ("LONG", "SHORT")
 
-
 def _canonical_hash(value: Any) -> str:
-    encoded = json.dumps(value, sort_keys=True, separators=(",", ":"),
-                         ensure_ascii=False, allow_nan=False).encode("utf-8")
+    encoded = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
-
 
 def _candidate_id(candidate: Mapping[str, Any]) -> str:
     value = candidate.get("candidate_id")
@@ -31,23 +23,18 @@ def _candidate_id(candidate: Mapping[str, Any]) -> str:
         raise ValueError("each candidate requires a non-empty candidate_id")
     return value
 
-
-def _to_signal_candidate(symbol: str, spec: Mapping[str, Any],
-                         result: Mapping[str, Any]) -> SignalCandidate:
+def _to_signal_candidate(symbol: str, spec: Mapping[str, Any], result: Mapping[str, Any]) -> SignalCandidate:
     historical = result.get("historical")
     if not isinstance(historical, Mapping):
         raise ValueError("evaluator result must include historical metrics mapping")
-    expected_direction = spec.get("direction")
-    actual_direction = str(result.get("direction", expected_direction or "LONG")).upper()
-    if expected_direction is not None and actual_direction != str(expected_direction).upper():
-        raise ValueError(
-            f"direction-specific evaluator mismatch: expected {expected_direction}, got {actual_direction}"
-        )
+    expected = spec.get("direction")
+    actual = str(result.get("direction", expected or "LONG")).upper()
+    if expected is not None and actual != str(expected).upper():
+        raise ValueError(f"direction-specific evaluator mismatch: expected {expected}, got {actual}")
     return SignalCandidate(
         symbol=symbol, candidate_id=_candidate_id(spec),
-        method=str(spec.get("method", "UNKNOWN")),
-        direction=actual_direction,
-        signal_timestamp=str(result.get("signal_timestamp", "")),
+        method=str(spec.get("method", spec.get("family_combination", "UNKNOWN"))),
+        direction=actual, signal_timestamp=str(result.get("signal_timestamp", "")),
         historical=HistoricalMetrics(**dict(historical)),
         current_setup_quality=float(result.get("current_setup_quality", 0.0)),
         has_current_signal=bool(result.get("has_current_signal", False)),
@@ -55,28 +42,34 @@ def _to_signal_candidate(symbol: str, spec: Mapping[str, Any],
         rejection_reason=result.get("rejection_reason"),
     )
 
+def build_symbol_candidate_pool(symbol: str, genomes: Iterable[StrategyGenome]) -> list[dict[str, Any]]:
+    """Build family singles, pairwise hybrids and evolved genomes for one symbol.
 
-def build_symbol_candidate_pool(
-    symbol: str, genomes: Iterable[StrategyGenome]
-) -> list[dict[str, Any]]:
-    """Expand each genome/method into independent LONG and SHORT candidates."""
+    The pool deliberately does not call the legacy parity guard: these are research
+    candidates and must be evaluated by a family-aware evaluator, never silently
+    routed through the legacy SwingEngine adapter.
+    """
     symbol = symbol.strip().upper()
     if not symbol:
         raise ValueError("symbol is required")
+    baseline = StrategyGenome.baseline()
+    seeds = list(genomes)
+    # Ensure every signal family is represented, plus all pairwise family hybrids.
+    for family in config.STRATEGY_FAMILIES:
+        seeds.append(replace(baseline, signal_families=(family,), family_combination="SINGLE"))
+    for left, right in combinations(config.STRATEGY_FAMILIES, 2):
+        seeds.append(replace(
+            baseline, signal_families=(left, right), family_combination="VOTE",
+            min_family_agreement=2,
+        ))
     pool: list[dict[str, Any]] = []
     seen: set[str] = set()
-    source_genomes = list(genomes)
-    baseline = StrategyGenome.baseline()
-    source_genomes.extend(
-        replace(baseline, entry_methods=(method,))
-        for method in config.ENTRY_METHODS
-    )
-    for genome in source_genomes:
+    for genome in seeds:
         genome.validate()
-        for method in genome.entry_methods:
-            one_method = replace(genome, entry_methods=(method,), symbols=(symbol,))
-            assert_legacy_compatible(one_method)
-            payload = one_method.to_dict()
+        methods = genome.entry_methods if "SWING_OB" in genome.signal_families else ("FAMILY_NATIVE",)
+        for method in methods:
+            one = replace(genome, entry_methods=(method,), symbols=(symbol,))
+            payload = one.to_dict()
             for direction in DIRECTIONS:
                 candidate_payload = {"genome": payload, "direction": direction}
                 candidate_id = _canonical_hash(candidate_payload)[:20]
@@ -84,21 +77,20 @@ def build_symbol_candidate_pool(
                     continue
                 seen.add(candidate_id)
                 pool.append({
-                    "candidate_id": candidate_id,
-                    "method": method,
-                    "direction": direction,
-                    "genome": payload,
+                    "candidate_id": candidate_id, "method": method,
+                    "signal_families": list(one.signal_families),
+                    "family_combination": one.family_combination,
+                    "direction": direction, "genome": payload,
                 })
     return sorted(pool, key=lambda item: (
-        item["method"], item["direction"], item["candidate_id"]
+        tuple(item["signal_families"]), item["family_combination"],
+        item["method"], item["direction"], item["candidate_id"],
     ))
-
 
 def run_symbol_cycle(
     *, symbol: str, cycle_id: str, candidates: Iterable[Mapping[str, Any]],
     evaluator: Callable[[Mapping[str, Any]], Mapping[str, Any]],
-    checkpoint_path: str | Path,
-    checkpoint_metadata: Mapping[str, Any],
+    checkpoint_path: str | Path, checkpoint_metadata: Mapping[str, Any],
     policy: ScoringPolicy = ScoringPolicy(),
 ) -> SelectionDecision:
     """Evaluate candidates with per-candidate atomic checkpoints and deterministic resume."""
@@ -113,43 +105,38 @@ def run_symbol_cycle(
         direction = spec.get("direction")
         if direction is not None and str(direction).upper() not in DIRECTIONS:
             raise ValueError(f"unsupported candidate direction: {direction}")
+        if "genome" in spec:
+            StrategyGenome.from_dict(spec["genome"])
     pool_hash = _canonical_hash(specs)
     missing = {"code_hash", "config_hash", "dataset_hash"} - set(checkpoint_metadata)
     if missing:
         raise ValueError(f"checkpoint_metadata missing required keys: {sorted(missing)}")
-    metadata = {**dict(checkpoint_metadata), "symbol": symbol,
-                "cycle_id": cycle_id, "candidate_pool_hash": pool_hash}
+    metadata = {**dict(checkpoint_metadata), "symbol": symbol, "cycle_id": cycle_id, "candidate_pool_hash": pool_hash}
     path = Path(checkpoint_path)
     completed: dict[str, dict[str, Any]] = {}
     if path.exists():
         restored = load_checkpoint(path, expected_metadata=metadata)
         completed = dict(restored["payload"].get("completed", {}))
     for index, spec in enumerate(specs):
-        candidate_id = _candidate_id(spec)
-        if candidate_id in completed:
+        cid = _candidate_id(spec)
+        if cid in completed:
             continue
         result = evaluator(spec)
         if not isinstance(result, Mapping):
             raise TypeError("candidate evaluator must return a mapping")
         _to_signal_candidate(symbol, spec, result)
-        completed[candidate_id] = dict(result)
-        save_checkpoint(
-            path, metadata=metadata,
-            payload={"completed": completed, "status": "RUNNING",
-                     "next_candidate_id": (_candidate_id(specs[index + 1])
-                                           if index + 1 < len(specs) else None)},
-        )
-    signal_candidates = [
-        _to_signal_candidate(symbol, spec, completed[_candidate_id(spec)])
-        for spec in specs
-    ]
-    decision = select_cycle_signals(signal_candidates, policy=policy)[symbol]
-    save_checkpoint(
-        path, metadata=metadata,
-        payload={"completed": completed, "status": "COMPLETED",
-                 "winner_candidate_id": decision.winner.candidate_id if decision.winner else None,
-                 "winner_method": decision.winner.method if decision.winner else None,
-                 "winner_direction": decision.winner.direction if decision.winner else None,
-                 "winner_score": decision.winner.final_score if decision.winner else None},
-    )
+        completed[cid] = dict(result)
+        save_checkpoint(path, metadata=metadata, payload={
+            "completed": completed, "status": "RUNNING",
+            "next_candidate_id": _candidate_id(specs[index + 1]) if index + 1 < len(specs) else None,
+        })
+    signals = [_to_signal_candidate(symbol, spec, completed[_candidate_id(spec)]) for spec in specs]
+    decision = select_cycle_signals(signals, policy=policy)[symbol]
+    save_checkpoint(path, metadata=metadata, payload={
+        "completed": completed, "status": "COMPLETED",
+        "winner_candidate_id": decision.winner.candidate_id if decision.winner else None,
+        "winner_method": decision.winner.method if decision.winner else None,
+        "winner_direction": decision.winner.direction if decision.winner else None,
+        "winner_score": decision.winner.final_score if decision.winner else None,
+    })
     return decision
