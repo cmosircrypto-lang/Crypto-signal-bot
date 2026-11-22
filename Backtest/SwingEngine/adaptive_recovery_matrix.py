@@ -18,6 +18,7 @@ from okx_contract_specs import OKXContractSpecs
 
 
 RISK_CAPS = (3.0, 5.0, None)
+BTC_FILTER_MODES = ("1d_4h", "1d_4h_1h")
 METHODS = ("unlimited_until_tp_or_equity_wipeout",)
 
 
@@ -52,13 +53,16 @@ def run():
 
     summaries = []
     started = time.monotonic()
-    total = len(METHODS) * len(RISK_CAPS)
+    total = len(METHODS) * len(BTC_FILTER_MODES) * len(RISK_CAPS)
     scenario = 0
+    checkpoint_dir = out / "checkpoints"
+    checkpoint_dir.mkdir(parents=True, exist_ok=True)
     for method in METHODS:
+      for filter_mode in BTC_FILTER_MODES:
         for cap in RISK_CAPS:
             scenario += 1
             cap_label = "uncapped" if cap is None else f"{int(cap)}pct"
-            label = f"all76_target_profit_{method}_portfolio_{cap_label}"
+            label = f"all76_target_profit_{method}_btc_{filter_mode}_portfolio_{cap_label}"
             cfg = {
                 "objective": "initial_target_profit",
                 "sizing_method": "exact_recovery",
@@ -82,12 +86,26 @@ def run():
                         flush=True,
                     )
 
+            summary_path = out / f"summary_{label}.json"
+            trades_path = out / f"trades_{label}.csv"
+            cycles_path = out / f"cycles_{label}.csv"
+            skips_path = out / f"skips_{label}.csv"
+            if all(p.exists() for p in (summary_path, trades_path, cycles_path, skips_path)):
+                summary = json.loads(summary_path.read_text(encoding="utf-8"))
+                summaries.append(summary)
+                print(f"[CHECKPOINT] Skipping completed scenario {scenario}/{total}: {label}", flush=True)
+                continue
             summary, trades, cycles, skips = _simulate(
                 subset_data, subset_signals, obs, specs, btc_frames,
                 2.0, 2.0, "all_76", cfg, report,
+                filter_mode=filter_mode,
+                checkpoint_path=checkpoint_dir / f"{label}.pkl",
+                checkpoint_interval=1000,
             )
             summary.update({
                 "scenario": label,
+                "btc_filter_mode": filter_mode,
+                "btc_filter_timeframes": ["1d", "4h"] if filter_mode == "1d_4h" else ["1d", "4h", "1h"],
                 "recovery_method": method,
                 "recovery_objective": "initial_target_profit",
                 "recovery_sizing": "exact_recovery",
@@ -108,10 +126,10 @@ def run():
                     "maintenance-margin liquidation"
                 ),
             })
-            trades.to_csv(out / f"trades_{label}.csv", index=False)
-            cycles.to_csv(out / f"cycles_{label}.csv", index=False)
-            skips.to_csv(out / f"skips_{label}.csv", index=False)
-            (out / f"summary_{label}.json").write_text(
+            trades.to_csv(trades_path, index=False)
+            cycles.to_csv(cycles_path, index=False)
+            skips.to_csv(skips_path, index=False)
+            summary_path.write_text(
                 json.dumps(summary, indent=2, default=str), encoding="utf-8"
             )
             summaries.append(summary)
