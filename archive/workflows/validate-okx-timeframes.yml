@@ -1,0 +1,207 @@
+
+name: Validate OKX 1H and 4H Data
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install pandas numpy
+
+      - name: Download datasets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download okx-data --repo "${GITHUB_REPOSITORY}" --pattern "okx_data.tar" --dir /tmp
+          gh release download okx-data --repo "${GITHUB_REPOSITORY}" --pattern "okx_timeframes.tar" --dir /tmp
+          mkdir -p Backtest/data/okx
+          tar -xf /tmp/okx_data.tar -C Backtest/data/okx
+          tar -xf /tmp/okx_timeframes.tar -C Backtest/data/okx
+
+      - name: Rebuild and compare candles
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import numpy as np
+          import pandas as pd
+
+          BASE = Path("Backtest/data/okx")
+          COLS = ["ts", "open", "high", "low", "close", "volume"]
+          BASE_MS = 900_000
+          FRAMES = {"1h": 4, "4h": 16}
+          SOURCE = {p.name: p for p in (BASE / "15m").glob("*.csv.gz")}
+          REPORT = []
+          ERRORS = []
+
+          if len(SOURCE) != 76:
+              ERRORS.append(f"Expected 76 symbols, found {len(SOURCE)}")
+
+          def load_csv(path):
+              df = pd.read_csv(path, compression="gzip")
+              missing = [c for c in COLS if c not in df.columns]
+              if missing:
+                  raise ValueError(f"Missing columns: {missing}")
+              df = df[COLS].copy()
+              for col in COLS:
+                  df[col] = pd.to_numeric(df[col], errors="coerce")
+              if df.isna().any().any():
+                  raise ValueError("Null or non-numeric values")
+              if not np.isfinite(df[COLS].to_numpy(dtype=float)).all():
+                  raise ValueError("Non-finite values")
+              if df["ts"].duplicated().any():
+                  raise ValueError("Duplicate timestamps")
+              if not df["ts"].is_monotonic_increasing:
+                  raise ValueError("Timestamps not ordered")
+              if (df["ts"] % BASE_MS != 0).any():
+                  raise ValueError("Timestamp misalignment")
+              if (df["volume"] < 0).any():
+                  raise ValueError("Negative volume")
+              if (df["high"] < df[["open", "close", "low"]].max(axis=1)).any():
+                  raise ValueError("Invalid high")
+              if (df["low"] > df[["open", "close", "high"]].min(axis=1)).any():
+                  raise ValueError("Invalid low")
+              return df
+
+          for filename, source_path in sorted(SOURCE.items()):
+              try:
+                  src = load_csv(source_path)
+                  ts = src["ts"].astype("int64")
+                  symbol = filename.removesuffix(".csv.gz")
+
+                  for timeframe, factor in FRAMES.items():
+                      target_ms = BASE_MS * factor
+                      expected_rows = []
+                      buckets = (ts // target_ms) * target_ms
+                      dropped = 0
+
+                      for bucket, group in src.groupby(buckets, sort=True):
+                          actual_ts = group["ts"].astype("int64").tolist()
+                          wanted_ts = [
+                              int(bucket) + i * BASE_MS
+                              for i in range(factor)
+                          ]
+                          if actual_ts != wanted_ts:
+                              dropped += 1
+                              continue
+
+                          expected_rows.append({
+                              "ts": int(bucket),
+                              "open": float(group["open"].iloc[0]),
+                              "high": float(group["high"].max()),
+                              "low": float(group["low"].min()),
+                              "close": float(group["close"].iloc[-1]),
+                              "volume": float(group["volume"].sum()),
+                          })
+
+                      expected = pd.DataFrame(expected_rows, columns=COLS)
+                      output_path = BASE / timeframe / filename
+                      if not output_path.exists():
+                          raise ValueError(f"{timeframe} file missing")
+
+                      actual = load_csv(output_path)
+                      if len(actual) != len(expected):
+                          raise ValueError(
+                              f"{timeframe} row mismatch: "
+                              f"{len(actual)} vs {len(expected)}"
+                          )
+
+                      if len(actual):
+                          if (actual["ts"] % target_ms != 0).any():
+                              raise ValueError(f"{timeframe} misalignment")
+
+                          if not np.array_equal(
+                              actual["ts"].to_numpy(dtype=np.int64),
+                              expected["ts"].to_numpy(dtype=np.int64)
+                          ):
+                              raise ValueError(f"{timeframe} timestamps mismatch")
+
+                          for col in ["open", "high", "low", "close", "volume"]:
+                              a = actual[col].to_numpy(dtype=float)
+                              e = expected[col].to_numpy(dtype=float)
+                              if not np.allclose(a, e, rtol=1e-10, atol=1e-12):
+                                  bad = np.flatnonzero(
+                                      ~np.isclose(a, e, rtol=1e-10, atol=1e-12)
+                                  )
+                                  i = int(bad[0])
+                                  raise ValueError(
+                                      f"{timeframe} {col} mismatch at row {i}"
+                                  )
+
+                      REPORT.append({
+                          "symbol": symbol,
+                          "timeframe": timeframe,
+                          "source_15m": len(src),
+                          "expected_candles": len(expected),
+                          "actual_candles": len(actual),
+                          "incomplete_groups_excluded": dropped,
+                          "ohlcv_match": True,
+                          "status": "OK"
+                      })
+
+              except Exception as exc:
+                  ERRORS.append(f"{filename}: {exc}")
+                  REPORT.append({
+                      "symbol": filename,
+                      "timeframe": "ALL",
+                      "status": "ERROR",
+                      "error": str(exc)
+                  })
+
+          for timeframe in FRAMES:
+              expected_names = set(SOURCE)
+              actual_names = {
+                  p.name for p in (BASE / timeframe).glob("*.csv.gz")
+              }
+              if expected_names != actual_names:
+                  ERRORS.append(f"{timeframe} file set mismatch")
+
+          report = pd.DataFrame(REPORT)
+          Path("reports").mkdir(exist_ok=True)
+          report.to_csv(
+              "reports/okx_timeframe_validation.csv",
+              index=False
+          )
+          Path("reports/okx_timeframe_validation.md").write_text(
+               report.to_string(index=False),
+               encoding="utf-8"
+          )
+          print(report.to_string(index=False))
+
+          for timeframe in FRAMES:
+              subset = report[report["timeframe"] == timeframe]
+              ok = int((subset["status"] == "OK").sum())
+              print(f"SUMMARY {timeframe}: {ok}/76 passed")
+              if ok != 76:
+                  ERRORS.append(f"{timeframe}: {ok}/76 passed")
+
+          if ERRORS:
+              print("\nVALIDATION ERRORS:")
+              for error in ERRORS:
+                  print("-", error)
+              raise SystemExit(1)
+
+          print("PASS: All 1H and 4H OHLCV candles match 15m reconstruction.")
+          PY
+
+      - name: Upload validation report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: okx-timeframe-validation-report
+          path: reports/
+          if-no-files-found: warn
+          retention-days: 30
