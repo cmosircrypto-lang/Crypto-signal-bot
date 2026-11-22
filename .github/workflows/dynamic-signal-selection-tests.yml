@@ -6,7 +6,7 @@ on:
       - experiment/dynamic-signal-selection-design
     paths:
       - "Backtest/GeneticEngine/**"
-      - ".github/workflows/dynamic-signal-selection-tests.yml"
+      - ".github/workflows/dynamic-signal-selection-tests.yml"\n      - ".github/workflows/genetic-family-smoke.yml"
   workflow_dispatch:
 
 permissions:
@@ -53,3 +53,59 @@ jobs:
         run: python -m unittest Backtest.GeneticEngine.tests.test_evolution
       - name: Test existing genome contract
         run: python -m unittest Backtest.GeneticEngine.tests.test_genome
+
+  family-smoke:
+    if: github.event_name == 'push' && contains(github.event.head_commit.message, 'Run BNB family smoke')
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout research branch
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install research dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pandas numpy
+      - name: Download validated 76-symbol OKX dataset
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download okx-data --repo "${GITHUB_REPOSITORY}" --pattern "okx_data.tar" --dir /tmp
+          gh release download okx-data --repo "${GITHUB_REPOSITORY}" --pattern "okx_timeframes.tar" --dir /tmp
+          mkdir -p Backtest/data/okx
+          tar -xf /tmp/okx_data.tar -C Backtest/data/okx
+          tar -xf /tmp/okx_timeframes.tar -C Backtest/data/okx
+          for timeframe in 15m 1h 4h; do
+            count=$(find "Backtest/data/okx/$timeframe" -maxdepth 1 -name '*.csv.gz' | wc -l)
+            echo "$timeframe: $count symbol files"
+            test "$count" -eq 76
+          done
+      - name: Run BNB independent LONG and SHORT genetic smoke
+        run: |
+          set -o pipefail
+          python -u -m Backtest.GeneticEngine.run_genetic_research \
+            --profile smoke --symbols BNB-USDT-SWAP --population 8 --generations 2 \
+            | tee /tmp/genetic-family-smoke.log
+      - name: Add smoke report to summary
+        if: always()
+        run: |
+          if [ -f /tmp/genetic-family-smoke.log ]; then
+            {
+              echo "## BNB family-genetic smoke"
+              tail -n 100 /tmp/genetic-family-smoke.log
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Upload smoke checkpoints and summary
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: genetic-family-bnb-smoke
+          path: |
+            Backtest/results/genetic_family_checkpoints/
+            Backtest/results/genetic_family_summary.json
+            /tmp/genetic-family-smoke.log
+          if-no-files-found: warn
+          retention-days: 30
