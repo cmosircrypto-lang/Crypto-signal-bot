@@ -11,9 +11,9 @@ from Backtest.GeneticEngine.genome import StrategyGenome
 from Backtest.GeneticEngine.checkpoint import CheckpointCompatibilityError
 
 
-def valid_result(setup=0.85):
+def valid_result(setup=0.85, direction="LONG"):
     return {
-        "direction": "LONG",
+        "direction": direction,
         "signal_timestamp": "2026-11-22T12:00:00Z",
         "historical": {
             "average_r": 0.4, "max_drawdown_pct": 8.0,
@@ -28,16 +28,18 @@ def valid_result(setup=0.85):
 
 
 class DynamicCycleRunnerTests(unittest.TestCase):
-    def test_genome_population_expands_to_single_method_symbol_candidates(self):
+    def test_genome_population_expands_each_method_into_both_directions(self):
         genome = StrategyGenome(
             entry_methods=("DIRECT", "ENGULFING", "PIN_BAR"),
             zone_type="wick", touch_rule="max_two",
             btc_filter_mode="1d_4h", require_4h_alignment=True,
         )
         pool = build_symbol_candidate_pool("bnb", [genome])
-        self.assertEqual(len(pool), 7)  # three evolved variants plus four guaranteed baselines
+        self.assertEqual(len(pool), 14)  # seven methods x independently evaluated LONG/SHORT
         self.assertEqual({item["method"] for item in pool},
                          {"DIRECT", "ENGULFING", "PIN_BAR", "M15_STRUCTURE_BREAK"})
+        self.assertEqual({item["direction"] for item in pool}, {"LONG", "SHORT"})
+        self.assertEqual(len({item["candidate_id"] for item in pool}), len(pool))
         for item in pool:
             self.assertEqual(item["genome"]["symbols"], ["BNB"])
             self.assertEqual(len(item["genome"]["entry_methods"]), 1)
@@ -75,6 +77,39 @@ class DynamicCycleRunnerTests(unittest.TestCase):
             self.assertEqual(resumed_calls, ["engulf", "pin"])
             self.assertEqual(decision.status, "SELECTED")
             self.assertEqual(decision.winner.candidate_id, "pin")
+
+    def test_long_and_short_are_ranked_independently_before_symbol_winner(self):
+        with tempfile.TemporaryDirectory() as directory:
+            candidates = [
+                {"candidate_id": "long", "method": "EMA_CROSS", "direction": "LONG"},
+                {"candidate_id": "short", "method": "EMA_CROSS", "direction": "SHORT"},
+            ]
+            results = {
+                "long": valid_result(setup=0.75, direction="LONG"),
+                "short": valid_result(setup=0.95, direction="SHORT"),
+            }
+            decision = run_symbol_cycle(
+                symbol="BNB", cycle_id="direction-cycle", candidates=candidates,
+                evaluator=lambda spec: results[spec["candidate_id"]],
+                checkpoint_path=Path(directory) / "BNB.json",
+                checkpoint_metadata={"code_hash": "c1", "config_hash": "cfg1",
+                                     "dataset_hash": "d1"},
+            )
+            self.assertEqual(decision.winner.direction, "SHORT")
+            self.assertEqual(decision.winner.candidate_id, "short")
+
+    def test_direction_mismatch_is_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(ValueError, "direction-specific evaluator mismatch"):
+                run_symbol_cycle(
+                    symbol="ADA", cycle_id="bad-direction",
+                    candidates=[{"candidate_id": "short", "method": "DIRECT",
+                                 "direction": "SHORT"}],
+                    evaluator=lambda _: valid_result(direction="LONG"),
+                    checkpoint_path=Path(directory) / "ADA.json",
+                    checkpoint_metadata={"code_hash": "c1", "config_hash": "cfg1",
+                                         "dataset_hash": "d1"},
+                )
 
     def test_different_cycle_or_dataset_rejects_old_checkpoint(self):
         with tempfile.TemporaryDirectory() as directory:
