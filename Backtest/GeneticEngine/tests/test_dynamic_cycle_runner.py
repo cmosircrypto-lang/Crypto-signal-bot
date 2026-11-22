@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from Backtest.GeneticEngine.dynamic_cycle_runner import (\n    build_symbol_candidate_pool, run_symbol_cycle,\n)\nfrom Backtest.GeneticEngine.genome import StrategyGenome
+from Backtest.GeneticEngine.dynamic_cycle_runner import (\n    build_symbol_candidate_pool, run_symbol_cycle,\n)\nfrom Backtest.GeneticEngine.genome import StrategyGenome\nfrom Backtest.GeneticEngine.checkpoint import CheckpointCompatibilityError
 
 
 def valid_result(setup=0.85):
@@ -93,7 +93,7 @@ class DynamicCycleRunnerTests(unittest.TestCase):
                 checkpoint_metadata={"code_hash": "code-v1", "config_hash": "cfg-v1", "dataset_hash": "data-v1"},
             )
             run_symbol_cycle(**kwargs)
-            with self.assertRaises(Exception):
+            with self.assertRaises(CheckpointCompatibilityError):
                 run_symbol_cycle(**{**kwargs, "cycle_id": "cycle-2"})
 
     def test_no_current_setup_means_no_signal(self):
