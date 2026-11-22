@@ -27,6 +27,8 @@ class FoldResult:
     average_r: float
     profit_factor: float
     max_drawdown_pct: float
+    gross_profit: float
+    gross_loss: float
 
 
 def _frames_of(value: Any) -> Mapping[str, pd.DataFrame]:
@@ -153,7 +155,7 @@ def _simulate_fold(
         if not signal:
             continue
         signature = (
-            signal.get("method", ""), signal.get("signal_timestamp", ""),
+            signal.get("method", ""), tuple(sorted(signal.get("family_signal_timestamps", {}).items())),
             tuple(signal.get("families_agreed", ())),
         )
         if signature in seen_signatures:
@@ -244,6 +246,7 @@ def _simulate_fold(
         net_pnl=equity-initial_equity,
         average_r=sum(r_values)/len(r_values) if r_values else 0.0,
         profit_factor=min(float(pf), 10.0), max_drawdown_pct=max_dd,
+        gross_profit=gross_profit, gross_loss=gross_loss,
     )
 
 
@@ -283,10 +286,8 @@ def evaluate_candidate_walk_forward(
             initial_equity=initial_equity, swing_signal_provider=swing_signal_provider,
         ))
     trades = sum(f.trade_count for f in fold_results)
-    total_profit = sum(max(0.0, f.net_pnl) for f in fold_results)
-    total_loss = sum(max(0.0, -f.net_pnl) for f in fold_results)
-    # Aggregate fold PF from net fold PnL is conservative but not identical to
-    # trade-level PF; retain fold-level totals to avoid storing every trade row.
+    total_profit = sum(f.gross_profit for f in fold_results)
+    total_loss = sum(f.gross_loss for f in fold_results)
     pf = total_profit/total_loss if total_loss > 0 else (10.0 if total_profit > 0 else 0.0)
     r_weighted = sum(f.average_r*f.trade_count for f in fold_results)/trades if trades else 0.0
     positive_ratio = sum(f.net_pnl > 0 for f in fold_results)/len(fold_results) if fold_results else 0.0
@@ -307,7 +308,4 @@ def evaluate_candidate_walk_forward(
         "trade_count": int(trades),
         "validation_score": float(validation_score),
         "complexity_penalty": float(complexity_penalty),
-        "fold_count": int(len(fold_results)),
-        "development_end_index": int(development_end),
-        "oos_excluded_start_index": int(development_end),
     }
