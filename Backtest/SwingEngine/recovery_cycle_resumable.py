@@ -119,15 +119,29 @@ def _update_open_risk_peaks(system, max_amount, max_percent):
 
 
 def _btc_filter_matches(trend, direction, filter_mode):
-    """Causal BTC trend gate for the selected closed-timeframe combination."""
+    """Causal BTC trend gate; neutral fallback and non-opposing modes are research-only."""
     mode = filter_mode or FILTER_MODE
+    daily = trend.get("1d")
+    four_hour = trend.get("4h")
+    neutral = ("NEUTRAL", "UNAVAILABLE", None, "")
     if mode == "1d_4h":
-        required = ("1d", "4h")
-    elif mode == "1d_4h_1h":
-        required = ("1d", "4h", "1h")
-    else:
-        raise ValueError(f"Unsupported BTC filter mode: {mode}")
-    return all(trend.get(timeframe) == direction for timeframe in required)
+        return daily == direction and four_hour == direction
+    if mode == "1d_neutral_fallback":
+        # Preserve strict agreement whenever daily BTC has a directional trend.
+        # If daily is neutral/unavailable, let the closed 4h trend decide.
+        if daily == direction:
+            return four_hour == direction
+        if daily in neutral:
+            return four_hour == direction
+        return False
+    if mode == "either_nonopposing":
+        # At least one timeframe must agree; neither may oppose the signal.
+        return (daily == direction or four_hour == direction) and (
+            daily in (direction, *neutral) and four_hour in (direction, *neutral)
+        )
+    if mode == "1d_4h_1h":
+        return all(trend.get(tf) == direction for tf in ("1d", "4h", "1h"))
+    raise ValueError(f"Unsupported BTC filter mode: {mode}")
 
 
 def _levels(signal, atr_multiple, rr):
@@ -820,7 +834,7 @@ def _simulate_multi_cycle(data, signals, obs, specs, btc_frames, atr_multiple, r
         "max_simultaneous_positions": max_simultaneous_positions,
         "max_simultaneous_positions_limit": 2,
         "filter_mode": filter_mode or FILTER_MODE,
-        "required_btc_trend_timeframes": ["1d", "4h"],
+        "required_btc_trend_timeframes": (["1d", "4h"] if (filter_mode or FILTER_MODE) == "1d_4h" else ["1d", "4h"]),
         "risk_percent_base": RISK_PERCENT,
         "open_trades_at_end": len(system.execution.open_positions),
         "max_open_per_symbol": 1,
