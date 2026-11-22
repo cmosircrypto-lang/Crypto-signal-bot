@@ -11,6 +11,10 @@ on:
       - ".github/workflows/adaptive-recovery-matrix.yml"
   workflow_dispatch:
 
+concurrency:
+  group: adaptive-recovery-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
   actions: read
