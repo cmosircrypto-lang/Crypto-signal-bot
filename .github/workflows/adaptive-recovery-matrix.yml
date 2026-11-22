@@ -1,4 +1,4 @@
-name: Adaptive Recovery — 76 Symbols — Target Profit
+name: Adaptive Recovery — 76 Symbols — BTC Filter × Risk Matrix
 
 on:
   push:
@@ -73,20 +73,35 @@ jobs:
           cp "$cache" Backtest/results/recovery_adaptive_matrix/prepared_oos_cache.pkl
           ls -lh Backtest/results/recovery_adaptive_matrix/prepared_oos_cache.pkl
 
+      - name: Restore in-simulation checkpoints
+        uses: actions/cache/restore@v4
+        with:
+          path: Backtest/results/recovery_adaptive_matrix/checkpoints
+          key: adaptive-recovery-checkpoints-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            adaptive-recovery-checkpoints-
+
       - name: Compile and test recovery engine
         run: |
-          python -m py_compile Backtest/SwingEngine/recovery_cycle_resumable.py Backtest/SwingEngine/adaptive_recovery_matrix.py
+          python -m py_compile Backtest/SwingEngine/recovery_cycle_resumable.py Backtest/SwingEngine/adaptive_recovery_matrix.py Backtest/SwingEngine/recovery_robustness_validation.py
           python Backtest/SwingEngine/test_recovery_cycle_experiment.py
 
-      - name: Run two adaptive recovery scenarios
+      - name: Run six adaptive recovery scenarios
         run: |
           set -o pipefail
           python -u Backtest/SwingEngine/adaptive_recovery_matrix.py | tee /tmp/adaptive-recovery.log
 
+      - name: Save in-simulation checkpoints
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: Backtest/results/recovery_adaptive_matrix/checkpoints
+          key: adaptive-recovery-checkpoints-${{ github.run_id }}-${{ github.run_attempt }}
+
       - name: Publish summary
         if: always()
         run: |
-          echo "## Adaptive recovery — 76 symbols" >> "$GITHUB_STEP_SUMMARY"
+          echo "## Adaptive recovery — 76 symbols — two BTC filters × three risk caps" >> "$GITHUB_STEP_SUMMARY"
           if [ -f Backtest/results/recovery_adaptive_matrix/adaptive_recovery_summary.csv ]; then
             python - <<'PY' >> "$GITHUB_STEP_SUMMARY"
           import pandas as pd
