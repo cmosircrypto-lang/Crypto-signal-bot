@@ -68,14 +68,14 @@ jobs:
           python -m py_compile Backtest/SwingEngine/recovery_cycle_resumable.py Backtest/SwingEngine/recovery_robustness_validation.py Backtest/SwingEngine/test_recovery_robustness_validation.py
           python Backtest/SwingEngine/test_recovery_cycle_experiment.py
           python Backtest/SwingEngine/test_recovery_robustness_validation.py
-      - name: Run six independent period/cap simulations
+      - name: Run nine independent period/cap simulations
         run: |
           set -o pipefail
           python -u Backtest/SwingEngine/recovery_robustness_validation.py | tee /tmp/recovery-robustness.log
       - name: Publish summary
         if: always()
         run: |
-          echo "## Recovery robustness — three independent OOS periods" >> "$GITHUB_STEP_SUMMARY"
+          echo "## Recovery robustness — three periods × three risk caps (fixed $1 cycle target)" >> "$GITHUB_STEP_SUMMARY"
           if [ -f Backtest/results/recovery_robustness/recovery_robustness_summary.csv ]; then
             python - <<'PY' >> "$GITHUB_STEP_SUMMARY"
           import pandas as pd
