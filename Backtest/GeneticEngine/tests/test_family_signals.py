@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from unittest.mock import patch
 import pandas as pd
 
 from Backtest.GeneticEngine.family_signals import evaluate_genome_signals
@@ -76,20 +77,24 @@ class FamilySignalTests(unittest.TestCase):
                "setup_quality":0.8,"signal_timestamp":"t1","candle_closed":True}
         self.assertIsNone(evaluate_genome_signals({},genome,"LONG",swing_signal=swing))
 
-    def test_vote_combines_two_real_families_and_tracks_agreement(self):
-        frames={"1h":squeeze_breakout_frame()}
+    def test_vote_combines_agreeing_family_signals_and_tracks_votes(self):
         genome=StrategyGenome(signal_families=("MOMENTUM_BREAKOUT","VOLATILITY_SQUEEZE"),
-            family_combination="VOTE",min_family_agreement=2,
-            momentum_lookback=20,momentum_breakout_buffer_atr=0.0,
-            momentum_min_adx=14.0,momentum_volume_mult=0.8,
-            squeeze_bb_period=20,squeeze_width_percentile=30.0,
-            squeeze_expansion_atr=1.2)
-        result=evaluate_genome_signals(frames,genome,"LONG")
+            family_combination="VOTE",min_family_agreement=2)
+        def fake(family, frames, candidate, direction, btc_frames=None, swing_signal=None):
+            risk,reward,quality=(2.0,4.0,0.8) if family=="MOMENTUM_BREAKOUT" else (3.0,6.0,0.6)
+            return {"family":family,"direction":direction,"signal_timestamp":"t1",
+                "entry":100.0,"stop_loss":100-risk,"take_profit":100+reward,
+                "risk_distance":risk,"reward_distance":reward,"rr":reward/risk,
+                "setup_quality":quality,"candle_closed":True}
+        with patch("Backtest.GeneticEngine.family_signals._evaluate_one",side_effect=fake):
+            result=evaluate_genome_signals({},genome,"LONG")
         self.assertIsNotNone(result)
         self.assertEqual(result["family_votes"],2)
         self.assertEqual(set(result["families_agreed"]),
                          {"MOMENTUM_BREAKOUT","VOLATILITY_SQUEEZE"})
-        self.assertAlmostEqual(result["rr"],2.0,places=6)
+        self.assertAlmostEqual(result["risk_distance"],3.0)
+        self.assertAlmostEqual(result["reward_distance"],6.0)
+        self.assertAlmostEqual(result["rr"],2.0)
         self.assertTrue(result["candle_closed"])
 
     def test_future_rows_are_not_needed_for_current_signal(self):
