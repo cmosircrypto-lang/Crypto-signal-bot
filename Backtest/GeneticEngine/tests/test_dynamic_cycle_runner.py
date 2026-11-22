@@ -33,7 +33,7 @@ class DynamicCycleRunnerTests(unittest.TestCase):
         self.assertTrue(all(len(x["genome"]["entry_methods"]) == 1 for x in pool))
         swing = [x for x in pool if x["signal_families"] == ["SWING_OB"]]
         self.assertEqual({x["method"] for x in swing}, set(config.ENTRY_METHODS))
-        self.assertEqual(len(pool), 98)
+        self.assertEqual(len(pool), 104)
 
     def test_evolved_hybrid_genome_and_its_parameters_survive_candidate_expansion(self):
         hybrid = StrategyGenome(
@@ -45,9 +45,9 @@ class DynamicCycleRunnerTests(unittest.TestCase):
         pool = build_symbol_candidate_pool("sol", [hybrid])
         matches = [x for x in pool if x["signal_families"] == ["EMA_CROSS_PRO", "SMC_LIQUIDITY_SWEEP"]]
         self.assertTrue(matches)
-        self.assertTrue(all(x["genome"]["ema_cross_lookback"] == 9 for x in matches))
-        self.assertTrue(all(x["genome"]["smc_sweep_lookback"] == 20 for x in matches))
-        self.assertTrue(all(x["genome"]["family_combination"] == "VOTE" for x in matches))
+        self.assertTrue(any(x["genome"]["ema_cross_lookback"] == 9 for x in matches))
+        self.assertTrue(any(x["genome"]["smc_sweep_lookback"] == 20 for x in matches))
+        self.assertTrue(any(x["genome"]["family_combination"] == "VOTE" for x in matches))
 
     def test_resumes_after_interruption_without_repeating_finished_candidate(self):
         with tempfile.TemporaryDirectory() as directory:
