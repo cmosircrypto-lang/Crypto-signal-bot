@@ -65,6 +65,9 @@ jobs:
       - name: Test Genetic Strategy Engine genome schema
         run: python -m unittest Backtest.GeneticEngine.tests.test_genome
 
+      - name: Test Dynamic Signal Selection and Checkpointing
+        run: python -m unittest Backtest.GeneticEngine.tests.test_dynamic_selection
+
       - name: Test Genetic Strategy Engine baseline parity
         run: python Backtest/GeneticEngine/tests/test_default_parity.py
 
