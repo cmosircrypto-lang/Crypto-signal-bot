@@ -147,8 +147,8 @@ def run():
     (out / "README.md").write_text(
         "# Serialized unlimited recovery — 76-symbol OOS\n\n"
         f"- OOS cutoff: {CUTOFF_UTC}\n"
-        "- Same 76-symbol universe, signals, ATR 2.0, RR 2.0 and base risk 0.5%.\\n"
-        "- BTC filter comparison: 1D+4H versus 1D+4H+1H; all other inputs are held constant.\\n"
+        "- Same 76-symbol universe, signals, ATR 2.0, RR 2.0 and base risk 0.5%.\n"
+        "- BTC filter comparison: 1D+4H versus 1D+4H+1H; all other inputs are held constant.\n"
         "- Recovery objective: initial-trade target profit; exact recovery sizing.\n"
         "- Three scenarios per BTC filter: unlimited recovery with aggregate open-risk caps of 3%, 5%, and no aggregate cap.\n"
         "- Exactly one open position across the entire portfolio. After an SL, the next eligible signal from any of the 76 symbols may continue the single active recovery cycle.\n"
