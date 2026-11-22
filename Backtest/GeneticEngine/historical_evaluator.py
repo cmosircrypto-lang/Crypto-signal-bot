@@ -71,9 +71,12 @@ def build_complete_btc_daily(hourly: Any) -> pd.DataFrame:
 
 
 def _closed_slice(frame: pd.DataFrame, timeframe: str, decision_ms: int, limit: int = 500) -> pd.DataFrame:
+    """Binary-search the last fully closed bar; avoid rescanning the whole history."""
     duration = TF_MS[timeframe]
-    closed = frame.loc[frame["timestamp"] + duration <= int(decision_ms)]
-    return closed.tail(limit).reset_index(drop=True)
+    close_times = frame["timestamp"].to_numpy(dtype="int64") + duration
+    end = int(close_times.searchsorted(int(decision_ms), side="right"))
+    start = max(0, end-limit)
+    return frame.iloc[start:end].reset_index(drop=True)
 
 
 def _find_btc_frames(all_data: Mapping[str, Any] | None) -> dict[str, pd.DataFrame] | None:
