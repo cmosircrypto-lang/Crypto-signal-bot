@@ -9,7 +9,8 @@ from recovery_cycle_resumable import CUTOFF_UTC, INITIAL_CAPITAL, _simulate
 from data_loader import TIMEFRAME_MS
 from okx_contract_specs import OKXContractSpecs
 
-RISK_CAPS=(3.0,5.0,None)
+RISK_CAP=3.0
+TARGET_PROFITS=(0.5,1.0,2.0)
 PERIODS=3
 ATR_MULTIPLE=2.0
 REWARD_RATIO=2.0
@@ -71,19 +72,19 @@ def run():
     start,end=_dataset_time_bounds(data)
     ranges=_segment_ranges(start,end,PERIODS)
     specs=OKXContractSpecs(); specs.load()
-    rows=[]; started=time.monotonic(); total=PERIODS*len(RISK_CAPS); run_no=0
+    rows=[]; started=time.monotonic(); total=PERIODS*len(TARGET_PROFITS); run_no=0
     for period,(a,b) in enumerate(ranges,1):
         d,s,counts=_slice_period(data,signals,a,b)
         if counts["segment_candle_count"]==0: raise ValueError(f"Period {period} has no candles")
-        for cap in RISK_CAPS:
+        for target_profit in TARGET_PROFITS:
             run_no+=1
-            cap_label = "uncapped" if cap is None else f"{int(cap)}pct"
-            label=f"period_{period}_{_utc(a)[:10]}_to_{_utc(b-1)[:10]}_portfolio_{cap_label}"
+            target_label = str(target_profit).replace(".", "p")
+            label=f"period_{period}_{_utc(a)[:10]}_to_{_utc(b-1)[:10]}_target_{target_label}_risk_3pct"
             cfg={"objective":"initial_target_profit","sizing_method":"exact_recovery",
-                "max_recovery_trades":None,"portfolio_open_risk_cap_percent":cap,
+                "max_recovery_trades":None,"portfolio_open_risk_cap_percent":RISK_CAP,
                 "max_total_positions":1,"max_buy_positions":1,"max_sell_positions":1,
                 "single_position_global":True,"keep_cycle_when_risk_blocked":True,
-                "smart_balance_cap":False,"recovery_target_profit":1.0}
+                "smart_balance_cap":False,"recovery_target_profit":target_profit}
             def report(done,count,ts):
                 if done==count or done%max(1,count//10)==0:
                     print(f"[PROGRESS] {run_no}/{total} {label}: {done}/{count}",flush=True)
@@ -95,9 +96,9 @@ def run():
                 "segment_symbols":len(selected),"segment_initial_equity":INITIAL_CAPITAL,
                 "periods_are_independent":True,
                 "recovery_method":"unlimited_until_tp_or_equity_wipeout",
-                "recovery_objective":"fixed_1_usd_cycle_profit","recovery_target_profit_usd":1.0,
+                "recovery_objective":"fixed_target_profit_per_cycle","recovery_target_profit_usd":target_profit,
                 "recovery_sizing":"exact_recovery",
-                "portfolio_open_risk_cap_percent":cap,
+                "portfolio_open_risk_cap_percent":RISK_CAP,"tested_cycle_profit_target_usd":target_profit,
                 "max_simultaneous_positions_limit":1,"single_position_global":True,
                 "atr_multiple":ATR_MULTIPLE,"reward_ratio":REWARD_RATIO,
                 "fee_rate":0.0,"slippage_rate":0.0,"funding_cost":0.0,
@@ -115,7 +116,7 @@ def run():
     df=pd.DataFrame(rows)
     df.to_csv(out/"recovery_robustness_summary.csv",index=False)
     manifest={"oos_cutoff_utc":CUTOFF_UTC,"periods":PERIODS,
-        "risk_caps_percent":list(RISK_CAPS),"runs":total,
+        "risk_cap_percent":RISK_CAP,"cycle_profit_targets_usd":list(TARGET_PROFITS),"runs":total,
         "period_ranges_utc":[{"start":_utc(a),"end_exclusive":_utc(b)} for a,b in ranges],
         "independent_periods":True,"one_global_open_position":True,
         "costs":{"fees":0.0,"slippage":0.0,"funding":0.0},"live_trading":False}
@@ -126,12 +127,12 @@ def run():
         "- Same validated 76-symbol universe and prepared OOS signals.\n"
         "- Three adjacent equal-duration periods; each starts with identical initial capital and a flat portfolio.\n"
         "- Positions/recovery cycles cannot cross period boundaries; unresolved cycles are reported at period end.\n"
-        "- Each period tests unlimited exact recovery to a fixed $1 net cycle profit with 3%, 5%, and no aggregate open-risk cap.\n"
-        "- After any losing trade, next requested stop-risk = (all accumulated cycle losses + $1) / actual rounded RR.\n"
+        "- Each period tests unlimited exact recovery at a fixed 3% aggregate open-risk cap, comparing $0.50, $1.00 and $2.00 net cycle-profit targets.\n"
+        "- After any losing trade, next requested stop-risk = (all accumulated cycle losses + the selected fixed cycle-profit target) / actual rounded RR.\n"
         "- One open position globally; after SL, any eligible symbol may continue the active portfolio-wide recovery cycle.\n"
         "- BTC 1d+4h, ATR 2.0, RR 2.0, base risk 0.5%; fees/slippage/funding zero.\n"
         "- Equity wipeout is a conservative proxy, not exchange maintenance-margin liquidation.\n"
-        "- Nine independent historical OOS simulations (3%, 5%, uncapped for each period); no live trading.\n",encoding="utf-8")
+        "- Nine independent historical OOS simulations (three profit targets at the same 3% risk cap for each period); no live trading.\n",encoding="utf-8")
     print(df.to_string(index=False),flush=True)
     print(f"[COMPLETE] {len(rows)}/{total} simulations",flush=True)
 
