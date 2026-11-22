@@ -33,5 +33,7 @@ jobs:
             Backtest/GeneticEngine/checkpoint.py
       - name: Test dynamic selector and checkpointing
         run: python -m unittest Backtest.GeneticEngine.tests.test_dynamic_selection
+      - name: Test resumable per-symbol cycle runner
+        run: python -m unittest Backtest.GeneticEngine.tests.test_dynamic_cycle_runner
       - name: Test existing genome contract
         run: python -m unittest Backtest.GeneticEngine.tests.test_genome
