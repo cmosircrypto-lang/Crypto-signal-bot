@@ -91,7 +91,9 @@ def run():
                     print(f"[PROGRESS] {run_no}/{total} {label}: {done}/{count}",flush=True)
             summary,trades,cycles,skips=_simulate_multi_cycle(
                 d,s,obs,specs,btc_frames,ATR_MULTIPLE,REWARD_RATIO,"all_76",cfg,report,
-                filter_mode=filter_mode)
+                filter_mode=filter_mode,
+                equity_curve_path=out/f"equity_curve_{label}.csv",
+                open_positions_path=out/f"open_positions_at_end_{label}.csv")
             summary.update({"scenario":label,"filter_scenario":filter_name,
                 "filter_mode":filter_mode,"period_index":period,
                 "segment_start_utc":_utc(a),"segment_end_utc_exclusive":_utc(b),
@@ -127,8 +129,12 @@ def run():
         .agg(periods=("period_index","nunique"),mean_net_pnl=("net_pnl","mean"),
              median_net_pnl=("net_pnl","median"),worst_net_pnl=("net_pnl","min"),
              mean_final_equity=("final_equity","mean"),
+             mean_realized_final_equity=("realized_final_equity","mean"),
+             mean_mtm_unrealized_pnl_at_end=("mtm_unrealized_pnl_at_end","mean"),
              mean_max_drawdown_pct=("max_drawdown_pct","mean"),
              worst_max_drawdown_pct=("max_drawdown_pct","max"),
+             mean_realized_max_drawdown_pct=("realized_max_drawdown_pct","mean"),
+             worst_realized_max_drawdown_pct=("realized_max_drawdown_pct","max"),
              total_trades=("trades","sum"),total_cycles=("cycles_started","sum"),
              unresolved_cycles=("cycles_unresolved","sum"),
              equity_wipeout_segments=("cycles_liquidated_equity_proxy","sum"))
@@ -140,7 +146,9 @@ def run():
         "scenarios":[{"name":n,"recovery_target_profit_usd":v} for n,v in SCENARIOS],"runs":total,
         "period_ranges_utc":[{"start":_utc(a),"end_exclusive":_utc(b)} for a,b in ranges],
         "independent_periods":True,"max_global_open_positions":2,"max_open_positions_per_cycle":1,"recovery_assignment":"round_robin",
-        "costs":{"fees":0.0,"slippage":0.0,"funding":0.0},"live_trading":False}
+        "costs":{"fees":0.0,"slippage":0.0,"funding":0.0},
+        "equity_valuation_method":"15m_close_mark_to_market",
+        "intracandle_floating_drawdown_included":False,"live_trading":False}
     (out/"manifest.json").write_text(json.dumps(manifest,indent=2),encoding="utf-8")
     (out/"README.md").write_text(
         "# BTC filter comparison — twelve-subperiod OOS validation\n\n"
@@ -157,7 +165,11 @@ def run():
         "- Three causal BTC filters: strict 1d+4h; 4h fallback when daily is neutral/unavailable; either timeframe agrees while neither opposes.\n"
         "- ATR 2.0, RR 2.0, base risk 0.5%; fees/slippage/funding zero.\n"
         "- Equity wipeout is a conservative proxy, not exchange maintenance-margin liquidation.\n"
-        "- Twenty-four independent historical OOS simulations (two targets across twelve subperiods); no live trading.\n",encoding="utf-8")
+        "- Seventy-two independent historical OOS simulations (three BTC filters × two targets × twelve subperiods); no live trading.\n"
+        "- MTM equity is realized equity plus floating PnL marked at each symbol's latest available 15m close.\n"
+        "- The reported max_drawdown_pct is based on this close-marked MTM equity curve; realized-only equity and drawdown are retained in separate columns.\n"
+        "- Open positions are not force-closed at period end; their latest-close valuation is reported separately in open_positions_at_end files.\n"
+        "- Close marking does not capture adverse intrabar floating extremes; SL/TP execution continues to use the original candle high/low logic.\n",encoding="utf-8")
     print(df.to_string(index=False),flush=True)
     print(f"[COMPLETE] {len(rows)}/{total} simulations",flush=True)
 
