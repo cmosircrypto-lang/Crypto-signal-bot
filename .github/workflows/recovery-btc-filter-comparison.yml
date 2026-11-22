@@ -1,0 +1,107 @@
+# Compare three BTC trend gates with independent two-cycle recovery.
+name: BTC Filter Comparison — 12 Subperiods — 3 Filters × 2 Targets
+on:
+  push:
+    branches:
+      - experiment/recovery-cycle-resumable
+    paths:
+      - "Backtest/SwingEngine/recovery_cycle_resumable.py"
+      - "Backtest/SwingEngine/recovery_robustness_validation.py"
+      - "Backtest/SwingEngine/recovery_btc_filter_comparison.py"
+      - "Backtest/SwingEngine/test_recovery_btc_filter_comparison.py"
+      - "Backtest/SwingEngine/test_recovery_robustness_validation.py"
+      - ".github/workflows/recovery-btc-filter-comparison.yml"
+  workflow_dispatch:
+concurrency:
+  group: recovery-btc-filter-comparison-${{ github.ref }}
+  cancel-in-progress: true
+permissions:
+  contents: read
+  actions: read
+jobs:
+  robustness:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    env:
+      RECOVERY_BTC_FILTER_OUTPUT_DIR: Backtest/results/recovery_btc_filter_comparison
+      RECOVERY_PREPARED_CACHE: Backtest/results/recovery_adaptive_matrix/prepared_oos_cache.pkl
+    steps:
+      - name: Checkout research branch
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pandas numpy
+      - name: Restore validated prepared OOS cache
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: 44987822498
+          name: recovery-cycle-resumable-checkpoint
+          path: /tmp/recovery-baseline
+      - name: Download validated OKX dataset
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          gh release download okx-data --repo "${GITHUB_REPOSITORY}" --pattern "okx_data.tar" --dir /tmp
+          gh release download okx-data --repo "${GITHUB_REPOSITORY}" --pattern "okx_timeframes.tar" --dir /tmp
+          mkdir -p Backtest/data/okx
+          tar -xf /tmp/okx_data.tar -C Backtest/data/okx
+          tar -xf /tmp/okx_timeframes.tar -C Backtest/data/okx
+          for timeframe in 15m 1h 4h; do
+            count=$(find "Backtest/data/okx/$timeframe" -maxdepth 1 -name '*.csv.gz' | wc -l)
+            echo "$timeframe: $count symbol files"
+            test "$count" -eq 76
+          done
+      - name: Place prepared cache in isolated output directory
+        run: |
+          set -e
+          cache=$(find /tmp/recovery-baseline -name prepared_oos_cache.pkl -print -quit)
+          test -n "$cache"
+          mkdir -p Backtest/results/recovery_adaptive_matrix
+          cp "$cache" "$RECOVERY_PREPARED_CACHE"
+          ls -lh "$RECOVERY_PREPARED_CACHE"
+      - name: Compile and test recovery validation
+        run: |
+          python -m py_compile Backtest/SwingEngine/recovery_cycle_resumable.py Backtest/SwingEngine/recovery_btc_filter_comparison.py Backtest/SwingEngine/test_recovery_btc_filter_comparison.py
+          python Backtest/SwingEngine/test_recovery_cycle_experiment.py
+          python Backtest/SwingEngine/test_recovery_robustness_validation.py
+          python Backtest/SwingEngine/test_recovery_btc_filter_comparison.py
+      - name: Run 72 independent BTC-filter/two-cycle subperiod simulations
+        run: |
+          set -o pipefail
+          python -u Backtest/SwingEngine/recovery_btc_filter_comparison.py | tee /tmp/recovery-robustness.log
+      - name: Publish summary
+        if: always()
+        run: |
+          echo "## BTC filter comparison — 12 subperiods × 3 filters × 2 targets; two concurrent cycles (3% risk cap)" >> "$GITHUB_STEP_SUMMARY"
+          if [ -f Backtest/results/recovery_btc_filter_comparison/recovery_robustness_summary.csv ]; then
+            python - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import pandas as pd
+          p="Backtest/results/recovery_btc_filter_comparison/recovery_robustness_summary.csv"
+          df=pd.read_csv(p)
+          cols=[c for c in ["scenario","recovery_enabled","period_index","segment_start_utc","segment_end_utc_exclusive",
+            "tested_cycle_profit_target_usd","portfolio_open_risk_cap_percent","final_equity","net_pnl","profit_factor",
+            "max_drawdown_pct","trades","cycles_started","cycles_recovered_target",
+            "cycles_unresolved","cycles_liquidated_equity_proxy","max_simultaneous_positions"]
+            if c in df.columns]
+          print(df[cols].to_string(index=False))
+          PY
+          fi
+          if [ -f /tmp/recovery-robustness.log ]; then tail -n 100 /tmp/recovery-robustness.log >> "$GITHUB_STEP_SUMMARY"; fi
+      - name: Upload robustness results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: recovery-btc-filter-comparison-12x3x2
+          path: Backtest/results/recovery_target_subperiods/
+          if-no-files-found: warn
+          retention-days: 90
+
+# Trigger the recovery-value baseline comparison.
