@@ -294,3 +294,59 @@ def evaluate_genome_signals(
     winner["direction"]=direction
     winner["candle_closed"]=all(x["candle_closed"] for x in chosen)
     return winner
+
+
+def make_cycle_evaluator(
+    frames_by_symbol: Mapping[str, Mapping[str, Any]], *,
+    historical_evaluator,
+    btc_frames_by_symbol: Mapping[str, Mapping[str, Any]] | None = None,
+    swing_signal_provider=None,
+):
+    """Adapt current family signals plus an explicit historical fitness evaluator
+    to the callback contract consumed by dynamic_cycle_runner.run_symbol_cycle.
+
+    The historical callback must use training/validation folds only and return
+    the HistoricalMetrics fields. This adapter deliberately does not fabricate
+    historical performance when no backtest evaluator is supplied.
+    """
+    if not callable(historical_evaluator):
+        raise TypeError("historical_evaluator must be callable")
+
+    def evaluate(spec: Mapping[str, Any]) -> dict[str, Any]:
+        genome_payload = spec.get("genome")
+        if not isinstance(genome_payload, Mapping):
+            raise ValueError("candidate spec must contain a serialized genome")
+        genome = StrategyGenome.from_dict(dict(genome_payload))
+        symbols = tuple(genome.symbols)
+        if len(symbols) != 1:
+            raise ValueError("cycle candidate genome must target exactly one symbol")
+        symbol = symbols[0].upper()
+        if symbol not in frames_by_symbol:
+            raise KeyError(f"no closed-candle frames supplied for {symbol}")
+        direction = str(spec.get("direction", "")).upper()
+        if direction not in ("LONG", "SHORT"):
+            raise ValueError("candidate direction must be LONG or SHORT")
+        swing_signal = (
+            swing_signal_provider(symbol, direction, spec)
+            if callable(swing_signal_provider) else None
+        )
+        current = evaluate_genome_signals(
+            frames_by_symbol[symbol], genome, direction,
+            btc_frames=(btc_frames_by_symbol or {}).get(symbol),
+            swing_signal=swing_signal,
+        )
+        historical = historical_evaluator(spec)
+        if not isinstance(historical, Mapping):
+            raise TypeError("historical_evaluator must return a metrics mapping")
+        return {
+            "direction": direction,
+            "signal_timestamp": current.get("signal_timestamp", "") if current else "",
+            "historical": dict(historical),
+            "current_setup_quality": float(current["setup_quality"]) if current else 0.0,
+            "has_current_signal": current is not None,
+            "candle_closed": bool(current and current["candle_closed"]),
+            "rejection_reason": None if current else "no_current_family_signal",
+            "current_signal": current,
+        }
+
+    return evaluate
