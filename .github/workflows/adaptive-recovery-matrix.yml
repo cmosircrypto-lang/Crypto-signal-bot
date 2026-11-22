@@ -1,4 +1,5 @@
 name: Adaptive Recovery — 76 Symbols — Target Profit
+# Re-run after engine hotfix: math import for optional aggregate-risk ceilings
 
 on:
   push:
