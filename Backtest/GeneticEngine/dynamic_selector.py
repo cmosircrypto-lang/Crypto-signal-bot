@@ -6,7 +6,7 @@ alone can never create a signal.
 """
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass
 import math
 from typing import Iterable
 
@@ -17,6 +17,7 @@ class ScoringPolicy:
     max_drawdown_pct: float = 20.0
     min_profit_factor: float = 1.0
     min_positive_window_ratio: float = 0.5
+    min_validation_score: float = 0.45
     min_historical_score: float = 0.45
     min_current_score: float = 0.50
     historical_weight: float = 0.70
@@ -29,7 +30,7 @@ class ScoringPolicy:
             raise ValueError("max_drawdown_pct must be > 0")
         if self.min_profit_factor < 0:
             raise ValueError("min_profit_factor must be >= 0")
-        for name in ("min_positive_window_ratio", "min_historical_score",
+        for name in ("min_positive_window_ratio", "min_validation_score", "min_historical_score",
                      "min_current_score", "historical_weight", "current_weight"):
             value = getattr(self, name)
             if not 0.0 <= value <= 1.0:
@@ -46,11 +47,12 @@ class HistoricalMetrics:
     profit_factor: float
     positive_window_ratio: float
     trade_count: int
+    validation_score: float = 0.5
     complexity_penalty: float = 0.0
 
     def validate(self) -> None:
         values = (self.average_r, self.max_drawdown_pct, self.profit_factor,
-                  self.positive_window_ratio, self.complexity_penalty)
+                  self.positive_window_ratio, self.validation_score, self.complexity_penalty)
         if not all(math.isfinite(v) for v in values):
             raise ValueError("historical metrics must be finite")
         if self.max_drawdown_pct < 0 or self.profit_factor < 0:
@@ -59,6 +61,8 @@ class HistoricalMetrics:
             raise ValueError("trade_count cannot be negative")
         if not 0 <= self.positive_window_ratio <= 1:
             raise ValueError("positive_window_ratio must be in [0, 1]")
+        if not 0 <= self.validation_score <= 1:
+            raise ValueError("validation_score must be in [0, 1]")
         if not 0 <= self.complexity_penalty <= 1:
             raise ValueError("complexity_penalty must be in [0, 1]")
 
@@ -120,6 +124,7 @@ def historical_quality_score(metrics: HistoricalMetrics) -> float:
     pf_score = min(metrics.profit_factor / 2.0, 1.0)
     consistency_score = metrics.positive_window_ratio
     trade_score = min(metrics.trade_count / 100.0, 1.0)
+    validation_score = metrics.validation_score
     complexity_score = 1.0 - metrics.complexity_penalty
     score = (
         0.25 * return_score
@@ -127,7 +132,7 @@ def historical_quality_score(metrics: HistoricalMetrics) -> float:
         + 0.15 * pf_score
         + 0.15 * consistency_score
         + 0.10 * trade_score
-        + 0.10 * return_score  # validation return component; final OOS is excluded
+        + 0.10 * validation_score  # rolling validation only; final OOS is excluded
         + 0.05 * complexity_score
     )
     return min(1.0, max(0.0, score))
@@ -155,6 +160,8 @@ def score_candidate(candidate: SignalCandidate,
         reasons.append("PROFIT_FACTOR_GATE")
     if metrics.positive_window_ratio < policy.min_positive_window_ratio:
         reasons.append("INCONSISTENT_VALIDATION")
+    if metrics.validation_score < policy.min_validation_score:
+        reasons.append("VALIDATION_SCORE_GATE")
     if historical_score < policy.min_historical_score:
         reasons.append("HISTORICAL_SCORE_GATE")
     if current_score < policy.min_current_score:
