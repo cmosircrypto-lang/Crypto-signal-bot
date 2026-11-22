@@ -89,3 +89,12 @@ The per-symbol pool builder also injects a baseline candidate for every configur
 The dynamic candidate pool now expands each method/genome into separate LONG and SHORT candidate specifications. Evaluator results must match the declared direction. Historical metrics and evolution must remain direction-specific; only after independent evaluation may the cycle selector compare both sides and choose at most one signal for a symbol.
 
 The three distinct signal families in the repository's `main.py` are documented as future research candidates: EMA Cross PRO, BTC-aligned 1h pullback, and SMC Winner. The three managed bot variants reuse those same signal functions and are not additional strategies. Only signal-generation rules may be ported. Position sizing, recovery, Telegram, persistence, cooldown/dispatch and live exchange access are excluded. The strategies are not yet wired into the genetic evaluator; they require causal OKX data adapters, fixtures and parity tests first.
+
+
+## Composable family genome (research schema)
+
+The genome now carries parameter genes for seven signal families: existing Swing/OB methods; the three signal families inspected in main.py (EMA Cross PRO, BTC-aligned pullback, SMC liquidity sweep); and three additional research families (momentum breakout, mean reversion, volatility squeeze). Main.py's constants are baseline points inside bounded search domains; they are not frozen settings or assumed winners.
+
+Families can be combined using SINGLE, ANY, ALL, or VOTE with a configurable agreement threshold. The candidate-pool builder provides baseline coverage of all families, pairwise hybrids, the four Swing entry methods, and independent LONG/SHORT candidates. The runner validates serialized genomes and checkpoints each candidate.
+
+**This is a genome/schema and orchestration expansion, not yet a completed family-aware signal engine.** The existing legacy SwingEngine adapter still does not consume the new family genes. A deterministic, causal OKX implementation for each family, parameter injection, mutation/crossover coverage, and fixture/parity tests remain required before performance runs or live-cycle use. All work remains isolated to this research branch.
