@@ -1,4 +1,4 @@
-name: Genetic Family Multi-Symbol Research
+name: Genetic Family Resumable Symbol-Direction Research
 
 on:
   push:
@@ -6,27 +6,35 @@ on:
       - experiment/dynamic-signal-selection-design
     paths:
       - ".github/workflows/genetic-family-smoke.yml"
+      - "Backtest/GeneticEngine/run_genetic_direction.py"
   workflow_dispatch:
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
-  multi-symbol-smoke:
-    name: ${{ matrix.symbol }} LONG + SHORT
+  direction-research:
+    name: ${{ matrix.symbol }} ${{ matrix.direction }}
     runs-on: ubuntu-latest
     timeout-minutes: 120
     strategy:
       fail-fast: false
       max-parallel: 6
       matrix:
-        symbol:
-          - BTC-USDT-SWAP
-          - ETH-USDT-SWAP
-          - BNB-USDT-SWAP
-          - SOL-USDT-SWAP
-          - XRP-USDT-SWAP
-          - ADA-USDT-SWAP
+        include:
+          - { symbol: BTC-USDT-SWAP, direction: LONG }
+          - { symbol: BTC-USDT-SWAP, direction: SHORT }
+          - { symbol: ETH-USDT-SWAP, direction: LONG }
+          - { symbol: ETH-USDT-SWAP, direction: SHORT }
+          - { symbol: BNB-USDT-SWAP, direction: LONG }
+          - { symbol: BNB-USDT-SWAP, direction: SHORT }
+          - { symbol: SOL-USDT-SWAP, direction: LONG }
+          - { symbol: SOL-USDT-SWAP, direction: SHORT }
+          - { symbol: XRP-USDT-SWAP, direction: LONG }
+          - { symbol: XRP-USDT-SWAP, direction: SHORT }
+          - { symbol: ADA-USDT-SWAP, direction: LONG }
+          - { symbol: ADA-USDT-SWAP, direction: SHORT }
     steps:
       - name: Checkout research branch
         uses: actions/checkout@v4
@@ -38,6 +46,24 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install pandas numpy
+      - name: Restore prior symbol checkpoints
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p Backtest/results/genetic_family_checkpoints /tmp/prior-artifact
+          gh run download 45019727484 \
+            --repo "${GITHUB_REPOSITORY}" \
+            --name "genetic-family-${{ matrix.symbol }}-pop10-gen3" \
+            --dir /tmp/prior-artifact
+          checkpoint="$(find /tmp/prior-artifact -type f \
+            -name "${{ matrix.symbol }}_${{ matrix.direction }}.json" -print -quit)"
+          if [ -n "$checkpoint" ]; then
+            cp "$checkpoint" "Backtest/results/genetic_family_checkpoints/${{ matrix.symbol }}_${{ matrix.direction }}.json"
+            echo "Restored checkpoint for ${{ matrix.symbol }} ${{ matrix.direction }}"
+          else
+            echo "::error::No compatible prior checkpoint found for ${{ matrix.symbol }} ${{ matrix.direction }}"
+            exit 1
+          fi
       - name: Download validated 76-symbol OKX dataset
         env:
           GH_TOKEN: ${{ github.token }}
@@ -52,29 +78,31 @@ jobs:
             echo "$timeframe: $count symbol files"
             test "$count" -eq 76
           done
-      - name: Run independent LONG and SHORT genetic evolution
+      - name: Resume one direction from checkpoint
         run: |
           set -o pipefail
-          python -u -m Backtest.GeneticEngine.run_genetic_research \
-            --profile smoke --symbols "${{ matrix.symbol }}" --population 10 --generations 3 \
-            | tee "/tmp/genetic-family-${{ matrix.symbol }}.log"
+          python -u -m Backtest.GeneticEngine.run_genetic_direction \
+            --profile smoke --symbol "${{ matrix.symbol }}" \
+            --direction "${{ matrix.direction }}" --population 10 --generations 3 \
+            --output "Backtest/results/genetic_family_summary_${{ matrix.symbol }}_${{ matrix.direction }}.json" \
+            | tee "/tmp/genetic-family-${{ matrix.symbol }}-${{ matrix.direction }}.log"
       - name: Add report to summary
         if: always()
         run: |
-          if [ -f "/tmp/genetic-family-${{ matrix.symbol }}.log" ]; then
+          if [ -f "/tmp/genetic-family-${{ matrix.symbol }}-${{ matrix.direction }}.log" ]; then
             {
-              echo "## ${{ matrix.symbol }} family-genetic research"
-              tail -n 100 "/tmp/genetic-family-${{ matrix.symbol }}.log"
+              echo "## ${{ matrix.symbol }} ${{ matrix.direction }} resumable research"
+              tail -n 100 "/tmp/genetic-family-${{ matrix.symbol }}-${{ matrix.direction }}.log"
             } >> "$GITHUB_STEP_SUMMARY"
           fi
-      - name: Upload checkpoints and summary
+      - name: Upload direction checkpoint and summary
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: genetic-family-${{ matrix.symbol }}-pop10-gen3
+          name: genetic-direction-${{ matrix.symbol }}-${{ matrix.direction }}-resumed
           path: |
-            Backtest/results/genetic_family_checkpoints/
-            Backtest/results/genetic_family_summary.json
-            /tmp/genetic-family-${{ matrix.symbol }}.log
+            Backtest/results/genetic_family_checkpoints/${{ matrix.symbol }}_${{ matrix.direction }}.json
+            Backtest/results/genetic_family_summary_${{ matrix.symbol }}_${{ matrix.direction }}.json
+            /tmp/genetic-family-${{ matrix.symbol }}-${{ matrix.direction }}.log
           if-no-files-found: warn
           retention-days: 30
