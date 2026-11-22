@@ -1,5 +1,4 @@
 name: Adaptive Recovery — 76 Symbols — Target Profit
-# Re-run after engine hotfix: math import for optional aggregate-risk ceilings
 
 on:
   push:
@@ -79,7 +78,7 @@ jobs:
           python -m py_compile Backtest/SwingEngine/recovery_cycle_resumable.py Backtest/SwingEngine/adaptive_recovery_matrix.py
           python Backtest/SwingEngine/test_recovery_cycle_experiment.py
 
-      - name: Run six adaptive recovery scenarios
+      - name: Run two adaptive recovery scenarios
         run: |
           set -o pipefail
           python -u Backtest/SwingEngine/adaptive_recovery_matrix.py | tee /tmp/adaptive-recovery.log
