@@ -9,7 +9,7 @@ from recovery_cycle_resumable import CUTOFF_UTC, INITIAL_CAPITAL, _simulate
 from data_loader import TIMEFRAME_MS
 from okx_contract_specs import OKXContractSpecs
 
-RISK_CAPS=(3.0,5.0)
+RISK_CAPS=(3.0,5.0,None)
 PERIODS=3
 ATR_MULTIPLE=2.0
 REWARD_RATIO=2.0
@@ -77,7 +77,8 @@ def run():
         if counts["segment_candle_count"]==0: raise ValueError(f"Period {period} has no candles")
         for cap in RISK_CAPS:
             run_no+=1
-            label=f"period_{period}_{_utc(a)[:10]}_to_{_utc(b-1)[:10]}_portfolio_{int(cap)}pct"
+            cap_label = "uncapped" if cap is None else f"{int(cap)}pct"
+            label=f"period_{period}_{_utc(a)[:10]}_to_{_utc(b-1)[:10]}_portfolio_{cap_label}"
             cfg={"objective":"initial_target_profit","sizing_method":"exact_recovery",
                 "max_recovery_trades":None,"portfolio_open_risk_cap_percent":cap,
                 "max_total_positions":1,"max_buy_positions":1,"max_sell_positions":1,
@@ -124,11 +125,11 @@ def run():
         "- Same validated 76-symbol universe and prepared OOS signals.\n"
         "- Three adjacent equal-duration periods; each starts with identical initial capital and a flat portfolio.\n"
         "- Positions/recovery cycles cannot cross period boundaries; unresolved cycles are reported at period end.\n"
-        "- Each period tests unlimited exact recovery to initial target-profit with 3% and 5% aggregate open-risk caps.\n"
-        "- One open position globally; active symbol owns the lock for its complete recovery cycle.\n"
+        "- Each period tests unlimited exact recovery to initial target-profit with 3%, 5%, and no aggregate open-risk cap.\n"
+        "- One open position globally; after SL, any eligible symbol may continue the active portfolio-wide recovery cycle.\n"
         "- BTC 1d+4h, ATR 2.0, RR 2.0, base risk 0.5%; fees/slippage/funding zero.\n"
         "- Equity wipeout is a conservative proxy, not exchange maintenance-margin liquidation.\n"
-        "- Six independent historical OOS simulations; no live trading.\n",encoding="utf-8")
+        "- Nine independent historical OOS simulations (3%, 5%, uncapped for each period); no live trading.\n",encoding="utf-8")
     print(df.to_string(index=False),flush=True)
     print(f"[COMPLETE] {len(rows)}/{total} simulations",flush=True)
 
