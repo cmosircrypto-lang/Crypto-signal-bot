@@ -545,6 +545,297 @@ def _simulate(data, signals, obs, specs, btc_frames, atr_multiple, rr,
     return summary, trades, pd.DataFrame(completed_cycles), pd.DataFrame(skips)
 
 
+
+def _next_recovery_cycle(cycles, cursor=0):
+    """Select the next waiting recovery cycle in stable round-robin order."""
+    waiting = [
+        cycle_id for cycle_id, state in cycles.items()
+        if state.get("status") == "RECOVERY_WAITING"
+    ]
+    if not waiting:
+        return None, 0
+    index = int(cursor) % len(waiting)
+    return waiting[index], (index + 1) % len(waiting)
+
+
+def _simulate_multi_cycle(data, signals, obs, specs, btc_frames, atr_multiple, rr,
+                          universe, cycle_config, progress=None, filter_mode=None):
+    """Replay signals with two independent cycles and round-robin recovery allocation."""
+    if not cycle_config or cycle_config.get("recovery_target_profit") not in (0.5, 1.0):
+        raise ValueError("Multi-cycle simulation requires a $0.50 or $1.00 recovery target")
+    system = TradingSystem(
+        initial_capital=INITIAL_CAPITAL, fee_rate=0.0, slippage_rate=0.0,
+        max_total=2, max_buy=2, max_sell=2, contract_specs=specs,
+    )
+    candles_at_time, signals_at_time = {}, {}
+    for symbol, item in sorted(data.items()):
+        for row in item.frames["15m"].to_dict("records"):
+            close_time = int(row["ts"]) + TIMEFRAME_MS["15m"]
+            candles_at_time.setdefault(close_time, {})[symbol] = row
+    for symbol, frame in signals.items():
+        if frame is not None and not frame.empty:
+            for row in frame.to_dict("records"):
+                signals_at_time.setdefault(int(row["signal_ts"]), []).append((symbol, row))
+    times = sorted(set(candles_at_time) | set(signals_at_time))
+    cycles, active, completed_cycles = {}, {}, []
+    cycle_serial, rr_cursor = 0, 0
+    closed, skips = [], []
+    cycle_counts = {
+        "cycles_started": 0, "cycles_recovered": 0,
+        "cycles_breakeven_met": 0, "cycles_initial_target_met": 0,
+        "cycles_recovered_breakeven": 0, "cycles_recovered_target": 0,
+        "cycles_closed_shortfall": 0, "cycles_failed_limit": 0,
+        "cycles_unresolved": 0, "cycles_sizing_failed": 0,
+        "cycles_portfolio_risk_failed": 0, "cycles_liquidated_equity_proxy": 0,
+    }
+    max_open_risk_amount = max_open_risk_percent = 0.0
+    max_simultaneous_positions = 0
+    risk_cap = float(cycle_config.get("portfolio_open_risk_cap_percent", 3.0))
+
+    for idx, ts in enumerate(times, 1):
+        if float(system.execution.equity) <= 0:
+            break
+        candles = candles_at_time.get(ts, {})
+        # Resolve exits before processing signals at this timestamp.
+        for symbol in list(system.execution.open_positions):
+            candle = candles.get(symbol)
+            pos = system.execution.open_positions.get(symbol)
+            if candle is None or pos is None or ts <= pos.opened_at:
+                continue
+            result = system.check_exit(symbol, candle, ts)
+            if result is None:
+                continue
+            meta = active.pop(symbol, {})
+            cycle_id = meta.get("cycle_id")
+            state = cycles.get(cycle_id)
+            row = {
+                **meta, "symbol": result.symbol, "direction": result.direction,
+                "entry_price": result.entry_price, "exit_price": result.exit_price,
+                "quantity": result.quantity, "contract_count": result.contract_count,
+                "risk_percent": result.risk_percent, "risk_amount": pos.risk_amount,
+                "pnl": result.pnl, "result": result.result,
+                "exit_reason": result.exit_reason, "opened_at": result.opened_at,
+                "closed_at": result.closed_at,
+            }
+            closed.append(row)
+            if state is None:
+                raise RuntimeError(f"Missing cycle state for closed position: {cycle_id}")
+            state["trade_count"] += 1
+            state["cycle_realized_pnl"] += float(result.pnl)
+            if result.exit_reason == "SL":
+                state["losses"] += abs(min(0.0, float(result.pnl)))
+                if meta.get("is_recovery"):
+                    state["recovery_losses"] += 1
+                state["status"] = "RECOVERY_WAITING"
+            elif result.exit_reason == "TP":
+                state["cycle_closed_at"] = ts
+                state["cycle_net_pnl"] = state["cycle_realized_pnl"]
+                state["recovered_to_breakeven"] = state["cycle_net_pnl"] >= -1e-9
+                state["achieved_initial_target"] = (
+                    state["cycle_net_pnl"] >= state["base_target_profit"] - 1e-9
+                )
+                if not meta.get("is_recovery"):
+                    state["status"] = "BASE_TP"
+                else:
+                    state["status"] = _cycle_close_status(
+                        state["recovery_entries"], state["cycle_net_pnl"],
+                        state["base_target_profit"],
+                    )
+                completed_cycles.append(dict(state))
+                cycles.pop(cycle_id, None)
+                if meta.get("is_recovery"):
+                    cycle_counts["cycles_recovered"] += 1
+                    if state["recovered_to_breakeven"]:
+                        cycle_counts["cycles_breakeven_met"] += 1
+                    if state["achieved_initial_target"]:
+                        cycle_counts["cycles_initial_target_met"] += 1
+                    if state["status"] == "RECOVERED_TARGET":
+                        cycle_counts["cycles_recovered_target"] += 1
+                    elif state["status"] == "RECOVERED_BREAKEVEN":
+                        cycle_counts["cycles_recovered_breakeven"] += 1
+                    else:
+                        cycle_counts["cycles_closed_shortfall"] += 1
+            max_open_risk_amount, max_open_risk_percent = _update_open_risk_peaks(
+                system, max_open_risk_amount, max_open_risk_percent
+            )
+
+        entries = sorted(signals_at_time.get(ts, []), key=lambda x: x[0])
+        for symbol, signal in entries:
+            if len(system.execution.open_positions) >= 2:
+                skips.append({"symbol": symbol, "signal_ts": ts, "reason": "global_two_position_limit"})
+                continue
+            if not system.can_search_symbol(symbol):
+                continue
+            direction = str(signal["direction"]).upper()
+            trend = btc_trends_at_time(btc_frames, ts)
+            if not _btc_filter_matches(trend, direction, filter_mode):
+                continue
+            levels = _levels(signal, atr_multiple, rr)
+            if levels is None:
+                skips.append({"symbol": symbol, "signal_ts": ts, "reason": "invalid_atr_or_levels"})
+                continue
+            stop, target = levels
+
+            # Recovery cycles take priority. If all active recovery cycles
+            # already have an open trade, do not create an unrelated base cycle.
+            recovery_active = any(
+                state.get("status") in ("RECOVERY_WAITING", "RECOVERY_OPEN")
+                for state in cycles.values()
+            )
+            cycle_id = None
+            is_recovery = False
+            if recovery_active:
+                cycle_id, rr_cursor = _next_recovery_cycle(cycles, rr_cursor)
+                if cycle_id is None:
+                    skips.append({"symbol": symbol, "signal_ts": ts, "reason": "active_recovery_cycles_busy"})
+                    continue
+                state = cycles[cycle_id]
+                is_recovery = True
+            else:
+                cycle_serial += 1
+                cycle_id = f"CYCLE-{cycle_serial:06d}"
+                state = None
+
+            available_risk, open_risk = _available_portfolio_risk(system, risk_cap)
+            if available_risk <= 0:
+                skips.append({"symbol": symbol, "signal_ts": ts, "reason": "portfolio_open_risk_cap"})
+                continue
+
+            risk_amount = None
+            if is_recovery:
+                entry_price = float(signal["entry_price"])
+                spec = system.execution.contract_specs[symbol]
+                rounded_stop, rounded_target = spec.round_exit_prices(
+                    direction=direction, stop_loss=stop, take_profit=target,
+                )
+                stop_distance = abs(entry_price - float(rounded_stop))
+                target_distance = abs(float(rounded_target) - entry_price)
+                risk_amount = recovery_risk_amount(
+                    state["losses"], state["base_risk_amount"],
+                    state["base_target_profit"], rr,
+                    "initial_target_profit", "exact_recovery",
+                    state["recovery_entries"], stop_distance=stop_distance,
+                    target_distance=target_distance,
+                    base_quantity=state["base_quantity"],
+                    target_profit_override=cycle_config["recovery_target_profit"],
+                )
+                if risk_amount <= 0 or risk_amount > available_risk:
+                    skips.append({"symbol": symbol, "signal_ts": ts, "reason": "recovery_exceeds_available_portfolio_risk"})
+                    continue
+                open_risk_now = sum(float(p.risk_amount) for p in system.execution.open_positions.values())
+                equity_now = float(system.execution.equity)
+                if open_risk_now + risk_amount >= equity_now:
+                    liquidation_loss = -equity_now
+                    closed.append({
+                        "symbol": symbol, "direction": direction,
+                        "entry_price": entry_price, "exit_price": entry_price,
+                        "quantity": 0.0, "contract_count": 0.0,
+                        "risk_percent": 100.0, "risk_amount": equity_now,
+                        "pnl": liquidation_loss, "result": "LOSS",
+                        "exit_reason": "LIQUIDATION_EQUITY_PROXY",
+                        "opened_at": ts, "closed_at": ts,
+                        "is_recovery": True, "recovery_entry_number": state["recovery_entries"] + 1,
+                        "cycle_id": cycle_id,
+                    })
+                    state["status"] = "LIQUIDATED_EQUITY_PROXY"
+                    state["cycle_closed_at"] = ts
+                    state["cycle_realized_pnl"] += liquidation_loss
+                    state["cycle_net_pnl"] = state["cycle_realized_pnl"]
+                    completed_cycles.append(dict(state))
+                    cycles.pop(cycle_id, None)
+                    system.execution.equity = 0.0
+                    cycle_counts["cycles_portfolio_risk_failed"] += 1
+                    cycle_counts["cycles_liquidated_equity_proxy"] += 1
+                    skips.append({"symbol": symbol, "signal_ts": ts, "reason": "liquidation_equity_proxy"})
+                    break
+                risk_pct = risk_amount / system.execution.equity * 100.0
+            else:
+                risk_pct = RISK_PERCENT
+
+            try:
+                pos = system.open_trade(
+                    symbol=symbol, direction=direction,
+                    entry_price=float(signal["entry_price"]),
+                    stop_loss=stop, take_profit=target,
+                    risk_percent=risk_pct, timestamp=ts,
+                    round_contracts_up=is_recovery,
+                    max_risk_amount=available_risk,
+                )
+                if pos is None:
+                    continue
+                if not is_recovery:
+                    state = {
+                        "symbol": symbol, "cycle_id": cycle_id,
+                        "started_at": ts, "cycle_closed_at": None,
+                        "base_risk_amount": float(pos.risk_amount),
+                        "base_quantity": float(pos.quantity),
+                        "base_contract_count": float(pos.contract_count or 0.0),
+                        "base_target_profit": float(cycle_config["recovery_target_profit"]),
+                        "initial_trade_target_profit": abs(float(pos.take_profit) - float(pos.entry_price)) * float(pos.quantity),
+                        "losses": 0.0, "recovery_losses": 0,
+                        "recovery_entries": 0, "trade_count": 0,
+                        "cycle_realized_pnl": 0.0, "cycle_net_pnl": None,
+                        "status": "INITIAL_OPEN", "objective": "initial_target_profit",
+                        "sizing_method": "exact_recovery",
+                        "max_recovery_trades": None,
+                    }
+                    cycles[cycle_id] = state
+                    cycle_counts["cycles_started"] += 1
+                else:
+                    state["recovery_entries"] += 1
+                    state["status"] = "RECOVERY_OPEN"
+                active[symbol] = {
+                    "cycle_id": cycle_id, "cycle_trade_number": state["trade_count"] + 1,
+                    "is_recovery": is_recovery,
+                    "recovery_entry_number": state["recovery_entries"] if is_recovery else 0,
+                    "recovery_objective": "initial_target_profit",
+                    "recovery_sizing": "exact_recovery",
+                }
+                max_open_risk_amount, max_open_risk_percent = _update_open_risk_peaks(
+                    system, max_open_risk_amount, max_open_risk_percent
+                )
+                max_simultaneous_positions = max(
+                    max_simultaneous_positions, len(system.execution.open_positions)
+                )
+            except (ValueError, KeyError) as exc:
+                skips.append({"symbol": symbol, "signal_ts": ts, "reason": "contract_or_size", "error": str(exc)})
+                if is_recovery:
+                    # Failed sizing does not destroy the recovery cycle.
+                    state["status"] = "RECOVERY_WAITING"
+
+        if progress and (idx % max(1, len(times)//20) == 0 or idx == len(times)):
+            progress(idx, len(times), ts)
+
+    for state in cycles.values():
+        state["status"] = "UNRESOLVED_AT_END"
+        state["cycle_net_pnl"] = state["cycle_realized_pnl"]
+        completed_cycles.append(dict(state))
+        cycle_counts["cycles_unresolved"] += 1
+
+    summary = _equity_metrics(closed, INITIAL_CAPITAL)
+    summary.update({
+        "universe": universe, "symbols": len(data),
+        "atr_multiple": atr_multiple, "reward_ratio": rr,
+        "single_position_global": False,
+        "max_simultaneous_positions": max_simultaneous_positions,
+        "max_simultaneous_positions_limit": 2,
+        "filter_mode": filter_mode or FILTER_MODE,
+        "required_btc_trend_timeframes": ["1d", "4h"],
+        "risk_percent_base": RISK_PERCENT,
+        "open_trades_at_end": len(system.execution.open_positions),
+        "max_open_per_symbol": 1,
+        "max_open_positions_per_cycle": 1,
+        "recovery_assignment": "round_robin",
+        **cycle_counts,
+        "max_recovery_entries_observed": max((x["recovery_entries"] for x in completed_cycles), default=0),
+        "max_cycle_loss": max((x["losses"] for x in completed_cycles), default=0.0),
+        "max_cycle_net_exposure": max((x["base_risk_amount"] + x["losses"] for x in completed_cycles), default=0.0),
+        "max_open_risk_amount": max_open_risk_amount,
+        "max_open_risk_percent": max_open_risk_percent,
+        "max_portfolio_open_risk_percent_limit": risk_cap,
+    })
+    return summary, pd.DataFrame(closed), pd.DataFrame(completed_cycles), pd.DataFrame(skips)
+
 def _atomic_json(path, payload):
     temporary = path.with_suffix(path.suffix + ".tmp")
     temporary.write_text(
