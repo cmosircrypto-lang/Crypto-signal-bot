@@ -4,7 +4,7 @@ import unittest
 from unittest.mock import patch
 import pandas as pd
 
-from Backtest.GeneticEngine.family_signals import evaluate_genome_signals
+from Backtest.GeneticEngine.family_signals import evaluate_genome_signals, make_cycle_evaluator
 from Backtest.GeneticEngine.genome import StrategyGenome
 
 
@@ -96,6 +96,24 @@ class FamilySignalTests(unittest.TestCase):
         self.assertAlmostEqual(result["reward_distance"],6.0)
         self.assertAlmostEqual(result["rr"],2.0)
         self.assertTrue(result["candle_closed"])
+
+
+    def test_cycle_adapter_combines_historical_metrics_with_current_signal(self):
+        genome=StrategyGenome(signal_families=("MOMENTUM_BREAKOUT",),
+            family_combination="SINGLE",symbols=("BNB",),
+            momentum_lookback=20,momentum_breakout_buffer_atr=0.0,
+            momentum_min_adx=14.0,momentum_volume_mult=0.8)
+        metrics={"average_r":0.4,"max_drawdown_pct":8.0,"profit_factor":1.6,
+            "positive_window_ratio":0.8,"trade_count":80,
+            "validation_score":0.7,"complexity_penalty":0.1}
+        evaluator=make_cycle_evaluator({"BNB":{"1h":trending_frame()}},
+            historical_evaluator=lambda spec:metrics)
+        result=evaluator({"genome":genome.to_dict(),"direction":"LONG"})
+        self.assertTrue(result["has_current_signal"])
+        self.assertTrue(result["candle_closed"])
+        self.assertEqual(result["direction"],"LONG")
+        self.assertEqual(result["historical"],metrics)
+        self.assertEqual(result["current_signal"]["family_votes"],1)
 
     def test_future_rows_are_not_needed_for_current_signal(self):
         frames={"1h":trending_frame()}
