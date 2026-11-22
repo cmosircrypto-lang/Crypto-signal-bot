@@ -1,4 +1,5 @@
 name: Dynamic Signal Selection Tests
+# One-time cached-data smoke is gated by the triggering commit message.
 
 on:
   push:
