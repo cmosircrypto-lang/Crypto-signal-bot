@@ -32,11 +32,11 @@ jobs:
           GH_TOKEN: \${{ github.token }}
         run: |
           gh release download okx-data \
-            --repo "\${GITHUB_REPOSITORY}" \
+            --repo "cmosircrypto-lang/Crypto-signal-bot" \
             --pattern "okx_data.tar" \
             --dir /tmp
           gh release download okx-data \
-            --repo "\${GITHUB_REPOSITORY}" \
+            --repo "cmosircrypto-lang/Crypto-signal-bot" \
             --pattern "okx_timeframes.tar" \
             --dir /tmp
           mkdir -p Backtest/data/okx
