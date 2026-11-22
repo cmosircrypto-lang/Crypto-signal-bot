@@ -1,4 +1,4 @@
-name: Recovery Target Comparison — 3 OOS Periods — 3% Risk
+name: Recovery Target Comparison — 12 Subperiods — 0.5 vs 1 USD
 on:
   push:
     branches:
@@ -19,7 +19,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 350
     env:
-      RECOVERY_ROBUSTNESS_OUTPUT_DIR: Backtest/results/recovery_target_comparison
+      RECOVERY_ROBUSTNESS_OUTPUT_DIR: Backtest/results/recovery_target_subperiods
       RECOVERY_PREPARED_CACHE: Backtest/results/recovery_adaptive_matrix/prepared_oos_cache.pkl
     steps:
       - name: Checkout research branch
@@ -68,14 +68,14 @@ jobs:
           python -m py_compile Backtest/SwingEngine/recovery_cycle_resumable.py Backtest/SwingEngine/recovery_robustness_validation.py Backtest/SwingEngine/test_recovery_robustness_validation.py
           python Backtest/SwingEngine/test_recovery_cycle_experiment.py
           python Backtest/SwingEngine/test_recovery_robustness_validation.py
-      - name: Run nine independent period/target simulations
+      - name: Run 24 independent subperiod/target simulations
         run: |
           set -o pipefail
           python -u Backtest/SwingEngine/recovery_robustness_validation.py | tee /tmp/recovery-robustness.log
       - name: Publish summary
         if: always()
         run: |
-          echo "## Recovery target comparison — three periods × three fixed profit targets (3% risk cap)" >> "$GITHUB_STEP_SUMMARY"
+          echo "## Recovery target comparison — twelve subperiods × two fixed profit targets (3% risk cap)" >> "$GITHUB_STEP_SUMMARY"
           if [ -f Backtest/results/recovery_target_comparison/recovery_robustness_summary.csv ]; then
             python - <<'PY' >> "$GITHUB_STEP_SUMMARY"
           import pandas as pd
@@ -94,7 +94,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: recovery-target-comparison-3-periods
+          name: recovery-target-subperiods-12x2
           path: Backtest/results/recovery_target_comparison/
           if-no-files-found: warn
           retention-days: 90

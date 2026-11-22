@@ -10,8 +10,8 @@ from data_loader import TIMEFRAME_MS
 from okx_contract_specs import OKXContractSpecs
 
 RISK_CAP=3.0
-TARGET_PROFITS=(0.5,1.0,2.0)
-PERIODS=3
+TARGET_PROFITS=(0.5,1.0)
+PERIODS=12
 ATR_MULTIPLE=2.0
 REWARD_RATIO=2.0
 
@@ -115,6 +115,17 @@ def run():
                 f"elapsed={(time.monotonic()-started)/60:.1f}m",flush=True)
     df=pd.DataFrame(rows)
     df.to_csv(out/"recovery_robustness_summary.csv",index=False)
+    agg=(df.groupby("tested_cycle_profit_target_usd")
+        .agg(scenarios=("scenario","count"),mean_net_pnl=("net_pnl","mean"),
+             median_net_pnl=("net_pnl","median"),worst_net_pnl=("net_pnl","min"),
+             mean_final_equity=("final_equity","mean"),
+             mean_max_drawdown_pct=("max_drawdown_pct","mean"),
+             worst_max_drawdown_pct=("max_drawdown_pct","max"),
+             total_trades=("trades","sum"),total_cycles=("cycles_started","sum"),
+             unresolved_cycles=("cycles_unresolved","sum"),
+             equity_wipeout_segments=("cycles_liquidated_equity_proxy","sum"))
+        .reset_index())
+    agg.to_csv(out/"target_aggregate_comparison.csv",index=False)
     manifest={"oos_cutoff_utc":CUTOFF_UTC,"periods":PERIODS,
         "risk_cap_percent":RISK_CAP,"cycle_profit_targets_usd":list(TARGET_PROFITS),"runs":total,
         "period_ranges_utc":[{"start":_utc(a),"end_exclusive":_utc(b)} for a,b in ranges],
@@ -122,17 +133,17 @@ def run():
         "costs":{"fees":0.0,"slippage":0.0,"funding":0.0},"live_trading":False}
     (out/"manifest.json").write_text(json.dumps(manifest,indent=2),encoding="utf-8")
     (out/"README.md").write_text(
-        "# Serialized recovery — three-period OOS robustness validation\n\n"
+        "# Serialized recovery — twelve-subperiod OOS validation\n\n"
         f"- OOS cutoff: {CUTOFF_UTC}\n"
         "- Same validated 76-symbol universe and prepared OOS signals.\n"
-        "- Three adjacent equal-duration periods; each starts with identical initial capital and a flat portfolio.\n"
+        "- Twelve adjacent equal-duration subperiods; each starts with identical initial capital and a flat portfolio.\n"
         "- Positions/recovery cycles cannot cross period boundaries; unresolved cycles are reported at period end.\n"
-        "- Each period tests unlimited exact recovery at a fixed 3% aggregate open-risk cap, comparing $0.50, $1.00 and $2.00 net cycle-profit targets.\n"
+        "- Each subperiod tests unlimited exact recovery at a fixed 3% aggregate open-risk cap, comparing $0.50 and $1.00 net cycle-profit targets.\n"
         "- After any losing trade, next requested stop-risk = (all accumulated cycle losses + the selected fixed cycle-profit target) / actual rounded RR.\n"
         "- One open position globally; after SL, any eligible symbol may continue the active portfolio-wide recovery cycle.\n"
         "- BTC 1d+4h, ATR 2.0, RR 2.0, base risk 0.5%; fees/slippage/funding zero.\n"
         "- Equity wipeout is a conservative proxy, not exchange maintenance-margin liquidation.\n"
-        "- Nine independent historical OOS simulations (three profit targets at the same 3% risk cap for each period); no live trading.\n",encoding="utf-8")
+        "- Twenty-four independent historical OOS simulations (two profit targets at the same 3% risk cap for each of twelve subperiods); no live trading.\n",encoding="utf-8")
     print(df.to_string(index=False),flush=True)
     print(f"[COMPLETE] {len(rows)}/{total} simulations",flush=True)
 
