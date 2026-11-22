@@ -132,3 +132,28 @@ signal evaluator itself is not a substitute for the historical trade simulator.
 All input frames must be pre-truncated to fully closed candles at the cycle
 cutoff. The module does not fetch data, and the untouched final OOS segment
 must remain outside the historical evaluator and all candidate selection.
+
+
+## Walk-forward historical evaluation and genetic population loop
+
+The current research branch now includes:
+
+- `historical_evaluator.py`: constructs complete UTC BTC daily candles from 24 contiguous 1h bars; makes decisions only from 15m/1h/4h candles whose close time is at or before the decision time; simulates entries at the next 15m open; and applies SL-first resolution when both SL and TP are touched in one candle.
+- Walk-forward validation windows occupy the development portion of the series. The final 15% is excluded before any candidate metrics are produced. Fold metrics are aggregated from closed trades; no final OOS performance is used for fitness.
+- `genetic_runner.py`: executes independent populations for each symbol and each direction. It uses seeded initialization, family-single and pairwise-hybrid seeds, tournament selection, elitism, crossover, mutation, phenotype deduplication and per-candidate atomic checkpoints.
+- Checkpoint compatibility fingerprints include code/config/data identity, direction, random seed, population/generation settings, seed-genome fingerprint and fitness gates. A changed dataset or research configuration is rejected rather than silently resumed.
+- `run_genetic_research.py`: command-line entry point that loads and validates the cached 76-symbol dataset, fingerprints it, runs independent LONG/SHORT populations, and writes a JSON research summary. It is simulation-only.
+
+Example smoke run from the repository root:
+
+    python -m Backtest.GeneticEngine.run_genetic_research --profile smoke --symbols BNB-USDT-SWAP --population 8 --generations 2
+
+Run the full configured evolution only after a smoke run and runtime estimate:
+
+    python -m Backtest.GeneticEngine.run_genetic_research --profile main
+
+The smoke defaults are intentionally small. The main profile is 100 individuals × 30 generations per symbol and direction, and a 76-symbol run is computationally substantial. Run by symbol batches and preserve the generated checkpoints; do not start a full 76-symbol main profile without estimating runner time and storage first.
+
+The walk-forward simulator currently uses theoretical base-quantity sizing, compounding equity, one open trade per symbol within each independent symbol/direction evaluation, zero fees and zero slippage, and a forced close at each validation-fold boundary for any still-open position. This per-symbol genetic fitness evaluation is not the final multi-symbol portfolio backtest. The selected champions must subsequently be tested together under the existing portfolio limits (6 total, 3 per direction, 1 per symbol) and on a final untouched OOS segment exactly once, after all research choices are frozen.
+
+Swing/Order Block signals require an explicit closed-candle `swing_signal_provider`; without one, the family correctly emits no historical trades rather than substituting a simplified proxy. The three main.py-derived families and the additional families use the new causal evaluators. No live signal pipeline or order execution is connected.
