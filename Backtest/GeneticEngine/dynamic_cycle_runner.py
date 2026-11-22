@@ -1,9 +1,4 @@
-"""Resumable per-symbol evaluation of a candidate pool for one scan cycle.
-
-The caller supplies a candidate pool (typically produced by offline genetic
-search) and an evaluator adapter. The runner does not import or modify the
-production SwingEngine and never places orders.
-"""
+"""Resumable per-symbol evaluation of a candidate pool for one scan cycle."""
 from __future__ import annotations
 
 import hashlib
@@ -12,14 +7,12 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
 
-from . import config\nfrom .checkpoint import load_checkpoint, save_checkpoint
+from . import config
+from .checkpoint import load_checkpoint, save_checkpoint
 from .evaluator import assert_legacy_compatible
 from .genome import StrategyGenome
 from .dynamic_selector import (
-    HistoricalMetrics,
-    ScoringPolicy,
-    SignalCandidate,
-    SelectionDecision,
+    HistoricalMetrics, ScoringPolicy, SignalCandidate, SelectionDecision,
     select_cycle_signals,
 )
 
@@ -37,15 +30,13 @@ def _candidate_id(candidate: Mapping[str, Any]) -> str:
     return value
 
 
-def _to_signal_candidate(
-    symbol: str, spec: Mapping[str, Any], result: Mapping[str, Any]
-) -> SignalCandidate:
+def _to_signal_candidate(symbol: str, spec: Mapping[str, Any],
+                         result: Mapping[str, Any]) -> SignalCandidate:
     historical = result.get("historical")
     if not isinstance(historical, Mapping):
         raise ValueError("evaluator result must include historical metrics mapping")
     return SignalCandidate(
-        symbol=symbol,
-        candidate_id=_candidate_id(spec),
+        symbol=symbol, candidate_id=_candidate_id(spec),
         method=str(spec.get("method", "UNKNOWN")),
         direction=str(result.get("direction", "LONG")),
         signal_timestamp=str(result.get("signal_timestamp", "")),
@@ -57,24 +48,16 @@ def _to_signal_candidate(
     )
 
 
-
 def build_symbol_candidate_pool(
     symbol: str, genomes: Iterable[StrategyGenome]
 ) -> list[dict[str, Any]]:
-    """Expand a genetic population into independently scored method candidates.
-
-    Each entry method becomes its own candidate for this symbol. Only genes
-    currently honored by the legacy adapter are accepted; unsupported
-    swing/OB/ATR-stop mutations fail fast instead of being silently ignored.
-    """
+    """Expand genomes into one-method candidates; guarantee baseline method coverage."""
     symbol = symbol.strip().upper()
     if not symbol:
         raise ValueError("symbol is required")
     pool: list[dict[str, Any]] = []
     seen: set[str] = set()
     source_genomes = list(genomes)
-    # Guarantee baseline coverage of every configured entry method, even if a
-    # small genetic population has not yet discovered or retained one method.
     baseline = StrategyGenome.baseline()
     source_genomes.extend(
         replace(baseline, entry_methods=(method,))
@@ -83,40 +66,26 @@ def build_symbol_candidate_pool(
     for genome in source_genomes:
         genome.validate()
         for method in genome.entry_methods:
-            one_method = replace(
-                genome, entry_methods=(method,), symbols=(symbol,)
-            )
+            one_method = replace(genome, entry_methods=(method,), symbols=(symbol,))
             assert_legacy_compatible(one_method)
             payload = one_method.to_dict()
             candidate_id = _canonical_hash(payload)[:20]
             if candidate_id in seen:
                 continue
             seen.add(candidate_id)
-            pool.append({
-                "candidate_id": candidate_id,
-                "method": method,
-                "genome": payload,
-            })
+            pool.append({"candidate_id": candidate_id, "method": method,
+                         "genome": payload})
     return sorted(pool, key=lambda item: (item["method"], item["candidate_id"]))
 
 
 def run_symbol_cycle(
-    *,
-    symbol: str,
-    cycle_id: str,
-    candidates: Iterable[Mapping[str, Any]],
+    *, symbol: str, cycle_id: str, candidates: Iterable[Mapping[str, Any]],
     evaluator: Callable[[Mapping[str, Any]], Mapping[str, Any]],
     checkpoint_path: str | Path,
     checkpoint_metadata: Mapping[str, Any],
     policy: ScoringPolicy = ScoringPolicy(),
 ) -> SelectionDecision:
-    """Evaluate/resume candidates and choose one signal for this symbol/cycle.
-
-    A checkpoint is written after each candidate. If evaluation is interrupted,
-    the next invocation skips completed candidate IDs and continues. The
-    metadata must identify the code/config and dataset snapshot; candidate
-    pool hash and cycle ID are added and validated automatically.
-    """
+    """Evaluate candidates with per-candidate atomic checkpoints and deterministic resume."""
     symbol = symbol.strip().upper()
     if not symbol or not cycle_id.strip():
         raise ValueError("symbol and cycle_id are required")
@@ -124,23 +93,17 @@ def run_symbol_cycle(
     ids = [_candidate_id(item) for item in specs]
     if len(ids) != len(set(ids)):
         raise ValueError("candidate_id values must be unique within a symbol cycle")
-
     pool_hash = _canonical_hash(specs)
-    missing_metadata = {"code_hash", "config_hash", "dataset_hash"} - set(checkpoint_metadata)
-    if missing_metadata:
-        raise ValueError(f"checkpoint_metadata missing required keys: {sorted(missing_metadata)}")
-    metadata = {
-        **dict(checkpoint_metadata),
-        "symbol": symbol,
-        "cycle_id": cycle_id,
-        "candidate_pool_hash": pool_hash,
-    }
+    missing = {"code_hash", "config_hash", "dataset_hash"} - set(checkpoint_metadata)
+    if missing:
+        raise ValueError(f"checkpoint_metadata missing required keys: {sorted(missing)}")
+    metadata = {**dict(checkpoint_metadata), "symbol": symbol,
+                "cycle_id": cycle_id, "candidate_pool_hash": pool_hash}
     path = Path(checkpoint_path)
     completed: dict[str, dict[str, Any]] = {}
     if path.exists():
         restored = load_checkpoint(path, expected_metadata=metadata)
         completed = dict(restored["payload"].get("completed", {}))
-
     for index, spec in enumerate(specs):
         candidate_id = _candidate_id(spec)
         if candidate_id in completed:
@@ -148,34 +111,24 @@ def run_symbol_cycle(
         result = evaluator(spec)
         if not isinstance(result, Mapping):
             raise TypeError("candidate evaluator must return a mapping")
-        # Validate before committing so malformed metrics are never checkpointed.
-        _to_signal_candidate(symbol, spec, result)
+        _to_signal_candidate(symbol, spec, result)  # validate before persisting
         completed[candidate_id] = dict(result)
         save_checkpoint(
-            path,
-            metadata=metadata,
+            path, metadata=metadata,
             payload={"completed": completed, "status": "RUNNING",
-                     "next_candidate_id": (
-                         _candidate_id(specs[index + 1]) if index + 1 < len(specs) else None
-                     )},
+                     "next_candidate_id": (_candidate_id(specs[index + 1])
+                                           if index + 1 < len(specs) else None)},
         )
-
     signal_candidates = [
         _to_signal_candidate(symbol, spec, completed[_candidate_id(spec)])
         for spec in specs
     ]
     decision = select_cycle_signals(signal_candidates, policy=policy)[symbol]
     save_checkpoint(
-        path,
-        metadata=metadata,
-        payload={
-            "completed": completed,
-            "status": "COMPLETED",
-            "winner_candidate_id": (
-                decision.winner.candidate_id if decision.winner else None
-            ),
-            "winner_method": decision.winner.method if decision.winner else None,
-            "winner_score": decision.winner.final_score if decision.winner else None,
-        },
+        path, metadata=metadata,
+        payload={"completed": completed, "status": "COMPLETED",
+                 "winner_candidate_id": decision.winner.candidate_id if decision.winner else None,
+                 "winner_method": decision.winner.method if decision.winner else None,
+                 "winner_score": decision.winner.final_score if decision.winner else None},
     )
     return decision
