@@ -228,7 +228,13 @@ def _evaluate_one(family: str, frames: Mapping[str, Any], genome: StrategyGenome
         width=(4*sd/mid.replace(0,float("nan"))).dropna()
         if len(width)<30:
             return None
-        percentile=float((width.iloc[:-1] <= width.iloc[-1]).mean()*100)
+        # Measure the squeeze on the last fully completed pre-breakout candle.
+        # The current expansion candle must not inflate its own squeeze width.
+        prior_widths=width.iloc[-31:-1]
+        if len(prior_widths)<20:
+            return None
+        squeeze_width=float(width.iloc[-2])
+        percentile=float((prior_widths <= squeeze_width).mean()*100)
         prior=df.iloc[-genome.momentum_lookback-1:-1]
         expansion=(close-float(prev.close))*direction_sign/atr
         breakout=close>float(prior.high.max()) if direction=="LONG" else close<float(prior.low.min())
