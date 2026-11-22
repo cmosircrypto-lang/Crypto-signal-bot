@@ -1,7 +1,7 @@
 """Resumable genetic population evolution, independent per symbol and direction."""
 from __future__ import annotations
 
-from dataclasses import replace
+from dataclasses import asdict, replace
 import hashlib
 import json
 from pathlib import Path
@@ -142,11 +142,20 @@ def run_direction_evolution(
     if required_meta-set(checkpoint_metadata):
         raise ValueError(f"checkpoint metadata missing: {sorted(required_meta-set(checkpoint_metadata))}")
 
+    seed_list = tuple(seed_genomes)
     metadata = {
         **dict(checkpoint_metadata), "symbol": symbol, "direction": direction,
         "random_seed": evolution_config.random_seed, "profile": profile,
         "population_size": population_size, "generations": generations,
         "elite_fraction": elite_fraction, "min_trades": min_trades,
+        "evolution_config": asdict(evolution_config),
+        "seed_genomes_hash": _canonical_hash([g.to_dict() for g in seed_list]),
+        "fitness_gates": {
+            "max_drawdown_pct": max_drawdown_pct,
+            "min_profit_factor": min_profit_factor,
+            "min_positive_window_ratio": min_positive_window_ratio,
+            "min_validation_score": min_validation_score,
+        },
     }
     path = Path(checkpoint_path)
     rng_seed = evolution_config.random_seed + sum((i+1)*ord(ch) for i,ch in enumerate(symbol))
@@ -163,7 +172,7 @@ def run_direction_evolution(
         history = list(payload.get("history", []))
     else:
         generation = 0
-        population = _seed_population(symbol, population_size, rng_seed, seed_genomes)
+        population = _seed_population(symbol, population_size, rng_seed, seed_list)
         evaluated: dict[str, dict[str, Any]] = {}
         history: list[dict[str, Any]] = []
         save_checkpoint(path, metadata=metadata, payload={
@@ -202,6 +211,9 @@ def run_direction_evolution(
                     "next_candidate_index": index+1,
                 })
             generation_records.append(evaluated[key])
+            if (index+1) % 5 == 0 or index+1 == len(population):
+                print(f"[GENETIC] {symbol} {direction} generation {gen+1}/{generations}: "
+                      f"evaluated {index+1}/{len(population)}", flush=True)
 
         ranked = sorted(generation_records, key=_rank_key, reverse=True)
         best = ranked[0]
@@ -213,6 +225,9 @@ def run_direction_evolution(
             "best_profit_factor": float(best["metrics"]["profit_factor"]),
             "best_drawdown_pct": float(best["metrics"]["max_drawdown_pct"]),
         })
+        print(f"[GENETIC] {symbol} {direction} generation {gen+1}/{generations} complete: "
+              f"eligible={history[-1]['eligible_candidates']}/{population_size}, "
+              f"best_fitness={history[-1]['best_fitness']:.4f}", flush=True)
         if gen+1 >= generations:
             break
 
@@ -285,6 +300,17 @@ def run_genetic_evolution(
 
     root = Path(checkpoint_dir)
     seed_list = tuple(seed_genomes)
+    run_metadata = {
+        **dict(checkpoint_metadata),
+        "walk_forward": {
+            "oos_fraction": oos_fraction, "warmup_fraction": warmup_fraction,
+            "fold_count": fold_count,
+        },
+        "swing_signal_provider": (
+            getattr(swing_signal_provider, "__qualname__", "custom")
+            if callable(swing_signal_provider) else None
+        ),
+    }
     results = {}
     for symbol in sorted({s.strip().upper() for s in symbols}):
         if symbol not in all_symbol_data:
@@ -303,7 +329,7 @@ def run_genetic_evolution(
             results[symbol][direction] = run_direction_evolution(
                 symbol=symbol, direction=direction, evaluator=evaluator,
                 checkpoint_path=root/f"{symbol}_{direction}.json",
-                checkpoint_metadata=checkpoint_metadata,
+                checkpoint_metadata=run_metadata,
                 evolution_config=evolution_config, profile=profile,
                 seed_genomes=seed_list,
             )
