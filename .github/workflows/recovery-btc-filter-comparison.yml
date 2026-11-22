@@ -1,5 +1,5 @@
 # Compare three BTC trend gates with independent two-cycle recovery.
-name: BTC Filter Comparison — 12 Subperiods — 3 Filters × 2 Targets
+name: BTC Filter Comparison — 72 Runs — MTM Equity and Drawdown
 on:
   push:
     branches:
@@ -73,14 +73,14 @@ jobs:
           python Backtest/SwingEngine/test_recovery_cycle_experiment.py
           python Backtest/SwingEngine/test_recovery_robustness_validation.py
           python Backtest/SwingEngine/test_recovery_btc_filter_comparison.py
-      - name: Run 72 independent BTC-filter/two-cycle subperiod simulations
+      - name: Run 72 independent BTC-filter/two-cycle subperiod simulations with close-marked MTM equity
         run: |
           set -o pipefail
           python -u Backtest/SwingEngine/recovery_btc_filter_comparison.py | tee /tmp/recovery-robustness.log
       - name: Publish summary
         if: always()
         run: |
-          echo "## BTC filter comparison — 12 subperiods × 3 filters × 2 targets; two concurrent cycles (3% risk cap)" >> "$GITHUB_STEP_SUMMARY"
+          echo "## BTC filter comparison — 72 runs; 15m close-marked MTM equity/drawdown; two concurrent cycles (3% risk cap)" >> "$GITHUB_STEP_SUMMARY"
           if [ -f Backtest/results/recovery_btc_filter_comparison/recovery_robustness_summary.csv ]; then
             python - <<'PY' >> "$GITHUB_STEP_SUMMARY"
           import pandas as pd
@@ -88,7 +88,9 @@ jobs:
           df=pd.read_csv(p)
           cols=[c for c in ["scenario","filter_scenario","filter_mode","recovery_enabled","period_index","segment_start_utc","segment_end_utc_exclusive",
             "tested_cycle_profit_target_usd","portfolio_open_risk_cap_percent","final_equity","net_pnl","profit_factor",
-            "max_drawdown_pct","trades","cycles_started","cycles_recovered_target",
+            "realized_final_equity","realized_net_pnl","realized_max_drawdown_pct",
+            "mtm_final_equity","mtm_net_pnl","mtm_unrealized_pnl_at_end",
+            "max_drawdown_pct","mtm_max_drawdown_usd","trades","cycles_started","cycles_recovered_target",
             "cycles_unresolved","cycles_liquidated_equity_proxy","max_simultaneous_positions"]
             if c in df.columns]
           print(df[cols].to_string(index=False))
