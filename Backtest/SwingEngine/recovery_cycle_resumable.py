@@ -145,7 +145,7 @@ def _levels(signal, atr_multiple, rr):
     return stop, target
 
 
-def recovery_risk_amount(losses, base_risk, base_target_profit, rr, objective, sizing_method, recovery_entries, *, stop_distance=None, target_distance=None, base_quantity=None):
+def recovery_risk_amount(losses, base_risk, base_target_profit, rr, objective, sizing_method, recovery_entries, *, stop_distance=None, target_distance=None, base_quantity=None, target_profit_override=None):
     """Return requested risk dollars for the next recovery entry.
 
     Exact recovery sizes risk from the cycle's outstanding cash target.
@@ -154,7 +154,7 @@ def recovery_risk_amount(losses, base_risk, base_target_profit, rr, objective, s
     current signal's stop distance.
     """
     if sizing_method == "exact_recovery":
-        target = base_target_profit if objective == "initial_target_profit" else 0.0
+        target = (base_target_profit if target_profit_override is None else float(target_profit_override)) if objective == "initial_target_profit" else 0.0
         required_profit = float(losses) + float(target)
         if target_distance is not None:
             if stop_distance is None or float(stop_distance) <= 0 or float(target_distance) <= 0:
@@ -406,6 +406,7 @@ def _simulate(data, signals, obs, specs, btc_frames, atr_multiple, rr,
                     stop_distance=actual_stop_distance,
                     target_distance=actual_target_distance,
                     base_quantity=state["base_quantity"],
+                    target_profit_override=cycle_config.get("recovery_target_profit"),
                 )
                 if risk_amount <= 0 or risk_amount > available_risk:
                     if not cycle_config.get("keep_cycle_when_risk_blocked", False):
@@ -471,7 +472,12 @@ def _simulate(data, signals, obs, specs, btc_frames, atr_multiple, rr,
                         "base_risk_amount": float(pos.risk_amount),
                         "base_quantity": float(pos.quantity),
                         "base_contract_count": float(pos.contract_count or 0.0),
-                        "base_target_profit": abs(float(pos.take_profit) - float(pos.entry_price)) * float(pos.quantity),
+                        "base_target_profit": (
+                            float(cycle_config["recovery_target_profit"])
+                            if cycle_config.get("recovery_target_profit") is not None
+                            else abs(float(pos.take_profit) - float(pos.entry_price)) * float(pos.quantity)
+                        ),
+                        "initial_trade_target_profit": abs(float(pos.take_profit) - float(pos.entry_price)) * float(pos.quantity),
                         "losses": 0.0, "recovery_losses": 0,
                         "recovery_entries": 0, "trade_count": 0,
                         "cycle_realized_pnl": 0.0, "cycle_net_pnl": None,
