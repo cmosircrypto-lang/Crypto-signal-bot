@@ -144,6 +144,18 @@ def _btc_filter_matches(trend, direction, filter_mode):
     raise ValueError(f"Unsupported BTC filter mode: {mode}")
 
 
+def _unrealized_position_pnl(position, mark_price):
+    """Linear USDT-SWAP close-marked PnL in base-quantity units."""
+    mark = float(mark_price)
+    entry = float(position.entry_price)
+    quantity = float(position.quantity)
+    if position.direction == "BUY":
+        return (mark - entry) * quantity
+    if position.direction == "SELL":
+        return (entry - mark) * quantity
+    raise ValueError(f"Unsupported position direction: {position.direction}")
+
+
 def _levels(signal, atr_multiple, rr):
     entry = float(signal["entry_price"])
     atr = float(signal["atr14"])
@@ -830,10 +842,7 @@ def _simulate_multi_cycle(data, signals, obs, specs, btc_frames, atr_multiple, r
         floating_pnl = 0.0
         for open_symbol, open_position in system.execution.open_positions.items():
             mark_price = mark_prices.get(open_symbol, float(open_position.entry_price))
-            if open_position.direction == "BUY":
-                floating_pnl += (mark_price - float(open_position.entry_price)) * float(open_position.quantity)
-            else:
-                floating_pnl += (float(open_position.entry_price) - mark_price) * float(open_position.quantity)
+            floating_pnl += _unrealized_position_pnl(open_position, mark_price)
         realized_equity = float(system.execution.equity)
         mtm_equity = realized_equity + floating_pnl
         mtm_peak_equity = max(mtm_peak_equity, mtm_equity)
@@ -858,6 +867,15 @@ def _simulate_multi_cycle(data, signals, obs, specs, btc_frames, atr_multiple, r
     for state in cycles.values():
         state["status"] = "UNRESOLVED_AT_END"
         state["cycle_net_pnl"] = state["cycle_realized_pnl"]
+        cycle_float = 0.0
+        for open_symbol, meta in active.items():
+            if meta.get("cycle_id") == state.get("cycle_id"):
+                open_position = system.execution.open_positions.get(open_symbol)
+                if open_position is not None:
+                    mark_price = mark_prices.get(open_symbol, float(open_position.entry_price))
+                    cycle_float += _unrealized_position_pnl(open_position, mark_price)
+        state["cycle_unrealized_pnl_at_end"] = cycle_float
+        state["cycle_mtm_net_pnl"] = float(state["cycle_realized_pnl"]) + cycle_float
         completed_cycles.append(dict(state))
         cycle_counts["cycles_unresolved"] += 1
 
@@ -869,10 +887,7 @@ def _simulate_multi_cycle(data, signals, obs, specs, btc_frames, atr_multiple, r
     final_unrealized_pnl = 0.0
     for open_symbol, open_position in sorted(system.execution.open_positions.items()):
         mark_price = mark_prices.get(open_symbol, float(open_position.entry_price))
-        if open_position.direction == "BUY":
-            position_unrealized = (mark_price - float(open_position.entry_price)) * float(open_position.quantity)
-        else:
-            position_unrealized = (float(open_position.entry_price) - mark_price) * float(open_position.quantity)
+        position_unrealized = _unrealized_position_pnl(open_position, mark_price)
         final_unrealized_pnl += position_unrealized
         final_open_positions.append({
             "symbol": open_symbol, "direction": open_position.direction,
