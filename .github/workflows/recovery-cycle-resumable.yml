@@ -1,9 +1,6 @@
 name: Recovery Cycle Resumable OOS Validation
 
 on:
-  push:
-    branches:
-      - experiment/recovery-cycle-resumable
   workflow_dispatch:
     inputs:
       resume_run_id:
