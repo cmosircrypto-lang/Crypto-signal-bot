@@ -11,12 +11,12 @@ on:
       - "Backtest/GeneticEngine/dynamic_selector.py"
       - "Backtest/GeneticEngine/checkpoint.py"
       - "Backtest/GeneticEngine/dynamic_cycle_runner.py"
-      - "Backtest/GeneticEngine/family_signals.py"
+      - "Backtest/GeneticEngine/family_signals.py"\n      - "Backtest/GeneticEngine/historical_evaluator.py"\n      - "Backtest/GeneticEngine/genetic_runner.py"
       - "Backtest/GeneticEngine/tests/test_dynamic_selection.py"
       - "Backtest/GeneticEngine/tests/test_dynamic_cycle_runner.py"
       - "Backtest/GeneticEngine/tests/test_strategy_family_genome.py"
       - "Backtest/GeneticEngine/tests/test_evolution.py"
-      - "Backtest/GeneticEngine/tests/test_family_signals.py"
+      - "Backtest/GeneticEngine/tests/test_family_signals.py"\n      - "Backtest/GeneticEngine/tests/test_historical_evaluator.py"\n      - "Backtest/GeneticEngine/tests/test_genetic_runner.py"
       - "Backtest/GeneticEngine/README.md"
       - ".github/workflows/dynamic-signal-selection-tests.yml"
   workflow_dispatch:
@@ -45,7 +45,7 @@ jobs:
             Backtest/GeneticEngine/dynamic_selector.py \
             Backtest/GeneticEngine/checkpoint.py \
             Backtest/GeneticEngine/dynamic_cycle_runner.py \
-            Backtest/GeneticEngine/family_signals.py
+            Backtest/GeneticEngine/family_signals.py \\\n            Backtest/GeneticEngine/historical_evaluator.py \\\n            Backtest/GeneticEngine/genetic_runner.py
       - name: Test dynamic selector and checkpointing
         run: python -m unittest Backtest.GeneticEngine.tests.test_dynamic_selection
       - name: Test resumable per-symbol cycle runner
@@ -54,7 +54,7 @@ jobs:
         run: python -m unittest Backtest.GeneticEngine.tests.test_strategy_family_genome
       - name: Test causal family signal evaluators and combination semantics
         run: python -m unittest Backtest.GeneticEngine.tests.test_family_signals
-      - name: Test genetic mutation and crossover
+      - name: Test walk-forward historical evaluator\n        run: python -m unittest Backtest.GeneticEngine.tests.test_historical_evaluator\n      - name: Test resumable genetic population evolution\n        run: python -m unittest Backtest.GeneticEngine.tests.test_genetic_runner\n      - name: Test genetic mutation and crossover
         run: python -m unittest Backtest.GeneticEngine.tests.test_evolution
       - name: Test existing genome contract
         run: python -m unittest Backtest.GeneticEngine.tests.test_genome
