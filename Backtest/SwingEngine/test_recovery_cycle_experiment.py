@@ -1,9 +1,9 @@
 import unittest
 from types import SimpleNamespace
 
-from recovery_cycle_experiment import (
+from recovery_cycle_resumable import (
     _cycle_close_status, _levels, _update_open_risk_peaks,
-    recovery_risk_amount,
+    recovery_risk_amount, _btc_filter_matches,
 )
 
 
@@ -66,6 +66,22 @@ class RecoveryCycleExperimentTests(unittest.TestCase):
         )
         self.assertAlmostEqual(peak_amount, 2.5)
         self.assertAlmostEqual(peak_percent, 3.125)
+
+
+    def test_btc_filter_requires_1d_and_4h(self):
+        trend = {"1d": "BUY", "4h": "BUY", "1h": "SELL"}
+        self.assertTrue(_btc_filter_matches(trend, "BUY", "1d_4h"))
+        self.assertFalse(_btc_filter_matches(trend, "BUY", "1d_4h_1h"))
+
+    def test_btc_three_timeframe_filter_requires_all_closed_trends(self):
+        trend = {"1d": "SELL", "4h": "SELL", "1h": "SELL"}
+        self.assertTrue(_btc_filter_matches(trend, "SELL", "1d_4h_1h"))
+        trend["1h"] = "BUY"
+        self.assertFalse(_btc_filter_matches(trend, "SELL", "1d_4h_1h"))
+
+    def test_unknown_btc_filter_mode_is_rejected(self):
+        with self.assertRaises(ValueError):
+            _btc_filter_matches({"1d": "BUY", "4h": "BUY"}, "BUY", "1d_4h_15m")
 
     def test_atr_stop_and_rr_levels(self):
         signal = {"entry_price": 100.0, "atr14": 2.0, "direction": "BUY"}
