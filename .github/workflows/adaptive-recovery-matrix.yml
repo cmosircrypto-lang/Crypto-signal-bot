@@ -6,9 +6,6 @@ on:
       - experiment/recovery-cycle-resumable
     paths:
       - "Backtest/SwingEngine/adaptive_recovery_matrix.py"
-      - "Backtest/SwingEngine/recovery_cycle_resumable.py"
-      - "Backtest/SwingEngine/test_recovery_cycle_experiment.py"
-      - ".github/workflows/adaptive-recovery-matrix.yml"
   workflow_dispatch:
 
 concurrency:
