@@ -108,6 +108,8 @@ def run():
             skips.to_csv(out/f"skips_{label}.csv",index=False)
             (out/f"summary_{label}.json").write_text(
                 json.dumps(summary,indent=2,default=str),encoding="utf-8")
+            summary["trades"] = len(trades)
+            summary["cycles"] = len(cycles)
             rows.append(summary)
             print(f"[PERIOD COMPLETE] {run_no}/{total} {label} equity={summary.get('final_equity')} "
                 f"pnl={summary.get('net_pnl')} dd={summary.get('max_drawdown_pct')} "
