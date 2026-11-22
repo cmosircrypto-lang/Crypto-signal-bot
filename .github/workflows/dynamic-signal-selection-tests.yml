@@ -32,7 +32,7 @@ jobs:
         run: |
           python -m py_compile \
             Backtest/GeneticEngine/dynamic_selector.py \
-            Backtest/GeneticEngine/checkpoint.py \\
+            Backtest/GeneticEngine/checkpoint.py \
             Backtest/GeneticEngine/dynamic_cycle_runner.py
       - name: Test dynamic selector and checkpointing
         run: python -m unittest Backtest.GeneticEngine.tests.test_dynamic_selection
