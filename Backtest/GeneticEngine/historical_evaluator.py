@@ -139,12 +139,36 @@ def _simulate_fold(
         }
         if any(len(frames[tf]) < 40 for tf in ("15m", "1h")):
             continue
+        # Do not let a data gap turn an old candle into a fresh signal.
+        if int(frames["1h"].iloc[-1]["timestamp"]) + TF_MS["1h"] != decision_ms:
+            continue
+        if int(frames["15m"].iloc[-1]["timestamp"]) + TF_MS["15m"] != decision_ms:
+            continue
+        needs_four_hour = bool(
+            set(genome.signal_families) & {
+                "EMA_CROSS_PRO", "BTC_ALIGNED_PULLBACK", "SMC_LIQUIDITY_SWEEP"
+            }
+        )
+        if needs_four_hour and (
+            frames["4h"].empty or
+            decision_ms - (int(frames["4h"].iloc[-1]["timestamp"]) + TF_MS["4h"]) > TF_MS["4h"]
+        ):
+            continue
         if btc_frames:
             btc = {
                 "1h": _closed_slice(btc_frames["1h"], "1h", decision_ms),
                 "4h": _closed_slice(btc_frames["4h"], "4h", decision_ms),
                 "1d": _closed_slice(btc_frames["1d"], "1d", decision_ms),
             }
+            if "BTC_ALIGNED_PULLBACK" in genome.signal_families:
+                if (not btc["1h"].empty and
+                    int(btc["1h"].iloc[-1]["timestamp"]) + TF_MS["1h"] == decision_ms and
+                    not btc["4h"].empty and not btc["1d"].empty and
+                    decision_ms-(int(btc["4h"].iloc[-1]["timestamp"])+TF_MS["4h"]) <= TF_MS["4h"] and
+                    decision_ms-(int(btc["1d"].iloc[-1]["timestamp"])+TF_MS["1d"]) <= TF_MS["1d"]):
+                    pass
+                else:
+                    btc = None
         else:
             btc = None
         swing_signal = None
