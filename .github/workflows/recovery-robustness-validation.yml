@@ -77,10 +77,10 @@ jobs:
         if: always()
         run: |
           echo "## Recovery target comparison — twelve subperiods × two fixed profit targets (3% risk cap)" >> "$GITHUB_STEP_SUMMARY"
-          if [ -f Backtest/results/recovery_target_comparison/recovery_robustness_summary.csv ]; then
+          if [ -f Backtest/results/recovery_target_subperiods/recovery_robustness_summary.csv ]; then
             python - <<'PY' >> "$GITHUB_STEP_SUMMARY"
           import pandas as pd
-          p="Backtest/results/recovery_target_comparison/recovery_robustness_summary.csv"
+          p="Backtest/results/recovery_target_subperiods/recovery_robustness_summary.csv"
           df=pd.read_csv(p)
           cols=[c for c in ["period_index","segment_start_utc","segment_end_utc_exclusive",
             "tested_cycle_profit_target_usd","portfolio_open_risk_cap_percent","final_equity","net_pnl","profit_factor",
@@ -96,6 +96,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: recovery-target-subperiods-12x2
-          path: Backtest/results/recovery_target_comparison/
+          path: Backtest/results/recovery_target_subperiods/
           if-no-files-found: warn
           retention-days: 90
