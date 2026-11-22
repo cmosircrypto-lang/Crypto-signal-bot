@@ -75,7 +75,7 @@ Run the focused tests with:
 
 `dynamic_cycle_runner.py` evaluates a supplied candidate pool for one symbol and one scan-cycle ID. It checkpoints after every completed candidate, validates the candidate-pool fingerprint plus caller-supplied code/config and dataset hashes, resumes without re-evaluating completed candidates, and stores the cycle winner (or no-signal result). Each symbol/cycle should use its own checkpoint path. The candidate evaluator is injected by the research adapter; this keeps the runner decoupled from the legacy SwingEngine and allows a future genetic candidate generator to supply its approved candidate pool.
 
-The current runner is an orchestration primitive, not yet a full 76-symbol live integration. A caller must provide candidates and an evaluator that returns historical training/rolling-validation metrics and the current closed-candle setup. Do not feed final OOS outcomes into those metrics. The CI tests include a simulated interruption and verify that completed candidates are not repeated.
+The current runner is an orchestration primitive for per-symbol scan cycles. The family signal adapter and walk-forward historical evaluator now provide the current closed-candle setup and historical training/rolling-validation metrics. The final OOS tail remains excluded. The CI tests include a simulated interruption and verify that completed candidates are not repeated.
 
 
 The runner's `build_symbol_candidate_pool` helper expands each genome into one-method candidates scoped to the requested symbol. It uses the existing adapter's compatibility guard, so unsupported legacy parameters are rejected rather than silently treated as active genes. Checkpoint metadata must include `code_hash`, `config_hash`, and `dataset_hash`; the runner also fingerprints the symbol, cycle ID, and complete candidate pool. The checkpoint records the next candidate cursor after each completed evaluation.
@@ -88,7 +88,7 @@ The per-symbol pool builder also injects a baseline candidate for every configur
 
 The dynamic candidate pool now expands each method/genome into separate LONG and SHORT candidate specifications. Evaluator results must match the declared direction. Historical metrics and evolution must remain direction-specific; only after independent evaluation may the cycle selector compare both sides and choose at most one signal for a symbol.
 
-The three distinct signal families in the repository's `main.py` are documented as future research candidates: EMA Cross PRO, BTC-aligned 1h pullback, and SMC Winner. The three managed bot variants reuse those same signal functions and are not additional strategies. Only signal-generation rules may be ported. Position sizing, recovery, Telegram, persistence, cooldown/dispatch and live exchange access are excluded. The strategies are not yet wired into the genetic evaluator; they require causal OKX data adapters, fixtures and parity tests first.
+The three distinct signal families in the repository's `main.py` are EMA Cross PRO, BTC-aligned 1h pullback, and SMC Winner. The three managed bot variants reuse those same signal functions and are not additional strategies. Their signal-generation concepts are now implemented as causal research evaluators with bounded genome parameters. Position sizing, recovery, Telegram, persistence, cooldown/dispatch and live exchange access remain excluded.
 
 
 ## Composable family genome (research schema)
@@ -105,7 +105,7 @@ CI now compiles the expanded config/genome modules and runs the strategy-family 
 
 ## Genetic mutation and crossover
 
-`evolution.py` adds deterministic seeded `random_genome`, `mutate_genome`, and `crossover_genomes` operators. They can vary the existing Swing genes, all three main.py-derived parameter groups, and the additional momentum/mean-reversion/squeeze families; family lists and combination modes are genes too. Dependent constraints (fast EMA below slow EMA, minimum stop below maximum stop, RSI low below RSI high, and valid family agreement) are repaired before a child is accepted. These are tested operators and genome sampling, not yet a complete population evolution/evaluation loop; family signal evaluators remain a separate gate.
+`evolution.py` adds deterministic seeded `random_genome`, `mutate_genome`, and `crossover_genomes` operators. They can vary the existing Swing genes, all three main.py-derived parameter groups, and the additional momentum/mean-reversion/squeeze families; family lists and combination modes are genes too. Dependent constraints (fast EMA below slow EMA, minimum stop below maximum stop, RSI low below RSI high, and valid family agreement) are repaired before a child is accepted. The resumable population loop now applies these operators to independently evaluated LONG and SHORT populations, with tournament selection, elitism, phenotype deduplication and checkpointed fitness.
 
 
 ## Causal family signal evaluators
