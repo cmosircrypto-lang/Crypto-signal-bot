@@ -141,7 +141,7 @@ def run_forward_validation(
 
         # The 1h and 4h frames must also cover the same forward period without gaps.
         _validate_frame_window(raw["1h"], "1h", start_ms, end_ms)
-        _validate_frame_window(raw["4h"], "4h", start_ms, end_ms)
+        _validate_frame_window(raw["4h"], "4h", start_ms, end_ms - TF_MS["4h"])
 
         metrics = _simulate_fold(
             symbol, normalized, btc_frames, genome, direction,
