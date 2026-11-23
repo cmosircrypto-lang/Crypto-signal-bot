@@ -195,6 +195,7 @@ def main(argv=None):
         "candidate_id", "symbol", "direction", "segment",
         "start_utc", "end_exclusive_utc", "trade_count", "net_pnl",
         "average_r", "profit_factor", "max_drawdown_pct",
+        "gross_profit", "gross_loss",
     ]
     with csv_path.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=columns)
