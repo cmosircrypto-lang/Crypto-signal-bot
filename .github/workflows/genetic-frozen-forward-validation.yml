@@ -148,3 +148,86 @@ jobs:
             reports/forward_data_quality.json
           if-no-files-found: warn
           retention-days: 30
+
+  two-year-frozen-replay:
+    name: Replay 11 frozen champions over two-year OKX history
+    if: contains(github.event.head_commit.message, '[run-two-year]') || github.event_name == 'workflow_dispatch'
+    needs: preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - name: Checkout isolated validation branch
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install research dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install numpy pandas
+      - name: Retrieve exact frozen candidate manifest
+        uses: actions/download-artifact@v4
+        with:
+          name: frozen-candidate-manifest
+          path: Backtest/GeneticEngine
+      - name: Restore historical OKX dataset
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/okx-cache Backtest/data/okx reports
+          gh release download okx-data --repo "$GITHUB_REPOSITORY" --pattern "okx_data.tar" --dir /tmp/okx-cache
+          gh release download okx-data --repo "$GITHUB_REPOSITORY" --pattern "okx_timeframes.tar" --dir /tmp/okx-cache
+          tar -xf /tmp/okx-cache/okx_data.tar -C Backtest/data/okx
+          tar -xf /tmp/okx-cache/okx_timeframes.tar -C Backtest/data/okx
+          for timeframe in 15m 1h 4h; do
+            count="$(find "Backtest/data/okx/$timeframe" -maxdepth 1 -name '*.csv.gz' | wc -l)"
+            echo "$timeframe: $count symbol files"
+            test "$count" -eq 76
+          done
+      - name: Compile and run regression tests
+        run: |
+          set -euo pipefail
+          python -m compileall -q Backtest/GeneticEngine
+          python -m unittest \
+            Backtest.GeneticEngine.tests.test_genome \
+            Backtest.GeneticEngine.tests.test_family_signals \
+            Backtest.GeneticEngine.tests.test_historical_evaluator \
+            Backtest.GeneticEngine.tests.test_genetic_runner \
+            Backtest.GeneticEngine.tests.test_dynamic_selection \
+            Backtest.GeneticEngine.tests.test_forward_validation
+      - name: Record dataset coverage
+        run: |
+          set -euo pipefail
+          PYTHONPATH=Backtest/SwingEngine python - <<'PY'
+          from data_loader import load_okx_data, dataset_report
+          data = load_okx_data("Backtest/data/okx", expected_symbols=76)
+          report = dataset_report(data)
+          report.to_csv("reports/okx_dataset_coverage.csv", index=False)
+          print(report.groupby("timeframe").agg(
+              symbols=("symbol", "nunique"),
+              min_first=("first_open_utc", "min"),
+              max_last=("last_close_utc", "max"),
+              min_candles=("candles", "min"),
+              max_candles=("candles", "max"),
+          ).to_string())
+          PY
+      - name: Run immutable two-year replay with final 15% holdout isolated
+        run: |
+          set -euo pipefail
+          python -u -m Backtest.GeneticEngine.run_two_year_frozen_replay \
+            --data-root Backtest/data/okx \
+            --manifest Backtest/GeneticEngine/frozen_candidates.json \
+            --output-dir Backtest/results/genetic_two_year_replay
+      - name: Publish two-year reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: genetic-frozen-two-year-replay
+          path: |
+            Backtest/GeneticEngine/frozen_candidates.json
+            Backtest/results/genetic_two_year_replay/
+            reports/okx_dataset_coverage.csv
+          if-no-files-found: warn
+          retention-days: 30
