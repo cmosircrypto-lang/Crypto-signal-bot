@@ -1,0 +1,119 @@
+name: Frozen Genetic Champions Two-Year Replay
+
+on:
+  push:
+    branches:
+      - experiment/genetic-frozen-forward-validation
+    paths:
+      - ".github/workflows/genetic-two-year-frozen-replay.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  two-year-replay:
+    name: Replay 11 frozen champions over two-year OKX history
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - name: Checkout isolated validation branch
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install research dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install numpy pandas
+
+      - name: Download exact source genetic artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          SOURCE_RUN_ID="45054615629"
+          SOURCE_SHA="16544a09a07ce024f07037cb0ca65c1fbd18cf57"
+          source_meta="$(gh run view "$SOURCE_RUN_ID" --repo "$GITHUB_REPOSITORY" --json headBranch,headSha,status,conclusion)"
+          test "$(echo "$source_meta" | python -c 'import json,sys; print(json.load(sys.stdin)["headBranch"])')" = "experiment/dynamic-signal-selection-design"
+          test "$(echo "$source_meta" | python -c 'import json,sys; print(json.load(sys.stdin)["headSha"])')" = "$SOURCE_SHA"
+          test "$(echo "$source_meta" | python -c 'import json,sys; print(json.load(sys.stdin)["status"])')" = "completed"
+          test "$(echo "$source_meta" | python -c 'import json,sys; print(json.load(sys.stdin)["conclusion"])')" = "success"
+          mkdir -p /tmp/genetic-source Backtest/GeneticEngine
+          gh run download "$SOURCE_RUN_ID" --repo "$GITHUB_REPOSITORY" --dir /tmp/genetic-source
+          summaries="$(find /tmp/genetic-source -type f -name 'genetic_family_summary_*.json' | wc -l)"
+          test "$summaries" -eq 12
+          python -m Backtest.GeneticEngine.freeze_candidates \
+            --artifact-root /tmp/genetic-source \
+            --source-run-id "$SOURCE_RUN_ID" \
+            --source-commit-sha "$SOURCE_SHA" \
+            --output Backtest/GeneticEngine/frozen_candidates.json
+
+      - name: Restore two-year OKX historical dataset
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/okx-cache Backtest/data/okx reports
+          gh release download okx-data --repo "$GITHUB_REPOSITORY" --pattern "okx_data.tar" --dir /tmp/okx-cache
+          gh release download okx-data --repo "$GITHUB_REPOSITORY" --pattern "okx_timeframes.tar" --dir /tmp/okx-cache
+          tar -xf /tmp/okx-cache/okx_data.tar -C Backtest/data/okx
+          tar -xf /tmp/okx-cache/okx_timeframes.tar -C Backtest/data/okx
+          for timeframe in 15m 1h 4h; do
+            count="$(find "Backtest/data/okx/$timeframe" -maxdepth 1 -name '*.csv.gz' | wc -l)"
+            echo "$timeframe: $count symbol files"
+            test "$count" -eq 76
+          done
+
+      - name: Compile and run frozen-evaluator regression tests
+        run: |
+          set -euo pipefail
+          python -m compileall -q Backtest/GeneticEngine
+          python -m unittest \
+            Backtest.GeneticEngine.tests.test_genome \
+            Backtest.GeneticEngine.tests.test_family_signals \
+            Backtest.GeneticEngine.tests.test_historical_evaluator \
+            Backtest.GeneticEngine.tests.test_genetic_runner \
+            Backtest.GeneticEngine.tests.test_dynamic_selection \
+            Backtest.GeneticEngine.tests.test_forward_validation
+
+      - name: Record full dataset coverage
+        run: |
+          set -euo pipefail
+          PYTHONPATH=Backtest/SwingEngine python - <<'PY'
+          from data_loader import load_okx_data, dataset_report
+          data = load_okx_data("Backtest/data/okx", expected_symbols=76)
+          report = dataset_report(data)
+          report.to_csv("reports/okx_dataset_coverage.csv", index=False)
+          print(report.groupby("timeframe").agg(
+              symbols=("symbol", "nunique"),
+              min_first=("first_open_utc", "min"),
+              max_last=("last_close_utc", "max"),
+              min_candles=("candles", "min"),
+              max_candles=("candles", "max"),
+          ).to_string())
+          PY
+
+      - name: Run immutable two-year replay with final 15% holdout isolated
+        run: |
+          set -euo pipefail
+          python -u -m Backtest.GeneticEngine.run_two_year_frozen_replay \
+            --data-root Backtest/data/okx \
+            --manifest Backtest/GeneticEngine/frozen_candidates.json \
+            --output-dir Backtest/results/genetic_two_year_replay
+
+      - name: Publish two-year reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: genetic-frozen-two-year-replay
+          path: |
+            Backtest/GeneticEngine/frozen_candidates.json
+            Backtest/results/genetic_two_year_replay/
+            reports/okx_dataset_coverage.csv
+          if-no-files-found: warn
+          retention-days: 30
